@@ -4,12 +4,12 @@ Realistic American 8-ball for iPhone Safari. Vanilla JS ES modules, Canvas 2D, n
 no external assets. Pure modules (constants, vec, rng, table, aim, physics, rules, game, ai) never
 touch the DOM and are unit-tested with `node --test`.
 
-**Module style rule** (needed by `scripts/build-single.mjs`, which inlines everything into one HTML):
-only top-of-file `import { a, b } from './x.js';` lines (single or multi-line braces) and
-`export function|const|class|let` declarations. No default exports, no `export { }` lists, no
-dynamic `import()`, no `import * as`. Top-level names must be unique ACROSS ALL MODULES (they share
-one scope after inlining) — prefix private helpers with a module tag if they are generic
-(e.g. `phys_clamp`), or keep them inside a class/closure.
+**Module style rule** (needed by `scripts/build-single.mjs`, which inlines every module into one
+HTML file, each wrapped in its own function scope): only top-of-file
+`import { a, b as c } from './x.js';` lines (single or multi-line braces) and
+`export function|async function|const|let|class` declarations. No default exports, no
+`export { }` lists, no re-exports, no dynamic `import()`, no `import * as`, no top-level `await`.
+Relative imports only (`./x.js`); every module lives directly in `src/`.
 
 ## Shared conventions (already implemented — do not change without updating everyone)
 - `src/constants.js` — geometry, physics constants, colours, `groupOf`, `isStripe`,

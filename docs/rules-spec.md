@@ -16,8 +16,7 @@ below, these win:
 - **Coin toss:** `Game` starts in phase `'toss'` for 1.2 s, emits `'toss'` with the breaker, then
   moves to `'aim'`.
 - **Group helper:** `groupOf(id)` lives in `src/constants.js`. Import it rather than redefining it.
-- **Module style:** follow the rule in `docs/architecture.md`. Top-level names must be unique
-  across all modules, with no default exports.
+- **Module style:** follow the module style rule in `docs/architecture.md`.
 
 ---
 
