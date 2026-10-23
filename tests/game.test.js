@@ -509,7 +509,7 @@ describe('Game', () => {
     log.length = 0;
     shoot(g, [hit(1), rail(1)]);
     assert.equal(g.state.dryTurns, 10);
-    assert.ok(ofType(log, 'message').some((m) => m.text === 'No balls pocketed in 10 turns — re-rack available'));
+    assert.ok(ofType(log, 'message').some((m) => m.text === 'No balls pocketed in 10 turns — re-rack from the pause menu'));
     assert.equal(g.canAcceptStalemate(), true);
     assert.equal(g.hud().stalemate, true);
     log.length = 0;

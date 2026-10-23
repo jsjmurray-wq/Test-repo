@@ -391,7 +391,7 @@ export class Game {
     }
     this.world.setBalls(next.balls);
     if (!outcome.gameOver && next.dryTurns === next.ruleset.stalemateOfferAfter) {
-      messages.push({ text: `No balls pocketed in ${next.dryTurns} turns — re-rack available`, kind: 'info' });
+      messages.push({ text: `No balls pocketed in ${next.dryTurns} turns — re-rack from the pause menu`, kind: 'info' });
     }
 
     let rackInfo = null;
