@@ -13,6 +13,8 @@ export default [
         process: 'readonly', URL: 'readonly', Float32Array: 'readonly', Float64Array: 'readonly',
         Int8Array: 'readonly', Uint8ClampedArray: 'readonly', Path2D: 'readonly', globalThis: 'readonly',
         queueMicrotask: 'readonly', structuredClone: 'readonly', HTMLElement: 'readonly', Image: 'readonly',
+        Buffer: 'readonly', URLSearchParams: 'readonly', location: 'readonly', ResizeObserver: 'readonly',
+        Event: 'readonly', PointerEvent: 'readonly', CustomEvent: 'readonly',
       },
     },
     rules: {

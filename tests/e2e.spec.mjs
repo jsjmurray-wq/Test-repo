@@ -92,8 +92,9 @@ async function waitFor(page, fn, timeout, arg) {
   }
 }
 
-async function smoke(browser, base, path, vp) {
-  console.log(`\n[${vp.name}] ${path}`);
+async function smoke(browser, base, path, vp, mode) {
+  console.log(`\n[${vp.name}] ${path} (${mode})`);
+  const tag = `${vp.name}-${mode}-${path.replace(/\W+/g, '_')}`;
   const context = await browser.newContext({ ...vp });
   const page = await context.newPage();
   const errors = [];
@@ -104,11 +105,16 @@ async function smoke(browser, base, path, vp) {
   await page.goto(`${base}/${path}`);
   await page.waitForTimeout(600);
   check(await page.isVisible('#menu'), 'menu visible on load');
-  if (SHOTS) await page.screenshot({ path: join(shotDir, `${vp.name}-${path.replace(/\W+/g, '_')}-menu.png`) });
+  if (SHOTS) await page.screenshot({ path: join(shotDir, `${tag}-menu.png`) });
 
-  // Start a game vs the computer through the real menu button.
-  const startBtn = page.locator('[data-action="play-cpu"], #play-cpu, button:has-text("Play vs Computer")').first();
-  await startBtn.tap();
+  // Start through the real menu buttons.
+  if (mode === 'pvp') {
+    await page.locator('[data-act="pvp"]').tap();
+    await page.waitForTimeout(250);
+    await page.locator('[data-act="start-pvp"]').tap();
+  } else {
+    await page.locator('[data-act="play-cpu"]').tap();
+  }
   const started = await waitFor(page, () => window.__pool && window.__pool.game && window.__pool.game.phase === 'aim', 8000);
   check(started, 'game started and reached aim phase');
   await page.waitForTimeout(300);
@@ -128,7 +134,7 @@ async function smoke(browser, base, path, vp) {
   const rolling = await waitFor(page, () => window.__pool.game.phase === 'rolling', 8000);
   check(rolling, 'a shot was played (balls rolling)');
   await page.waitForTimeout(700);
-  if (SHOTS) await page.screenshot({ path: join(shotDir, `${vp.name}-${path.replace(/\W+/g, '_')}-rolling.png`) });
+  if (SHOTS) await page.screenshot({ path: join(shotDir, `${tag}-rolling.png`) });
   const rested = await waitFor(page, () => window.__pool.game.phase !== 'rolling', 70000);
   check(rested, 'balls came to rest and the shot resolved');
   const moved = await page.evaluate(() => {
@@ -137,17 +143,39 @@ async function smoke(browser, base, path, vp) {
   });
   check(moved, 'game state advanced');
   await page.waitForTimeout(1500);
-  if (SHOTS) await page.screenshot({ path: join(shotDir, `${vp.name}-${path.replace(/\W+/g, '_')}-after.png`) });
+  if (SHOTS) await page.screenshot({ path: join(shotDir, `${tag}-after.png`) });
 
   // Pause sheet opens and closes.
-  const pauseBtn = page.locator('#pause-btn, [data-action="pause"]').first();
+  const pauseBtn = page.locator('#pause-btn').first();
   if (await pauseBtn.count()) {
     await pauseBtn.tap();
     await page.waitForTimeout(250);
     check(await page.isVisible('#pause'), 'pause sheet opens');
-    if (SHOTS) await page.screenshot({ path: join(shotDir, `${vp.name}-${path.replace(/\W+/g, '_')}-pause.png`) });
-    await page.locator('#pause [data-action="resume"], #pause button:has-text("Resume")').first().tap();
+    if (SHOTS) await page.screenshot({ path: join(shotDir, `${tag}-pause.png`) });
+    await page.locator('#pause [data-act="unpause"]').first().tap();
     await page.waitForTimeout(250);
+  }
+  if (mode === 'pvp') {
+    // Second human shot: tap to aim at a ball, then a medium power stroke.
+    await waitFor(page, () => window.__pool.game.phase === 'aim', 5000);
+    const target = await page.evaluate(() => {
+      const a = window.__pool;
+      const g = a.game;
+      const req = g.requirements();
+      const id = (req.legalTargets || []).find((i) => g.state.balls[i].on);
+      const b = g.state.balls[id];
+      const p = a.view.toScreen(b.x, b.y);
+      const r = document.getElementById('table').getBoundingClientRect();
+      return { x: r.left + p.x, y: r.top + p.y, shots: g.state.shotNo };
+    });
+    await page.touchscreen.tap(target.x, target.y);
+    await page.waitForTimeout(200);
+    const box = await page.locator('#power').boundingBox();
+    await touchDrag(page, box.x + box.width / 2, box.y + 8, box.x + box.width / 2, box.y + box.height * 0.45);
+    const second = await waitFor(page, (n) => window.__pool.game.state.shotNo > n || window.__pool.game.phase === 'rolling', 5000, target.shots);
+    check(second, 'second shot (tap-to-aim + power pull) was played');
+    await waitFor(page, () => window.__pool.game.phase !== 'rolling', 70000);
+    if (SHOTS) await page.screenshot({ path: join(shotDir, `${tag}-second.png`) });
   }
   check(errors.length === 0, `no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await context.close();
@@ -179,7 +207,10 @@ const browser = await playwright.chromium.launch({ executablePath: '/opt/pw-brow
 try {
   const targets = ['index.html'];
   if (existsSync(join(root, 'dist/pool8.html'))) targets.push('dist/pool8.html');
-  for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp);
+  for (const t of targets) {
+    for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, 'cpu');
+    for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, 'pvp');
+  }
   if (SOAK) for (const t of targets) await soak(browser, base, t);
 } finally {
   await browser.close();

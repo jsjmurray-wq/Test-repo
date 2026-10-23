@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Render preview</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #101114;
+        color: #ddd;
+        font: 12px -apple-system, "SF Pro", system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #wrap {
+        position: relative;
+        margin: 0;
+        background: radial-gradient(ellipse at center, #2a2c31 0%, #141518 70%, #0d0e10 100%);
+      }
+      #table {
+        display: block;
+        touch-action: none;
+      }
+      #info {
+        position: fixed;
+        left: 6px;
+        bottom: 6px;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 4px 6px;
+        border-radius: 4px;
+        white-space: pre;
+        pointer-events: none;
+      }
+      #info:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap"><canvas id="table"></canvas></div>
+    <div id="info"></div>
+    <script type="module" src="./render-preview.js"></script>
+  </body>
+</html>

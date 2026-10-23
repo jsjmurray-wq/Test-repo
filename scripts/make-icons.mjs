@@ -2,6 +2,7 @@
 // icons/icon-180.png (apple-touch-icon) and icons/icon-512.png (manifest).
 // Usage: node scripts/make-icons.mjs   (needs the globally installed playwright)
 
+/* global draw */ // defined inside the page by drawIcon
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
