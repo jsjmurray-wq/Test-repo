@@ -15,8 +15,11 @@
 //      are probed once to compensate throw, then simulated K times with seeded aim/speed noise by
 //      physics.simulateShot and judged by rules.evaluateShot:
 //        score = P(keep turn) + wPos*position - P(foul) - wOpp*opponentBest*(1-P) - 2*P(lose rack)
-//   4. Safety (hard/pro) when the best P < 0.35: soft legal-contact shots (full / half / thin hits,
-//      one-rail kicks for hidden targets) that minimise the opponent's best pre-score.
+//      P(keep) and P(foul) are shrunk toward geometric priors (2 pseudo-samples) so the shot that
+//      got lucky in 1-4 samples is not preferred; the three leaders are re-sampled before the pick.
+//   4. Safety (hard/pro) when the best P < 0.35: soft legal-contact shots (full / half / thin hits
+//      and one-rail kicks, two speeds) that minimise the opponent's best pre-score. Every level
+//      falls back to a plain legal hit when its best attempt is likely to foul.
 //   5. Ball in hand: the cue ball is placed behind the ghost ball of the best target/pocket pairs
 //      (validated by rules.validateCuePlacement, so the kitchen is respected). Break: from the
 //      kitchen at y = +/-0.12, full on the apex ball at 8.5-9.3 m/s with a little draw.
@@ -29,7 +32,7 @@ import { AI_DT, MAX_TIP, MAX_SQUIRT_RAD, MU_SLIDE, MU_ROLL, G, E_BALL, shotSpeed
 import { TABLE } from './table.js';
 import { normalizeAngle } from './vec.js';
 import { mulberry32, gaussian } from './rng.js';
-import { traceAim } from './aim.js';
+import { traceAim, rayRails } from './aim.js';
 import { World, simulateShot } from './physics.js';
 import {
   getShotRequirements,
@@ -108,16 +111,21 @@ const WIN_SPAN = 0.9; // ... out to this fraction of its radius
 const GRAZE = 0.0015; // a path may graze a jaw or rail by this much (parallel contact is harmless)
 const BANK_FACTOR = 0.6; // pre-score window shrink for one-rail banks
 const KICK_FACTOR = 0.5; // ... and for kicks (the cue ball's rebound is less predictable)
+const KICK_SIGMA = 0.6 * DEG; // extra direction error a rail rebound adds
 const RAIL_KEEP = 0.8; // speed kept through a rail contact (speed model only)
 const RAIL_MARGIN = 0.025; // bank / kick contact points stay this far from the jaws
 const POCKET_CLEAR = 0.003; // a path within captureR + this of a pocket centre drops the ball
 const DIRECT_GOOD = 0.15; // below this best direct pre-score, banks and kicks are considered
 const SAFETY_P = 0.35;
+const CONTACT_FOUL = 0.25; // above this P(foul), every level also looks at plain legal hits
 const W_FOUL = 1.0;
 const W_OPP = 0.4;
 const W_OPP_SAFE = 0.9; // opponent weight once the CPU is considering a safety
 const W_LOSS = 2.0;
 const WIN_BONUS = 0.5;
+const PRIOR_N = 2; // pseudo-samples of the geometric pre-score in each P(keep turn) estimate
+const OPP_UNKNOWN = 0.5; // opponent's chances when no sample missed (unknown leave)
+const VERIFY_TOP = 3; // leading candidates re-sampled before the choice
 const BIH_CUE_DIST = 0.3; // ball in hand is judged as a straight shot from this far behind the ghost
 const V_CUE_MIN = 0.35; // m/s
 const V_CUE_MAX = 7.5;
@@ -142,7 +150,12 @@ const POSITION = Object.freeze({
   },
 });
 const SAFETY_CUTS = Object.freeze([0, 35, -35, 65, -65]); // degrees
-const SAFETY_CONTACT_V = 0.75; // m/s cue-ball speed at contact for a safety
+const PLAIN_CUTS = Object.freeze([0, 30, -30]);
+const FINE_CUTS = Object.freeze(Array.from({ length: 35 }, (_, i) => (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 5));
+const SAFETY_CONTACT_V = 0.75; // m/s cue-ball speed at contact for a plain legal hit (fallback)
+const CONTACT_V_MIN = 0.45; // m/s; contact speeds of soft legal hits stay within these
+const CONTACT_V_MAX = 3;
+const CONTACT_RAIL_SPARE = 0.35; // m of travel beyond the rail distance (covers speed error)
 const SAFETY_MAX = Object.freeze({ hard: 24, pro: 32 });
 const BREAK_Y = 0.12;
 const BREAK_BACK = 0.04; // cue placed this far behind the head string for the break
@@ -521,7 +534,7 @@ function pocketWindow(geo, bs, ox, oy, pk, skip) {
 // Ghost-ball geometry of a cue ball at (cx,cy) driving ball `tid` (at o) along unit u.
 // Returns null when the ghost is off the table, the cut is too thin or the cue's path is blocked.
 // gain = |d(object direction) / d(cue aim)|, the ghost-ball error amplification.
-function ghostShot(geo, bs, cx, cy, tid, ux, uy, maxCos = COS_MAX_CUT) {
+function ghostShot(geo, bs, cx, cy, tid, ux, uy, maxCos = COS_MAX_CUT, sigma = 0) {
   const R = geo.R;
   const o = bs.byId[tid];
   const gx = o.x - 2 * R * ux;
@@ -555,14 +568,53 @@ function ghostShot(geo, bs, cx, cy, tid, ux, uy, maxCos = COS_MAX_CUT) {
     cosCut,
     gainSigned: dThetaDAlpha,
     gain: Math.max(1, Math.abs(dThetaDAlpha)),
+    foulRisk: sigma > 0 ? contactRisk(geo, bs, cx, cy, ax, ay, tid, d1, sigma) : 0,
   };
 }
 
+// Geometric foul risk of a straight cue-ball line (unit a from c) onto ball tid at distance d1:
+// the aim error that misses tid entirely (thin side) or first clips another ball near the path.
+function contactRisk(geo, bs, cx, cy, ax, ay, tid, d1, sigma) {
+  const twoR = 2 * geo.R;
+  const o = bs.byId[tid];
+  const ox = o.x - cx;
+  const oy = o.y - cy;
+  const proj = ox * ax + oy * ay;
+  if (proj <= 0) return 0;
+  const off = Math.abs(ox * ay - oy * ax);
+  let risk = tail((twoR - off) / proj, sigma);
+  let worst = Infinity;
+  for (let i = 0; i < bs.n; i++) {
+    const id = bs.ids[i];
+    if (id === 0 || id === tid) continue;
+    const px = bs.xs[i] - cx;
+    const py = bs.ys[i] - cy;
+    const t = px * ax + py * ay;
+    if (t <= 0 || t > d1 + twoR) continue;
+    const m = (Math.abs(px * ay - py * ax) - twoR) / t;
+    if (m < worst) worst = m;
+  }
+  if (worst < Infinity) risk += tail(worst, sigma);
+  return Math.min(1, risk);
+}
+
+// One-sided Gaussian tail: P(error > margin).
+function tail(margin, sigma) {
+  return margin <= 0 ? 0.5 : 0.5 * (1 - erf(margin / (sigma * Math.SQRT2)));
+}
+
+// Chance a one-rail kick misses its ball (two-sided, extra error for the rebound).
+function kickRisk(geo, pathLen, sigma) {
+  const s = Math.hypot(sigma, KICK_SIGMA);
+  return 2 * tail((1.6 * geo.R) / Math.max(pathLen, 0.05), s);
+}
+
 // Direct pot of `tid` into the window's pocket from (cx,cy), with its pre-score for aim sigma.
-function directPot(geo, bs, cx, cy, tid, win, sigma) {
-  const gs = ghostShot(geo, bs, cx, cy, tid, win.ux, win.uy);
+function directPot(geo, bs, cx, cy, tid, win, sigma, foulSigma = 0) {
+  const gs = ghostShot(geo, bs, cx, cy, tid, win.ux, win.uy, COS_MAX_CUT, foulSigma);
   if (!gs) return null;
-  const pre = inWindow(win.half / gs.gain, sigma) * speedFeasibility(gs.d1, win.tIn, gs.cosCut);
+  const allowed = win.half / gs.gain; // aim error (rad) that still pots
+  const speedF = speedFeasibility(gs.d1, win.tIn, gs.cosCut);
   return {
     kind: 'pot',
     target: tid,
@@ -573,7 +625,10 @@ function directPot(geo, bs, cx, cy, tid, win, sigma) {
     d2: win.tIn,
     cosCut: gs.cosCut,
     gainSigned: gs.gainSigned,
-    pre,
+    allowed,
+    speedF,
+    pre: inWindow(allowed, sigma) * speedF,
+    foulPrior: gs.foulRisk,
   };
 }
 
@@ -635,7 +690,7 @@ function directCandidates(env, bs, targets) {
     for (const pk of geo.pockets) {
       const win = pocketWindow(geo, bs, o.x, o.y, pk, tid);
       if (!win) continue;
-      const c = directPot(geo, bs, cue.x, cue.y, tid, win, env.rankSigma);
+      const c = directPot(geo, bs, cue.x, cue.y, tid, win, env.rankSigma, env.rankSigma);
       if (c && c.pre > 0) out.push(c);
     }
   }
@@ -670,7 +725,7 @@ function bankKickCandidates(env, bs, targets) {
         const l1 = Math.hypot(ux, uy);
         ux /= l1;
         uy /= l1;
-        const gs = ghostShot(geo, bs, cue.x, cue.y, tid, ux, uy, COS_MAX_CUT_KICK);
+        const gs = ghostShot(geo, bs, cue.x, cue.y, tid, ux, uy, COS_MAX_CUT_KICK, env.rankSigma);
         if (!gs) continue;
         const d2 = l1 + Math.hypot(win.tx - b.x, win.ty - b.y) - pk.rc;
         const half = Math.atan2(win.hw, d2) * BANK_FACTOR;
@@ -687,6 +742,7 @@ function bankKickCandidates(env, bs, targets) {
           cosCut: gs.cosCut,
           gainSigned: gs.gainSigned,
           pre,
+          foulPrior: gs.foulRisk,
         });
       }
       // Kicks: the cue ball goes off a rail into the ghost ball of a direct pot.
@@ -722,6 +778,7 @@ function bankKickCandidates(env, bs, targets) {
           cosCut,
           gainSigned: 0,
           pre,
+          foulPrior: kickRisk(geo, lk, env.rankSigma),
         });
       }
     }
@@ -730,15 +787,16 @@ function bankKickCandidates(env, bs, targets) {
 }
 
 // Soft legal-contact shots: full / half / thin hits on every reachable legal target, and one-rail
-// kicks onto targets the cue ball cannot see directly (or that are behind the head string while
-// the cue ball is in the kitchen: the kick must cross the string first).
-function contactCandidates(env, bs, req) {
+// kicks onto targets (all of them with allKicks, else only those the cue ball cannot see directly
+// or that are behind the head string while the cue ball is in the kitchen: the kick must cross
+// the string first).
+function contactCandidates(env, bs, req, cuts, kind, allKicks = false) {
   const geo = env.geo;
   const R = geo.R;
   const cue = bs.byId[0];
   const out = [];
   const blocked = req.kitchenBlocked;
-  for (const deg of SAFETY_CUTS) {
+  for (const deg of cuts) {
     for (const tid of req.legalTargets) {
       if (blocked.includes(tid)) continue;
       const o = bs.byId[tid];
@@ -756,13 +814,25 @@ function contactCandidates(env, bs, req) {
       const gy = cue.y + ay * t;
       if (!corridorClear(bs, cue.x, cue.y, gx, gy, 0, tid, 2 * R)) continue;
       if (crossesPocket(geo, cue.x, cue.y, gx, gy)) continue;
-      out.push({ kind: 'safety', target: tid, pocket: null, angle: alpha, objDir: null, d1: t, d2: 0, cosCut: 1, pre: 0 });
+      out.push({
+        kind,
+        target: tid,
+        pocket: null,
+        angle: alpha,
+        objDir: null,
+        d1: t,
+        d2: 0,
+        cosCut: 1,
+        pre: 0,
+        vContact: railContactSpeed(o.x, o.y, (o.x - gx) / (2 * R), (o.y - gy) / (2 * R), gx, gy, ax, ay),
+        foulPrior: contactRisk(geo, bs, cue.x, cue.y, ax, ay, tid, t, env.rankSigma),
+      });
     }
   }
   // Kicks for targets with no direct contact found above.
   const seen = new Set(out.map((c) => c.target));
   for (const tid of req.legalTargets) {
-    if (seen.has(tid) && !blocked.includes(tid)) continue;
+    if (!allKicks && seen.has(tid) && !blocked.includes(tid)) continue;
     const o = bs.byId[tid];
     for (const m of geo.mirrors) {
       const om = reflect(m, o.x, o.y);
@@ -772,9 +842,10 @@ function contactCandidates(env, bs, req) {
       if (!corridorClear(bs, cue.x, cue.y, b.x, b.y, 0, -1, 2 * R)) continue;
       if (!corridorClear(bs, b.x, b.y, o.x, o.y, 0, tid, 2 * R)) continue;
       if (crossesPocket(geo, cue.x, cue.y, b.x, b.y) || crossesPocket(geo, b.x, b.y, o.x, o.y)) continue;
-      const lk = Math.hypot(b.x - cue.x, b.y - cue.y) + Math.hypot(o.x - b.x, o.y - b.y) - 2 * R;
+      const lb = Math.hypot(o.x - b.x, o.y - b.y);
+      const lk = Math.hypot(b.x - cue.x, b.y - cue.y) + lb - 2 * R;
       out.push({
-        kind: 'safety',
+        kind,
         target: tid,
         pocket: null,
         angle: Math.atan2(b.y - cue.y, b.x - cue.x),
@@ -783,6 +854,8 @@ function contactCandidates(env, bs, req) {
         d2: 0,
         cosCut: 1,
         pre: 0,
+        vContact: railContactSpeed(o.x, o.y, (o.x - b.x) / lb, (o.y - b.y) / lb, b.x, b.y, (o.x - b.x) / lb, (o.y - b.y) / lb),
+        foulPrior: kickRisk(geo, lk, env.rankSigma),
         kick: true,
       });
     }
@@ -824,6 +897,26 @@ function cueSpeedFor(vc, k, d) {
   return hi;
 }
 
+// Cue-ball speed at contact for a soft legal hit: enough for the object ball (moving along u from
+// o) or, on a thin hit, the cue ball (along its stun tangent from the contact point g, arriving
+// along a) to reach a rail with a little to spare.
+function railContactSpeed(ox, oy, ux, uy, gx, gy, ax, ay) {
+  const cosCut = Math.max(0.05, Math.min(1, ax * ux + ay * uy));
+  const dObj = rayRails(ox, oy, ux, uy).t + CONTACT_RAIL_SPARE;
+  let v = objectSpeedFor(dObj) / (TRANSFER * Math.max(cosCut, 0.2));
+  const sinCut = Math.sqrt(1 - cosCut * cosCut);
+  if (sinCut > 0.3) {
+    let tx = ax - cosCut * ux;
+    let ty = ay - cosCut * uy;
+    const tl = Math.hypot(tx, ty);
+    tx /= tl;
+    ty /= tl;
+    const dCue = rayRails(gx, gy, tx, ty).t + CONTACT_RAIL_SPARE;
+    v = Math.min(v, objectSpeedFor(dCue) / sinCut);
+  }
+  return Math.min(CONTACT_V_MAX, Math.max(CONTACT_V_MIN, v * 1.15));
+}
+
 // Cue speed for a pot candidate with the given speed tier and tip offset.
 function potSpeed(cand, tier, spinY) {
   const vObj = objectSpeedFor(cand.d2 + SPEED_MARGIN[tier]);
@@ -841,8 +934,9 @@ function aimFor(dir, sx) {
   return normalizeAngle(dir - (sx / MAX_TIP) * MAX_SQUIRT_RAD);
 }
 
-function noisyShot(env, shot) {
-  const angle = normalizeAngle(shot.angle + gaussian(env.rng) * env.aimSigma);
+// One execution of `shot`: aim error z * sigma (z drawn here unless given), speed error.
+function noisyShot(env, shot, z = gaussian(env.rng)) {
+  const angle = normalizeAngle(shot.angle + z * env.aimSigma);
   const speed = shotSpeed(shot.power) * Math.max(0.2, 1 + gaussian(env.rng) * env.speedSigma);
   return {
     angle,
@@ -933,53 +1027,66 @@ function judge(env, st, record) {
   return { out, win, loss, keep, foul: out.fouls.length > 0 };
 }
 
-// Simulate a shot `samples` times with execution noise and score it.
-async function evaluateShotPlan(env, st, cand, shot, samples) {
-  let n = 0;
-  let keep = 0;
-  let foul = 0;
-  let loss = 0;
-  let wins = 0;
-  let posSum = 0;
-  let oppSum = 0;
+// Simulate a shot `samples` times with execution noise and accumulate the raw counts. Aim noise
+// is antithetic (every second sample mirrors the previous aim error), which halves the variance
+// of the estimate for a shot aimed at the middle of its window.
+async function evaluateShotPlan(env, st, cand, shot, samples, acc = newAcc()) {
   for (let k = 0; k < samples; k++) {
     if (env.sims >= MAX_SIMS) break;
-    const s = noisyShot(env, shot);
+    acc.z = acc.n % 2 === 1 ? -acc.z : gaussian(env.rng);
+    const s = noisyShot(env, shot, acc.z);
     const r = simulateShot(st.balls, s, { dt: AI_DT, table: env.table });
     env.sims++;
     const record = { log: r.log, final: r.final, call: s.call };
     const j = judge(env, st, record);
-    n++;
-    if (j.foul) foul++;
-    if (j.loss) loss++;
-    if (j.win) {
-      wins++;
-      keep++;
-      posSum += 1;
-    } else if (!j.loss) {
+    acc.n++;
+    if (j.foul) acc.foul++;
+    if (j.loss) acc.loss++;
+    else if (j.win) {
+      acc.wins++;
+      acc.keep++;
+      acc.posSum += 1;
+    } else {
       const next = applyOutcome(st, record, j.out, env.table);
       if (j.keep) {
-        keep++;
-        if (env.pos.weight > 0) posSum += bestShotValue(env, next);
-      } else if (env.pos.oppWeight > 0) {
-        oppSum += bestShotValue(env, next);
+        acc.keep++;
+        if (env.pos.weight > 0) acc.posSum += bestShotValue(env, next);
+      } else {
+        acc.miss++;
+        if (env.pos.oppWeight > 0) acc.oppSum += bestShotValue(env, next);
       }
     }
     await env.tick();
   }
   env.evaluated++;
-  if (!n) return null;
-  const P = keep / n;
-  const pFoul = foul / n;
-  const pLoss = loss / n;
-  const pos = posSum / n;
-  const opp = oppSum / n;
-  const base = P + (wins / n) * WIN_BONUS + env.pos.weight * pos - W_FOUL * pFoul - W_LOSS * pLoss;
+  return acc.n ? finalize(env, cand, shot, acc) : null;
+}
+
+function newAcc() {
+  return { n: 0, keep: 0, wins: 0, foul: 0, loss: 0, miss: 0, posSum: 0, oppSum: 0, z: 0 };
+}
+
+// Scores from the raw counts. P(keep turn) is shrunk toward the geometric pre-score with PRIOR_N
+// pseudo-samples: with 1-4 samples per shot, the best of 30 candidates would otherwise be the one
+// that got lucky. Position and the opponent's chances are conditional means scaled by that P.
+function finalize(env, cand, shot, acc) {
+  const n = acc.n;
+  const prior = cand.pre || 0;
+  const p = (acc.keep + PRIOR_N * prior) / (n + PRIOR_N);
+  const pFoul = (acc.foul + PRIOR_N * (cand.foulPrior || 0)) / (n + PRIOR_N);
+  const pLoss = acc.loss / n;
+  const pWin = acc.wins ? (p * acc.wins) / acc.keep : 0;
+  const posCond = acc.keep ? acc.posSum / acc.keep : 0;
+  const oppCond = acc.miss ? acc.oppSum / acc.miss : OPP_UNKNOWN;
+  const pos = p * posCond;
+  const opp = Math.max(0, 1 - p - pLoss) * oppCond;
+  const base = p + pWin * WIN_BONUS + env.pos.weight * pos - W_FOUL * pFoul - W_LOSS * pLoss;
   return {
     cand,
     shot,
+    acc,
     n,
-    p: P,
+    p,
     pFoul,
     pLoss,
     pos,
@@ -987,6 +1094,12 @@ async function evaluateShotPlan(env, st, cand, shot, samples) {
     score: base - env.pos.oppWeight * opp,
     safeScore: base - W_OPP_SAFE * opp,
   };
+}
+
+// More samples for an evaluated shot.
+async function reevaluate(env, st, e, samples) {
+  const acc = { ...e.acc };
+  return (await evaluateShotPlan(env, st, e.cand, e.shot, samples, acc)) || e;
 }
 
 // Highest `key` among evaluations, never one that loses the rack more often than not when an
@@ -1022,7 +1135,7 @@ function buildPotShot(env, st, req, cand, variant) {
 }
 
 function buildContactShot(env, st, req, cand) {
-  const v = cueSpeedFor(SAFETY_CONTACT_V, 1, cand.d1);
+  const v = cueSpeedFor(cand.vContact || SAFETY_CONTACT_V, 1, cand.d1);
   return {
     angle: cand.angle,
     power: powerForSpeed(Math.min(V_CUE_MAX, Math.max(V_CUE_MIN, v))),
@@ -1039,9 +1152,11 @@ async function planShot(env, st) {
   const N = env.lv.candidates;
 
   // 1. Candidates, best pre-score first.
+  // Banks and kicks only when no direct pot is reasonable for a decent player (judged with the
+  // reference sigma, so a weak level does not start kicking just because it aims badly).
   const cands = directCandidates(env, bs, targets);
   let bestDirect = 0;
-  for (const c of cands) if (c.pre > bestDirect) bestDirect = c.pre;
+  for (const c of cands) bestDirect = Math.max(bestDirect, inWindow(c.allowed, env.refSigma) * c.speedF);
   if (bestDirect < DIRECT_GOOD) for (const c of bankKickCandidates(env, bs, targets)) cands.push(c);
   cands.sort((a, b) => b.pre - a.pre);
   await env.tick();
@@ -1069,13 +1184,26 @@ async function planShot(env, st) {
       }
     }
   }
+  // Re-check the leaders with fresh samples before trusting them.
+  evals.sort((a, b) => b.score - a.score);
+  for (let i = 0; i < Math.min(VERIFY_TOP, evals.length) && !env.stop(); i++) {
+    evals[i] = await reevaluate(env, st, evals[i], K);
+  }
   let best = pickBest(evals, 'score');
 
-  // 4. Safety (or, at any level, a plain legal hit when there is nothing to pot at all).
+  // 4. Safety (hard/pro), or at any level a plain legal hit when the best attempt is hopeless
+  // (likely to foul, or worse than doing nothing).
   const wantSafety = env.lv.safety && (!best || best.p < SAFETY_P);
+  const wantContact = !best || best.pFoul > CONTACT_FOUL;
   let safeties = [];
-  if (wantSafety || !cands.length) {
-    const cs = contactCandidates(env, bs, req);
+  if (wantSafety || wantContact) {
+    // Weaker levels only "just hit it" (full / half ball); thin safeties, kicks and a second,
+    // firmer speed are for hard and pro. A fine sweep of cut angles is the last resort.
+    let cs = wantSafety
+      ? contactCandidates(env, bs, req, SAFETY_CUTS, 'safety', true)
+      : contactCandidates(env, bs, req, PLAIN_CUTS, 'contact');
+    if (!cs.length) cs = contactCandidates(env, bs, req, FINE_CUTS, wantSafety ? 'safety' : 'contact', true);
+    if (wantSafety) cs = cs.concat(cs.map((c) => ({ ...c, vContact: (c.vContact || SAFETY_CONTACT_V) * 1.7 })));
     const max = wantSafety ? SAFETY_MAX[env.lv.id] || SAFETY_MAX.hard : Math.max(2, N);
     const first = [];
     for (let i = 0; i < cs.length && i < max && !env.stop(); i++) {
@@ -1086,8 +1214,7 @@ async function planShot(env, st) {
     // The most promising ones get the remaining samples.
     first.sort((a, b) => b.safeScore - a.safeScore);
     for (let i = 0; i < Math.min(4, first.length) && K > 1 && !env.stop(); i++) {
-      const more = await evaluateShotPlan(env, st, first[i].cand, first[i].shot, K - 1);
-      if (more) first[i] = mergeEvals(env, first[i], more);
+      first[i] = await reevaluate(env, st, first[i], K - 1);
     }
     safeties = first;
     const pool = evals.concat(safeties);
@@ -1121,13 +1248,6 @@ async function planShot(env, st) {
       candidates: cands.length,
     },
   };
-}
-
-// Pool two evaluations of the same shot (sample-weighted).
-function mergeEvals(env, a, b) {
-  const n = a.n + b.n;
-  const mix = (k) => (a[k] * a.n + b[k] * b.n) / n;
-  return { ...a, n, p: mix('p'), pFoul: mix('pFoul'), pLoss: mix('pLoss'), pos: mix('pos'), opp: mix('opp'), score: mix('score'), safeScore: mix('safeScore') };
 }
 
 // Softly hit the nearest legal target full in the face.
