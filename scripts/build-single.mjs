@@ -89,10 +89,32 @@ export function build() {
   mkdirSync(join(root, 'dist'), { recursive: true });
   const out = join(root, 'dist/pool8.html');
   writeFileSync(out, html);
-  return { out, modules: order.map((m) => m.name), bytes: Buffer.byteLength(html) };
+  const artifactOut = join(root, 'dist/pool8-artifact.html');
+  writeFileSync(artifactOut, artifactPage(html));
+  return { out, artifactOut, modules: order.map((m) => m.name), bytes: Buffer.byteLength(html) };
+}
+
+// Variant for a claude.ai Artifact: the host wraps the page in its own doctype/html/head/body
+// skeleton (with a viewport meta) and blocks the manifest fetch, so only the page content goes in.
+function artifactPage(html) {
+  const head = html.slice(html.indexOf('<head>') + 6, html.indexOf('</head>'));
+  const bodyOpen = html.match(/<body[^>]*>/);
+  const body = html.slice(bodyOpen.index + bodyOpen[0].length, html.lastIndexOf('</body>'));
+  const pick = (re) => (head.match(re) || [''])[0];
+  const title = pick(/<title>[\s\S]*?<\/title>/);
+  const icon = pick(/<link[^>]+rel=["']icon["'][^>]*>/);
+  const theme = pick(/<meta[^>]+name=["']theme-color["'][^>]*>/);
+  const style = pick(/<style>[\s\S]*?<\/style>/);
+  const script = pick(/<script type="module">[\s\S]*<\/script>/);
+  if (!title || !style || !script) throw new Error('artifact build: missing title, style or script');
+  // Set the layout before first paint (ui.applyLayout() takes over once the module runs).
+  const layout =
+    '<script>(function(){var a=innerWidth/Math.max(1,innerHeight);' +
+    "document.body.dataset.layout=a>=1.25?'landscape':a<=0.8?'portrait':'square';})();</script>";
+  return [title, icon, theme, style, layout, body.trim(), script, ''].join('\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const r = build();
-  console.log(`wrote ${r.out} (${(r.bytes / 1024).toFixed(1)} KB) modules: ${r.modules.join(', ')}`);
+  console.log(`wrote ${r.out} (${(r.bytes / 1024).toFixed(1)} KB) and ${r.artifactOut}; modules: ${r.modules.join(', ')}`);
 }

@@ -9821,9 +9821,15 @@ function drawDebug(dt) {
 }
 
 // ---------- wake lock (keeps the screen on mid-game; optional, may be refused in iframes) ----------
+function wakeLockAllowed() {
+  // Embedded frames (e.g. an Artifact) may forbid it; asking anyway logs a policy violation.
+  const policy = document.permissionsPolicy || document.featurePolicy;
+  return !(policy && policy.allowsFeature && !policy.allowsFeature('screen-wake-lock'));
+}
+
 async function requestWakeLock() {
   try {
-    if (navigator.wakeLock && !app.wakeLock && !document.hidden) {
+    if (navigator.wakeLock && !app.wakeLock && !document.hidden && wakeLockAllowed()) {
       app.wakeLock = await navigator.wakeLock.request('screen');
       app.wakeLock.addEventListener('release', () => (app.wakeLock = null));
     }
