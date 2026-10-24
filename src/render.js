@@ -131,11 +131,13 @@ function holeOf(p) {
   if (p.kind === 'corner') {
     return { id: p.id, x: p.x + p.dir.x * 0.05, y: p.y + p.dir.y * 0.05, r: POCKET_VISUAL_R, dir: p.dir };
   }
+  // Side hole sits just behind the cushion nose line, where physics captures the ball.
+  const r = POCKET_VISUAL_R * 0.98;
   return {
     id: p.id,
-    x: p.mouth.x + p.dir.x * 0.053,
-    y: p.mouth.y + p.dir.y * 0.053,
-    r: POCKET_VISUAL_R * 0.98,
+    x: p.mouth.x + p.dir.x * (r + 0.003),
+    y: p.mouth.y + p.dir.y * (r + 0.003),
+    r,
     dir: p.dir,
   };
 }

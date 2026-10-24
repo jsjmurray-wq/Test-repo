@@ -453,16 +453,20 @@ describe('Game', () => {
     assert.throws(() => Game.restore('{"v":99}', { WorldClass: FakeWorld }));
   });
 
-  test('restore of a save taken mid-roll returns to the shot position; decisions are replayed', () => {
+  test('restore of a save taken mid-roll replays the shot instead of undoing it; decisions are replayed', () => {
     const { g } = started();
     const pre = g.state;
     g.world.script({ events: BREAK_POT, frames: 10 });
     g.shoot(SHOT);
     g.update(1 / 60);
     assert.equal(g.phase, 'rolling');
-    const g2 = Game.restore(g.serialize(), { WorldClass: FakeWorld });
-    assert.equal(g2.phase, 'aim');
-    assert.deepEqual(g2.state, pre);
+    const saved = JSON.parse(g.serialize());
+    assert.equal(saved.phase, 'aim');
+    assert.deepEqual(saved.match.game, pre); // pre-shot position plus the shot in flight
+    assert.equal(saved.pendingShot.angle, SHOT.angle);
+    const g2 = Game.restore(JSON.stringify(saved), { WorldClass: FakeWorld });
+    assert.notEqual(g2.phase, 'rolling');
+    assert.equal(g2.state.shotNo, pre.shotNo + 1); // the shot counted
 
     const { g: d } = started();
     shoot(d, BREAK_ILLEGAL);
@@ -557,5 +561,43 @@ describe('Game', () => {
     off();
     g.update(TOSS_TIME);
     assert.equal(n, 0);
+  });
+});
+
+describe('save during a rolling shot (real physics)', () => {
+  test('restore replays the in-flight shot to the same result as the live game', () => {
+    const config = {
+      mode: 'pvp',
+      players: [
+        { name: 'A', kind: 'human' },
+        { name: 'B', kind: 'human' },
+      ],
+      raceTo: 3,
+    };
+    const live = new Game({ config, seed: 1234 });
+    live.update(TOSS_TIME + 0.01);
+    assert.equal(live.phase, 'aim');
+    const cue = live.cuePosition();
+    const apex = live.state.balls[1].on ? live.state.balls.find((b) => b.id !== 0 && b.on) : null;
+    const angle = Math.atan2(TABLE.footSpot.y - cue.y, TABLE.footSpot.x - cue.x);
+    assert.ok(apex);
+    assert.equal(live.shoot({ angle, power: 0.95, spin: { x: 0, y: -0.1 }, call: null }).ok, true);
+    for (let i = 0; i < 20; i++) live.update(1 / 60); // mid-roll
+    assert.equal(live.phase, 'rolling');
+    const save = live.serialize();
+    for (let i = 0; i < 6000 && live.phase === 'rolling'; i++) live.update(1 / 60);
+    assert.notEqual(live.phase, 'rolling');
+
+    const restored = Game.restore(save);
+    assert.notEqual(restored.phase, 'rolling');
+    assert.equal(restored.phase, live.phase);
+    assert.equal(restored.state.turn, live.state.turn);
+    assert.equal(restored.state.shotNo, live.state.shotNo);
+    for (let id = 0; id < 16; id++) {
+      const a = live.state.balls[id];
+      const b = restored.state.balls[id];
+      assert.equal(b.on, a.on, `ball ${id} on`);
+      assert.ok(Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9, `ball ${id} position`);
+    }
   });
 });

@@ -38,8 +38,13 @@ export class AudioFX {
         src.buffer = silent;
         src.connect(this.ctx.destination);
         src.start(0);
+        // WebKit moves the context to 'interrupted' during calls, Siri or alarms.
+        this.ctx.onstatechange = () => {
+          if (this.ctx.state === 'interrupted' && this.enabled && !document.hidden) this.resume();
+        };
       }
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+      if (this.enabled) this.resume();
+      else this.suspend();
     } catch {
       this.ctx = null;
     }
@@ -47,19 +52,29 @@ export class AudioFX {
 
   setEnabled(on) {
     this.enabled = !!on;
+    // A silent but running context still costs battery, so park it while sound is off.
+    if (this.enabled) this.resume();
+    else this.suspend();
   }
 
   suspend() {
+    // Only suspend a running context: suspending an 'interrupted' one stops WebKit from
+    // resuming it automatically when the interruption ends.
     if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
   }
 
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    const st = this.ctx && this.ctx.state;
+    if (this.enabled && (st === 'suspended' || st === 'interrupted')) this.ctx.resume().catch(() => {});
+  }
+
+  _ready() {
+    return this.enabled && !!this.ctx && this.ctx.state === 'running';
   }
 
   // Map physics events to sounds.
   handle(events) {
-    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    if (!this._ready()) return;
     for (const ev of events) {
       switch (ev.type) {
         case 'strike':
@@ -134,7 +149,7 @@ export class AudioFX {
 
   // Phenolic ball-on-ball clack: bright, very short.
   ball(v) {
-    if (v < 0.04) return;
+    if (v < 0.04 || !this._ready()) return;
     const now = this.ctx.currentTime;
     // During a break dozens of contacts land within milliseconds; thin them out.
     if (now - this.lastBallAt < 0.006 && v < 1.5) return;
@@ -149,7 +164,7 @@ export class AudioFX {
 
   // Rubber cushion: soft, low thump.
   cushion(v) {
-    if (v < 0.05) return;
+    if (v < 0.05 || !this._ready()) return;
     if (!this._voice(0.09)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, Math.pow(v / 4, 0.8));
@@ -159,7 +174,7 @@ export class AudioFX {
 
   // Ball dropping into a pocket, then rolling down the return.
   pocket(v) {
-    if (!this._voice(0.9)) return;
+    if (!this._ready() || !this._voice(0.9)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.45 + v / 4);
     this._noiseBurst(now, { freq: 900, q: 1.1, peak: 0.35 * k, attack: 0.002, decay: 0.05 });
@@ -170,7 +185,7 @@ export class AudioFX {
 
   // Leather tip on the cue ball.
   strike(v, miscue = false) {
-    if (!this._voice(0.06)) return;
+    if (!this._ready() || !this._voice(0.06)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.25 + v / 7);
     if (miscue) {

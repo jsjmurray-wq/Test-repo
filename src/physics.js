@@ -105,6 +105,9 @@ const FROZEN_GAP = 0.0005; // a ball this close to a cushion at the strike is fr
 const FROZEN_LEAVE = 0.001; // ... until it moves this far away
 const SAFETY_MARGIN = 0.08; // beyond the cushion lines: treat as pocketed (never expected)
 const EVENT_CAP = 64; // contacts resolved exactly per substep before falling back
+const SIDE_SHELF = 0.003; // side pockets: capture line this far behind the cushion nose line
+const SIDE_BIG_R = 0.25; // radius of the circle standing in for that capture half-plane
+const MIN_APPROACH = 1e-7 * 2 * BALL_R; // ignore ball pairs approaching slower than this
 const MAX_SUBSTEP = 0.0025; // step(dt) splits longer intervals into substeps no longer than this
 const MAX_ADVANCE = 0.1; // advance() ignores frame gaps beyond this (avoids a spiral of death)
 const SEPARATE_ITERS = 4;
@@ -226,16 +229,17 @@ function buildGeometry(table) {
       y1: n.y + rr,
     };
   });
-  const pockets = table.pockets.map((p) => ({
-    id: p.id,
-    x: p.x,
-    y: p.y,
-    r2: p.captureR * p.captureR,
-    x0: p.x - p.captureR,
-    x1: p.x + p.captureR,
-    y0: p.y - p.captureR,
-    y1: p.y + p.captureR,
-  }));
+  // Corner pockets capture inside table.pockets' circle. Side pockets capture only once the ball
+  // centre is SIDE_SHELF behind the cushion nose line: a large circle tangent to that line stands
+  // in for a half-plane, so steep side-pocket cuts hit the far jaw instead of dropping early.
+  // (rules/aim/AI/render keep using table.pockets' x/y/captureR.)
+  const pockets = table.pockets.map((p) => {
+    const side = p.kind === 'side';
+    const r = side ? SIDE_BIG_R : p.captureR;
+    const cx = side ? p.mouth.x + p.dir.x * (SIDE_BIG_R + SIDE_SHELF) : p.x;
+    const cy = side ? p.mouth.y + p.dir.y * (SIDE_BIG_R + SIDE_SHELF) : p.y;
+    return { id: p.id, x: cx, y: cy, r2: r * r, x0: cx - r, x1: cx + r, y0: cy - r, y1: cy + r };
+  });
 
   // "Fast box": a ball whose swept centre stays inside it cannot reach any feature, so the
   // per-feature tests are skipped for most of the table. Start from the cushion lines and shrink
@@ -550,7 +554,7 @@ export class World {
         const reach = TWO_R + (Math.abs(dvx) + Math.abs(dvy)) * best;
         if (dx > reach || dx < -reach || dy > reach || dy < -reach) continue;
         const bb = dx * dvx + dy * dvy;
-        if (bb >= 0) continue; // separating
+        if (bb >= -MIN_APPROACH) continue; // separating (or a grazing contact that never closes)
         const c = dx * dx + dy * dy - FOUR_R2;
         let t;
         if (c <= 0) {
@@ -901,6 +905,36 @@ export class World {
       b.wy = s[o + 5];
       b.wz = s[o + 6];
       b.state = 'slide';
+    }
+    // Grazing contacts left approaching after the micro-sim would re-fire at t = 0 until the
+    // event cap; remove any residual approach between touching members (inelastic, so energy
+    // can only drop).
+    for (let it = 0; it < 4; it++) {
+      let fixed = false;
+      for (let i = 0; i < m; i++) {
+        for (let j = i + 1; j < m; j++) {
+          const a = balls[mem[i]];
+          const c = balls[mem[j]];
+          const dx = c.x - a.x;
+          const dy = c.y - a.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > (TWO_R + 1e-6) * (TWO_R + 1e-6)) continue;
+          const d = Math.sqrt(d2) || 1e-12;
+          const nx = dx / d;
+          const ny = dy / d;
+          const vn = (a.vx - c.vx) * nx + (a.vy - c.vy) * ny;
+          if (vn <= 0) continue;
+          const jn = 0.5 * vn;
+          a.vx -= jn * nx;
+          a.vy -= jn * ny;
+          c.vx += jn * nx;
+          c.vy += jn * ny;
+          a.state = 'slide';
+          c.state = 'slide';
+          fixed = true;
+        }
+      }
+      if (!fixed) break;
     }
   }
 

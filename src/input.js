@@ -30,6 +30,7 @@ const NEAR_DAMP = 0.25;
 const FINE_RAD_PER_PX = (0.05 * Math.PI) / 180;
 const POCKET_SLOP_PX = 12;
 const SHOOT_MIN = 0.03;
+const POWER_DEAD_PX = 10; // finger drift on the power bar below this never arms a shot
 const DOUBLE_TAP_MS = 320;
 
 function inSpinLabel(s) {
@@ -217,7 +218,8 @@ export class InputController {
 
   // ------------------------------------------------------------------ canvas: aim / place / call
   _down(e) {
-    if (!this.mode.enabled || this._g) return;
+    // While the cue is being pulled back the aim is locked: a stray second finger can't swing it.
+    if (!this.mode.enabled || this._g || this._pg) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const view = this.getView();
     if (!view) return;
@@ -326,12 +328,18 @@ export class InputController {
     if (!this.mode.enabled || this._pg) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
-    // Full power = a pull of 0.9 x bar height. If the finger lands so low that this would run
-    // off the bottom of the screen, shrink the travel so 100% stays reachable.
+    // Pulling back locks the aim: end any aim drag still in progress on the table.
+    if (this._g && this._g.kind === 'aim') {
+      this._release(this.canvas, this._g.id);
+      this._g = null;
+    }
+    // Full power = a pull of 0.9 x bar height after a small dead zone (so a tap that drifts a
+    // few pixels never fires). If the finger lands so low that this would run off the bottom of
+    // the screen, shrink the travel so 100% stays reachable.
     const h = this._powerTrack.getBoundingClientRect().height;
-    const reach = (window.innerHeight || h) - 6 - e.clientY;
-    const travel = Math.max(60, Math.min(h * 0.9, reach));
-    this._pg = { id: e.pointerId, y0: e.clientY, travel };
+    const reach = (window.innerHeight || h) - 4 - e.clientY - POWER_DEAD_PX;
+    const travel = Math.max(24, Math.min(h * 0.9, reach));
+    this._pg = { id: e.pointerId, y0: e.clientY, travel, armed: false };
     clearTimeout(this._releaseTimer);
     this.powerEl.classList.remove('release');
     this.powerEl.classList.add('is-active');
@@ -342,7 +350,10 @@ export class InputController {
     const pg = this._pg;
     if (!pg || e.pointerId !== pg.id) return;
     e.preventDefault();
-    const p = clamp((e.clientY - pg.y0) / pg.travel, 0, 1);
+    const dy = e.clientY - pg.y0;
+    if (!pg.armed && dy < POWER_DEAD_PX) return;
+    pg.armed = true;
+    const p = clamp((dy - POWER_DEAD_PX) / pg.travel, 0, 1);
     if (p === this._power) return;
     this.power = p;
     if (this.cb.onPower) this.cb.onPower(p);
@@ -355,7 +366,7 @@ export class InputController {
     this._release(this.powerEl, pg.id);
     this.powerEl.classList.remove('is-active');
     const p = this._power;
-    if (e.type === 'pointerup' && p > SHOOT_MIN && this.mode.enabled) {
+    if (e.type === 'pointerup' && pg.armed && p > SHOOT_MIN && this.mode.enabled) {
       const shot = { angle: this._angle, power: p, spin: { x: this._spin.x, y: this._spin.y } };
       // Snap the cue forward in the bar.
       this.powerEl.classList.add('release');

@@ -11,6 +11,7 @@
 import { TABLE } from './table.js';
 import { World } from './physics.js';
 import { mulberry32 } from './rng.js';
+import { DT, MAX_SHOT_T } from './constants.js';
 import {
   RULESET_CASUAL,
   newGameState,
@@ -315,12 +316,14 @@ export class Game {
 
   // ---- Save / restore ----
 
-  // A save taken while the balls roll restores to the position before that shot.
+  // A save taken while the balls roll stores the position before the shot plus the shot itself;
+  // restore() replays it to rest (physics is deterministic), so quitting mid-shot cannot undo it.
   serialize() {
     return JSON.stringify({
       v: SAVE_VERSION,
       phase: this.phase === 'rolling' ? 'aim' : this.phase,
       tossLeft: this.phase === 'toss' ? this._tossLeft : 0,
+      pendingShot: this.phase === 'rolling' && this._shot ? this._shot : null,
       match: { ...this.match, rng: this._rng.state() },
     });
   }
@@ -338,6 +341,12 @@ export class Game {
     this._tossLeft = this.phase === 'toss' ? Math.max(0, Number(data.tossLeft) || TOSS_TIME) : 0;
     this.world.setBalls(this.state.balls);
     if (this.phase === 'aim') this._enterAim();
+    if (this.phase === 'aim' && data.pendingShot && this.shoot(data.pendingShot).ok) {
+      // Same fixed-DT stepping as advance(), so the replay ends exactly where the live shot would.
+      const maxSteps = Math.ceil(MAX_SHOT_T / DT) + 10;
+      for (let i = 0; i < maxSteps && !this.world.atRest(); i++) this.world.step(DT);
+      this._resolveShot();
+    }
     // Listeners attach after restore(), so the first update() re-announces the current phase.
     this._replay = true;
   }

@@ -33,6 +33,7 @@ const app = {
   stroke: null, // human stroke animation {t, shot, pull}
   cpu: null, // CPU turn: {phase:'think'|'place'|'aim'|'pull'|'stroke', t, plan, ...}
   token: 0, // bumped whenever a game starts or ends so stale async work is dropped
+  cpuEpoch: 0, // bumped whenever the board is reset mid-game so an in-flight CPU plan is dropped
   placing: false,
   lastTime: 0,
   frameMs: 0,
@@ -40,25 +41,38 @@ const app = {
 };
 
 // ---------- persistence ----------
+// localStorage can be missing or throw (private browsing, sandboxed iframes), so the latest save
+// is also kept in memory: "Resume" then still works for the rest of the session.
+let memSave = null;
+let persisted = false; // whether the last save reached localStorage
+
 function saveGame() {
   if (!app.game || AUTOPLAY) return;
+  if (app.game.phase === 'matchOver') {
+    clearSave(); // nothing to resume once the match is decided
+    return;
+  }
+  memSave = JSON.stringify({ config: app.config, game: app.game.serialize() });
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ config: app.config, game: app.game.serialize() }));
+    localStorage.setItem(SAVE_KEY, memSave);
+    persisted = true;
   } catch {
-    /* storage unavailable (private mode / sandboxed iframe) */
+    persisted = false;
   }
 }
 
 function loadSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (raw) return JSON.parse(raw);
   } catch {
-    return null;
+    /* fall back to the in-memory copy */
   }
+  return memSave ? JSON.parse(memSave) : null;
 }
 
 function clearSave() {
+  memSave = null;
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {
@@ -77,6 +91,7 @@ function resize() {
   app.viewKey = key;
   app.view = computeView(w, h);
   app.renderer.setView(app.view, dpr);
+  app.drewPaused = false; // setView clears the canvas; draw it again even when paused
 }
 
 // ---------- helpers ----------
@@ -92,7 +107,11 @@ function defaultAimAngle() {
   const cue = g.cuePosition();
   let best = null;
   let bestD = Infinity;
-  for (const id of req.legalTargets || []) {
+  // After a break scratch, balls behind the head string can't be hit directly.
+  const blocked = new Set(req.kitchenBlocked || []);
+  const legal = req.legalTargets || [];
+  const open = legal.filter((id) => !blocked.has(id));
+  for (const id of open.length ? open : legal) {
     const b = g.state.balls[id];
     if (!b || !b.on) continue;
     const d = Math.hypot(b.x - cue.x, b.y - cue.y);
@@ -139,6 +158,7 @@ function refreshHud() {
   const g = app.game;
   if (!g) return;
   const hud = g.hud();
+  hud.kitchenBlocked = (g.requirements().kitchenBlocked || []).length;
   // Prompts like "Ball in hand" are for the human holding the phone, not the CPU.
   if (!isHumanTurn()) hud.hint = '';
   app.ui.updateHud(hud);
@@ -217,6 +237,7 @@ function bindGame(game) {
   refreshHud();
   updateInputMode();
   requestWakeLock();
+  if (game.phase === 'toss') app.ui.banner('Tossing for the break…', 1200);
 }
 
 function startGame(config) {
@@ -248,6 +269,7 @@ function resumeGame() {
 
 function quitToMenu() {
   saveGame();
+  dropCpuWork();
   app.token++;
   app.game = null;
   app.stroke = null;
@@ -261,8 +283,17 @@ function quitToMenu() {
 }
 
 function freshRackControls() {
+  dropCpuWork();
   app.renderer.reset();
   resetShotControls();
+}
+
+// Forget any CPU plan being computed or animated (the board is about to change).
+function dropCpuWork() {
+  app.cpuEpoch++;
+  app.cpu = null;
+  app.stroke = null;
+  app.ui.setThinking(false);
 }
 
 // ---------- shooting ----------
@@ -318,7 +349,9 @@ function yieldToBrowser() {
 
 async function runCpuTurn(level, token) {
   const g = app.game;
-  if (!g || token !== app.token || app.cpu || g.phase !== 'aim') return;
+  if (!g || token !== app.token || app.cpu || g.phase !== 'aim' || isHumanTurn()) return;
+  const st0 = g.state; // replaced by restart / concede / decisions / new racks
+  const epoch = ++app.cpuEpoch;
   app.cpu = { phase: 'think' };
   app.ui.setThinking(true);
   const t0 = performance.now();
@@ -337,8 +370,10 @@ async function runCpuTurn(level, token) {
   }
   const wait = MIN_THINK_MS - (performance.now() - t0);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  if (token !== app.token || app.game !== g || g.phase !== 'aim') {
-    if (token === app.token) {
+  const stale =
+    token !== app.token || app.game !== g || g.phase !== 'aim' || g.state !== st0 || epoch !== app.cpuEpoch;
+  if (stale) {
+    if (token === app.token && epoch === app.cpuEpoch) {
       app.cpu = null;
       app.ui.setThinking(false);
     }
@@ -374,7 +409,7 @@ function tickCpu(dt) {
   const c = app.cpu;
   const g = app.game;
   if (!c || c.phase === 'think' || !g) return;
-  if (c.token !== app.token || g.phase !== 'aim') {
+  if (c.token !== app.token || g.phase !== 'aim' || isHumanTurn()) {
     app.cpu = null;
     return;
   }
@@ -419,6 +454,14 @@ function tickCpu(dt) {
 }
 
 // ---------- scene ----------
+// Rings on the balls you may hit: your group once groups are set, and after a break scratch the
+// balls outside the kitchen (on a plain open table every ball is legal, so none are ringed).
+function highlightTargets(g, req) {
+  const legal = req.legalTargets || [];
+  const blocked = req.kitchenBlocked || [];
+  if (blocked.length) return legal.filter((id) => !blocked.includes(id));
+  return g.state.groups[g.state.turn] ? legal : [];
+}
 function buildScene(time) {
   const g = app.game;
   if (!g) return { time, balls: [], cue: null, guide: null, ballInHand: null, targets: [], pockets: null };
@@ -452,8 +495,7 @@ function buildScene(time) {
       aiming && req.ballInHand && (human || (app.cpu && app.cpu.phase === 'place'))
         ? { x: cuePos.x, y: cuePos.y, valid: true, dragging: app.placing || (!!app.cpu && app.cpu.phase === 'place') }
         : null,
-    // Highlight your group's balls once groups are set (on an open table every ball is legal).
-    targets: aiming && human && !app.stroke && pull === 0 && g.state.groups[g.state.turn] ? req.legalTargets || [] : [],
+    targets: aiming && human && !app.stroke && pull === 0 ? highlightTargets(g, req) : [],
     pockets: null,
   };
   if (aiming && req.mustCallPocket) {
@@ -483,7 +525,12 @@ function frame(nowMs) {
     tickCpu(dt);
     app.game.update(dt);
   }
-  app.renderer.draw(buildScene(now));
+  // Nothing changes behind the opaque menu, or while paused once the paused frame is drawn.
+  const covered = !app.game && app.ui.el.menu && app.ui.el.menu.classList.contains('open');
+  if (!covered && !(app.paused && app.drewPaused)) {
+    app.renderer.draw(buildScene(now));
+    app.drewPaused = app.paused;
+  }
   app.frameMs = app.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   if (DEBUG) drawDebug(dt);
   requestAnimationFrame(frame);
@@ -534,29 +581,36 @@ function boot() {
     onPause: (paused) => {
       if (!app.game) return;
       app.paused = !!paused;
+      app.drewPaused = false;
       if (!paused) app.lastTime = 0;
       updateInputMode();
     },
     onRestartRack: () => {
       if (!app.game) return;
       app.paused = false;
-      app.cpu = null;
-      app.stroke = null;
-      app.ui.setThinking(false);
+      if (app.game.phase === 'toss') app.game.update(1e3); // finish the toss first
       freshRackControls();
-      app.game.restartRack();
+      const r = app.game.restartRack();
+      if (!r.ok) app.ui.toast('The rack can be restarted once the balls stop', 'info');
       setAim(defaultAimAngle());
+      updateInputMode();
     },
     onConcede: () => {
       if (!app.game) return;
       app.paused = false;
-      app.cpu = null;
-      app.ui.setThinking(false);
+      if (app.game.phase === 'toss') app.game.update(1e3);
+      dropCpuWork();
       app.game.concede();
+      updateInputMode();
     },
     onQuit: () => quitToMenu(),
+    canPersist: () => {
+      saveGame();
+      return persisted || !app.game;
+    },
     onDecision: (option) => {
       if (app.game && app.game.phase === 'decision') {
+        dropCpuWork();
         const r = app.game.decide(option);
         if (r.ok && option !== 'acceptTable') freshRackControls();
         if (r.ok && isHumanTurn()) setAim(defaultAimAngle());

@@ -2214,11 +2214,13 @@ function holeOf(p) {
   if (p.kind === 'corner') {
     return { id: p.id, x: p.x + p.dir.x * 0.05, y: p.y + p.dir.y * 0.05, r: POCKET_VISUAL_R, dir: p.dir };
   }
+  // Side hole sits just behind the cushion nose line, where physics captures the ball.
+  const r = POCKET_VISUAL_R * 0.98;
   return {
     id: p.id,
-    x: p.mouth.x + p.dir.x * 0.053,
-    y: p.mouth.y + p.dir.y * 0.053,
-    r: POCKET_VISUAL_R * 0.98,
+    x: p.mouth.x + p.dir.x * (r + 0.003),
+    y: p.mouth.y + p.dir.y * (r + 0.003),
+    r,
     dir: p.dir,
   };
 }
@@ -3672,6 +3674,7 @@ const NEAR_DAMP = 0.25;
 const FINE_RAD_PER_PX = (0.05 * Math.PI) / 180;
 const POCKET_SLOP_PX = 12;
 const SHOOT_MIN = 0.03;
+const POWER_DEAD_PX = 10; // finger drift on the power bar below this never arms a shot
 const DOUBLE_TAP_MS = 320;
 
 function inSpinLabel(s) {
@@ -3859,7 +3862,8 @@ class InputController {
 
   // ------------------------------------------------------------------ canvas: aim / place / call
   _down(e) {
-    if (!this.mode.enabled || this._g) return;
+    // While the cue is being pulled back the aim is locked: a stray second finger can't swing it.
+    if (!this.mode.enabled || this._g || this._pg) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const view = this.getView();
     if (!view) return;
@@ -3968,12 +3972,18 @@ class InputController {
     if (!this.mode.enabled || this._pg) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
-    // Full power = a pull of 0.9 x bar height. If the finger lands so low that this would run
-    // off the bottom of the screen, shrink the travel so 100% stays reachable.
+    // Pulling back locks the aim: end any aim drag still in progress on the table.
+    if (this._g && this._g.kind === 'aim') {
+      this._release(this.canvas, this._g.id);
+      this._g = null;
+    }
+    // Full power = a pull of 0.9 x bar height after a small dead zone (so a tap that drifts a
+    // few pixels never fires). If the finger lands so low that this would run off the bottom of
+    // the screen, shrink the travel so 100% stays reachable.
     const h = this._powerTrack.getBoundingClientRect().height;
-    const reach = (window.innerHeight || h) - 6 - e.clientY;
-    const travel = Math.max(60, Math.min(h * 0.9, reach));
-    this._pg = { id: e.pointerId, y0: e.clientY, travel };
+    const reach = (window.innerHeight || h) - 4 - e.clientY - POWER_DEAD_PX;
+    const travel = Math.max(24, Math.min(h * 0.9, reach));
+    this._pg = { id: e.pointerId, y0: e.clientY, travel, armed: false };
     clearTimeout(this._releaseTimer);
     this.powerEl.classList.remove('release');
     this.powerEl.classList.add('is-active');
@@ -3984,7 +3994,10 @@ class InputController {
     const pg = this._pg;
     if (!pg || e.pointerId !== pg.id) return;
     e.preventDefault();
-    const p = clamp((e.clientY - pg.y0) / pg.travel, 0, 1);
+    const dy = e.clientY - pg.y0;
+    if (!pg.armed && dy < POWER_DEAD_PX) return;
+    pg.armed = true;
+    const p = clamp((dy - POWER_DEAD_PX) / pg.travel, 0, 1);
     if (p === this._power) return;
     this.power = p;
     if (this.cb.onPower) this.cb.onPower(p);
@@ -3997,7 +4010,7 @@ class InputController {
     this._release(this.powerEl, pg.id);
     this.powerEl.classList.remove('is-active');
     const p = this._power;
-    if (e.type === 'pointerup' && p > SHOOT_MIN && this.mode.enabled) {
+    if (e.type === 'pointerup' && pg.armed && p > SHOOT_MIN && this.mode.enabled) {
       const shot = { angle: this._angle, power: p, spin: { x: this._spin.x, y: this._spin.y } };
       // Snap the cue forward in the bar.
       this.powerEl.classList.add('release');
@@ -4526,11 +4539,23 @@ class UI {
           this.hideOverlays();
           if (this.cb.onConcede) this.cb.onConcede();
         });
-      case 'quit':
-        this.hideOverlays();
-        if (this.cb.onQuit) this.cb.onQuit();
-        this.showMenu();
-        return;
+      case 'quit': {
+        const quit = () => {
+          this.hideOverlays();
+          if (this.cb.onQuit) this.cb.onQuit();
+          this.showMenu();
+        };
+        // When the browser blocks storage the match only survives until the page closes.
+        if (this.cb.canPersist && !this.cb.canPersist()) {
+          return this._confirm(
+            'Quit to menu?',
+            'This browser is not saving games, so the match can only be resumed until you close the page.',
+            'Quit',
+            quit,
+          );
+        }
+        return quit();
+      }
       case 'confirm-no':
         this.el.pause.classList.remove('confirming');
         this._confirmFn = null;
@@ -4772,7 +4797,7 @@ class UI {
         }
         el.querySelector('.pl-balls').innerHTML = balls;
       }
-      el.classList.toggle('active', turn === p && !over);
+      el.classList.toggle('active', turn === p && !over && h.phase !== 'toss');
     }
 
     const score = Array.isArray(h.score) ? h.score : [0, 0];
@@ -4810,9 +4835,15 @@ class UI {
         hint = kitchen ? 'Ball in hand — behind the head string' : 'Ball in hand — drag the cue ball';
         short = kitchen ? 'Ball in hand · kitchen' : 'Ball in hand';
         kind = 'k-hand';
+        if (kitchen && h.kitchenBlocked > 0) {
+          // Kitchen rule: balls behind the head string can't be hit directly.
+          hint = 'Ball in hand · shoot out of the kitchen';
+          short = 'Kitchen · shoot up-table';
+        }
         if (curOnEight) {
-          hint += ' · call the 8';
-          short += ' · call the 8';
+          // Keep it short so "call the 8" is never cut off on narrow phones.
+          hint = 'Ball in hand · call the 8';
+          short = 'Ball in hand · call the 8';
         }
       } else if (curOnEight) {
         hint = 'Call a pocket for the 8 — tap a pocket';
@@ -4984,6 +5015,9 @@ const FROZEN_GAP = 0.0005; // a ball this close to a cushion at the strike is fr
 const FROZEN_LEAVE = 0.001; // ... until it moves this far away
 const SAFETY_MARGIN = 0.08; // beyond the cushion lines: treat as pocketed (never expected)
 const EVENT_CAP = 64; // contacts resolved exactly per substep before falling back
+const SIDE_SHELF = 0.003; // side pockets: capture line this far behind the cushion nose line
+const SIDE_BIG_R = 0.25; // radius of the circle standing in for that capture half-plane
+const MIN_APPROACH = 1e-7 * 2 * BALL_R; // ignore ball pairs approaching slower than this
 const MAX_SUBSTEP = 0.0025; // step(dt) splits longer intervals into substeps no longer than this
 const MAX_ADVANCE = 0.1; // advance() ignores frame gaps beyond this (avoids a spiral of death)
 const SEPARATE_ITERS = 4;
@@ -5105,16 +5139,17 @@ function buildGeometry(table) {
       y1: n.y + rr,
     };
   });
-  const pockets = table.pockets.map((p) => ({
-    id: p.id,
-    x: p.x,
-    y: p.y,
-    r2: p.captureR * p.captureR,
-    x0: p.x - p.captureR,
-    x1: p.x + p.captureR,
-    y0: p.y - p.captureR,
-    y1: p.y + p.captureR,
-  }));
+  // Corner pockets capture inside table.pockets' circle. Side pockets capture only once the ball
+  // centre is SIDE_SHELF behind the cushion nose line: a large circle tangent to that line stands
+  // in for a half-plane, so steep side-pocket cuts hit the far jaw instead of dropping early.
+  // (rules/aim/AI/render keep using table.pockets' x/y/captureR.)
+  const pockets = table.pockets.map((p) => {
+    const side = p.kind === 'side';
+    const r = side ? SIDE_BIG_R : p.captureR;
+    const cx = side ? p.mouth.x + p.dir.x * (SIDE_BIG_R + SIDE_SHELF) : p.x;
+    const cy = side ? p.mouth.y + p.dir.y * (SIDE_BIG_R + SIDE_SHELF) : p.y;
+    return { id: p.id, x: cx, y: cy, r2: r * r, x0: cx - r, x1: cx + r, y0: cy - r, y1: cy + r };
+  });
 
   // "Fast box": a ball whose swept centre stays inside it cannot reach any feature, so the
   // per-feature tests are skipped for most of the table. Start from the cushion lines and shrink
@@ -5429,7 +5464,7 @@ class World {
         const reach = TWO_R + (Math.abs(dvx) + Math.abs(dvy)) * best;
         if (dx > reach || dx < -reach || dy > reach || dy < -reach) continue;
         const bb = dx * dvx + dy * dvy;
-        if (bb >= 0) continue; // separating
+        if (bb >= -MIN_APPROACH) continue; // separating (or a grazing contact that never closes)
         const c = dx * dx + dy * dy - FOUR_R2;
         let t;
         if (c <= 0) {
@@ -5780,6 +5815,36 @@ class World {
       b.wy = s[o + 5];
       b.wz = s[o + 6];
       b.state = 'slide';
+    }
+    // Grazing contacts left approaching after the micro-sim would re-fire at t = 0 until the
+    // event cap; remove any residual approach between touching members (inelastic, so energy
+    // can only drop).
+    for (let it = 0; it < 4; it++) {
+      let fixed = false;
+      for (let i = 0; i < m; i++) {
+        for (let j = i + 1; j < m; j++) {
+          const a = balls[mem[i]];
+          const c = balls[mem[j]];
+          const dx = c.x - a.x;
+          const dy = c.y - a.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > (TWO_R + 1e-6) * (TWO_R + 1e-6)) continue;
+          const d = Math.sqrt(d2) || 1e-12;
+          const nx = dx / d;
+          const ny = dy / d;
+          const vn = (a.vx - c.vx) * nx + (a.vy - c.vy) * ny;
+          if (vn <= 0) continue;
+          const jn = 0.5 * vn;
+          a.vx -= jn * nx;
+          a.vy -= jn * ny;
+          c.vx += jn * nx;
+          c.vy += jn * ny;
+          a.state = 'slide';
+          c.state = 'slide';
+          fixed = true;
+        }
+      }
+      if (!fixed) break;
     }
   }
 
@@ -7157,6 +7222,7 @@ const __m_game = (() => {
 const { TABLE } = __m_table;
 const { World } = __m_physics;
 const { mulberry32 } = __m_rng;
+const { DT, MAX_SHOT_T } = __m_constants;
 const { RULESET_CASUAL, newGameState, getShotRequirements, validateShot, evaluateShot, applyOutcome, applyDecision, validateCuePlacement, nearestValidPlacement, isOnEight, hudInfo, playerName, verb, rackOverText, rackReasonText, matchOverText } = __m_rules;
 
 const TOSS_TIME = 1.2; // s
@@ -7444,12 +7510,14 @@ class Game {
 
   // ---- Save / restore ----
 
-  // A save taken while the balls roll restores to the position before that shot.
+  // A save taken while the balls roll stores the position before the shot plus the shot itself;
+  // restore() replays it to rest (physics is deterministic), so quitting mid-shot cannot undo it.
   serialize() {
     return JSON.stringify({
       v: SAVE_VERSION,
       phase: this.phase === 'rolling' ? 'aim' : this.phase,
       tossLeft: this.phase === 'toss' ? this._tossLeft : 0,
+      pendingShot: this.phase === 'rolling' && this._shot ? this._shot : null,
       match: { ...this.match, rng: this._rng.state() },
     });
   }
@@ -7467,6 +7535,12 @@ class Game {
     this._tossLeft = this.phase === 'toss' ? Math.max(0, Number(data.tossLeft) || TOSS_TIME) : 0;
     this.world.setBalls(this.state.balls);
     if (this.phase === 'aim') this._enterAim();
+    if (this.phase === 'aim' && data.pendingShot && this.shoot(data.pendingShot).ok) {
+      // Same fixed-DT stepping as advance(), so the replay ends exactly where the live shot would.
+      const maxSteps = Math.ceil(MAX_SHOT_T / DT) + 10;
+      for (let i = 0; i < maxSteps && !this.world.atRest(); i++) this.world.step(DT);
+      this._resolveShot();
+    }
     // Listeners attach after restore(), so the first update() re-announces the current phase.
     this._replay = true;
   }
@@ -7520,7 +7594,7 @@ class Game {
     }
     this.world.setBalls(next.balls);
     if (!outcome.gameOver && next.dryTurns === next.ruleset.stalemateOfferAfter) {
-      messages.push({ text: `No balls pocketed in ${next.dryTurns} turns — re-rack available`, kind: 'info' });
+      messages.push({ text: `No balls pocketed in ${next.dryTurns} turns — re-rack from the pause menu`, kind: 'info' });
     }
 
     let rackInfo = null;
@@ -9031,8 +9105,13 @@ class AudioFX {
         src.buffer = silent;
         src.connect(this.ctx.destination);
         src.start(0);
+        // WebKit moves the context to 'interrupted' during calls, Siri or alarms.
+        this.ctx.onstatechange = () => {
+          if (this.ctx.state === 'interrupted' && this.enabled && !document.hidden) this.resume();
+        };
       }
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+      if (this.enabled) this.resume();
+      else this.suspend();
     } catch {
       this.ctx = null;
     }
@@ -9040,19 +9119,29 @@ class AudioFX {
 
   setEnabled(on) {
     this.enabled = !!on;
+    // A silent but running context still costs battery, so park it while sound is off.
+    if (this.enabled) this.resume();
+    else this.suspend();
   }
 
   suspend() {
+    // Only suspend a running context: suspending an 'interrupted' one stops WebKit from
+    // resuming it automatically when the interruption ends.
     if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
   }
 
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    const st = this.ctx && this.ctx.state;
+    if (this.enabled && (st === 'suspended' || st === 'interrupted')) this.ctx.resume().catch(() => {});
+  }
+
+  _ready() {
+    return this.enabled && !!this.ctx && this.ctx.state === 'running';
   }
 
   // Map physics events to sounds.
   handle(events) {
-    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    if (!this._ready()) return;
     for (const ev of events) {
       switch (ev.type) {
         case 'strike':
@@ -9127,7 +9216,7 @@ class AudioFX {
 
   // Phenolic ball-on-ball clack: bright, very short.
   ball(v) {
-    if (v < 0.04) return;
+    if (v < 0.04 || !this._ready()) return;
     const now = this.ctx.currentTime;
     // During a break dozens of contacts land within milliseconds; thin them out.
     if (now - this.lastBallAt < 0.006 && v < 1.5) return;
@@ -9142,7 +9231,7 @@ class AudioFX {
 
   // Rubber cushion: soft, low thump.
   cushion(v) {
-    if (v < 0.05) return;
+    if (v < 0.05 || !this._ready()) return;
     if (!this._voice(0.09)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, Math.pow(v / 4, 0.8));
@@ -9152,7 +9241,7 @@ class AudioFX {
 
   // Ball dropping into a pocket, then rolling down the return.
   pocket(v) {
-    if (!this._voice(0.9)) return;
+    if (!this._ready() || !this._voice(0.9)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.45 + v / 4);
     this._noiseBurst(now, { freq: 900, q: 1.1, peak: 0.35 * k, attack: 0.002, decay: 0.05 });
@@ -9163,7 +9252,7 @@ class AudioFX {
 
   // Leather tip on the cue ball.
   strike(v, miscue = false) {
-    if (!this._voice(0.06)) return;
+    if (!this._ready() || !this._voice(0.06)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.25 + v / 7);
     if (miscue) {
@@ -9215,6 +9304,7 @@ const app = {
   stroke: null, // human stroke animation {t, shot, pull}
   cpu: null, // CPU turn: {phase:'think'|'place'|'aim'|'pull'|'stroke', t, plan, ...}
   token: 0, // bumped whenever a game starts or ends so stale async work is dropped
+  cpuEpoch: 0, // bumped whenever the board is reset mid-game so an in-flight CPU plan is dropped
   placing: false,
   lastTime: 0,
   frameMs: 0,
@@ -9222,25 +9312,38 @@ const app = {
 };
 
 // ---------- persistence ----------
+// localStorage can be missing or throw (private browsing, sandboxed iframes), so the latest save
+// is also kept in memory: "Resume" then still works for the rest of the session.
+let memSave = null;
+let persisted = false; // whether the last save reached localStorage
+
 function saveGame() {
   if (!app.game || AUTOPLAY) return;
+  if (app.game.phase === 'matchOver') {
+    clearSave(); // nothing to resume once the match is decided
+    return;
+  }
+  memSave = JSON.stringify({ config: app.config, game: app.game.serialize() });
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ config: app.config, game: app.game.serialize() }));
+    localStorage.setItem(SAVE_KEY, memSave);
+    persisted = true;
   } catch {
-    /* storage unavailable (private mode / sandboxed iframe) */
+    persisted = false;
   }
 }
 
 function loadSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (raw) return JSON.parse(raw);
   } catch {
-    return null;
+    /* fall back to the in-memory copy */
   }
+  return memSave ? JSON.parse(memSave) : null;
 }
 
 function clearSave() {
+  memSave = null;
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {
@@ -9259,6 +9362,7 @@ function resize() {
   app.viewKey = key;
   app.view = computeView(w, h);
   app.renderer.setView(app.view, dpr);
+  app.drewPaused = false; // setView clears the canvas; draw it again even when paused
 }
 
 // ---------- helpers ----------
@@ -9274,7 +9378,11 @@ function defaultAimAngle() {
   const cue = g.cuePosition();
   let best = null;
   let bestD = Infinity;
-  for (const id of req.legalTargets || []) {
+  // After a break scratch, balls behind the head string can't be hit directly.
+  const blocked = new Set(req.kitchenBlocked || []);
+  const legal = req.legalTargets || [];
+  const open = legal.filter((id) => !blocked.has(id));
+  for (const id of open.length ? open : legal) {
     const b = g.state.balls[id];
     if (!b || !b.on) continue;
     const d = Math.hypot(b.x - cue.x, b.y - cue.y);
@@ -9321,6 +9429,7 @@ function refreshHud() {
   const g = app.game;
   if (!g) return;
   const hud = g.hud();
+  hud.kitchenBlocked = (g.requirements().kitchenBlocked || []).length;
   // Prompts like "Ball in hand" are for the human holding the phone, not the CPU.
   if (!isHumanTurn()) hud.hint = '';
   app.ui.updateHud(hud);
@@ -9399,6 +9508,7 @@ function bindGame(game) {
   refreshHud();
   updateInputMode();
   requestWakeLock();
+  if (game.phase === 'toss') app.ui.banner('Tossing for the break…', 1200);
 }
 
 function startGame(config) {
@@ -9430,6 +9540,7 @@ function resumeGame() {
 
 function quitToMenu() {
   saveGame();
+  dropCpuWork();
   app.token++;
   app.game = null;
   app.stroke = null;
@@ -9443,8 +9554,17 @@ function quitToMenu() {
 }
 
 function freshRackControls() {
+  dropCpuWork();
   app.renderer.reset();
   resetShotControls();
+}
+
+// Forget any CPU plan being computed or animated (the board is about to change).
+function dropCpuWork() {
+  app.cpuEpoch++;
+  app.cpu = null;
+  app.stroke = null;
+  app.ui.setThinking(false);
 }
 
 // ---------- shooting ----------
@@ -9500,7 +9620,9 @@ function yieldToBrowser() {
 
 async function runCpuTurn(level, token) {
   const g = app.game;
-  if (!g || token !== app.token || app.cpu || g.phase !== 'aim') return;
+  if (!g || token !== app.token || app.cpu || g.phase !== 'aim' || isHumanTurn()) return;
+  const st0 = g.state; // replaced by restart / concede / decisions / new racks
+  const epoch = ++app.cpuEpoch;
   app.cpu = { phase: 'think' };
   app.ui.setThinking(true);
   const t0 = performance.now();
@@ -9519,8 +9641,10 @@ async function runCpuTurn(level, token) {
   }
   const wait = MIN_THINK_MS - (performance.now() - t0);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  if (token !== app.token || app.game !== g || g.phase !== 'aim') {
-    if (token === app.token) {
+  const stale =
+    token !== app.token || app.game !== g || g.phase !== 'aim' || g.state !== st0 || epoch !== app.cpuEpoch;
+  if (stale) {
+    if (token === app.token && epoch === app.cpuEpoch) {
       app.cpu = null;
       app.ui.setThinking(false);
     }
@@ -9556,7 +9680,7 @@ function tickCpu(dt) {
   const c = app.cpu;
   const g = app.game;
   if (!c || c.phase === 'think' || !g) return;
-  if (c.token !== app.token || g.phase !== 'aim') {
+  if (c.token !== app.token || g.phase !== 'aim' || isHumanTurn()) {
     app.cpu = null;
     return;
   }
@@ -9601,6 +9725,14 @@ function tickCpu(dt) {
 }
 
 // ---------- scene ----------
+// Rings on the balls you may hit: your group once groups are set, and after a break scratch the
+// balls outside the kitchen (on a plain open table every ball is legal, so none are ringed).
+function highlightTargets(g, req) {
+  const legal = req.legalTargets || [];
+  const blocked = req.kitchenBlocked || [];
+  if (blocked.length) return legal.filter((id) => !blocked.includes(id));
+  return g.state.groups[g.state.turn] ? legal : [];
+}
 function buildScene(time) {
   const g = app.game;
   if (!g) return { time, balls: [], cue: null, guide: null, ballInHand: null, targets: [], pockets: null };
@@ -9634,8 +9766,7 @@ function buildScene(time) {
       aiming && req.ballInHand && (human || (app.cpu && app.cpu.phase === 'place'))
         ? { x: cuePos.x, y: cuePos.y, valid: true, dragging: app.placing || (!!app.cpu && app.cpu.phase === 'place') }
         : null,
-    // Highlight your group's balls once groups are set (on an open table every ball is legal).
-    targets: aiming && human && !app.stroke && pull === 0 && g.state.groups[g.state.turn] ? req.legalTargets || [] : [],
+    targets: aiming && human && !app.stroke && pull === 0 ? highlightTargets(g, req) : [],
     pockets: null,
   };
   if (aiming && req.mustCallPocket) {
@@ -9665,7 +9796,12 @@ function frame(nowMs) {
     tickCpu(dt);
     app.game.update(dt);
   }
-  app.renderer.draw(buildScene(now));
+  // Nothing changes behind the opaque menu, or while paused once the paused frame is drawn.
+  const covered = !app.game && app.ui.el.menu && app.ui.el.menu.classList.contains('open');
+  if (!covered && !(app.paused && app.drewPaused)) {
+    app.renderer.draw(buildScene(now));
+    app.drewPaused = app.paused;
+  }
   app.frameMs = app.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   if (DEBUG) drawDebug(dt);
   requestAnimationFrame(frame);
@@ -9716,29 +9852,36 @@ function boot() {
     onPause: (paused) => {
       if (!app.game) return;
       app.paused = !!paused;
+      app.drewPaused = false;
       if (!paused) app.lastTime = 0;
       updateInputMode();
     },
     onRestartRack: () => {
       if (!app.game) return;
       app.paused = false;
-      app.cpu = null;
-      app.stroke = null;
-      app.ui.setThinking(false);
+      if (app.game.phase === 'toss') app.game.update(1e3); // finish the toss first
       freshRackControls();
-      app.game.restartRack();
+      const r = app.game.restartRack();
+      if (!r.ok) app.ui.toast('The rack can be restarted once the balls stop', 'info');
       setAim(defaultAimAngle());
+      updateInputMode();
     },
     onConcede: () => {
       if (!app.game) return;
       app.paused = false;
-      app.cpu = null;
-      app.ui.setThinking(false);
+      if (app.game.phase === 'toss') app.game.update(1e3);
+      dropCpuWork();
       app.game.concede();
+      updateInputMode();
     },
     onQuit: () => quitToMenu(),
+    canPersist: () => {
+      saveGame();
+      return persisted || !app.game;
+    },
     onDecision: (option) => {
       if (app.game && app.game.phase === 'decision') {
+        dropCpuWork();
         const r = app.game.decide(option);
         if (r.ok && option !== 'acceptTable') freshRackControls();
         if (r.ok && isHumanTurn()) setAim(defaultAimAngle());
@@ -9973,8 +10116,10 @@ return {  };
             <li>Break from behind the head string. The table is open after the break; the first ball you pocket decides your group: <b>solids</b> (1&ndash;7) or <b>stripes</b> (9&ndash;15).</li>
             <li>Pocket your whole group, then the <b>8&#8209;ball</b>. Tap a pocket to call it before shooting the 8.</li>
             <li>You keep shooting while you pocket your own balls.</li>
-            <li>A foul (scratch, wrong ball first, no cushion after contact) gives your opponent <b>ball in hand</b>.</li>
-            <li>Pocketing the 8 early, in the wrong pocket, or scratching on it loses the rack.</li>
+            <li>A foul (scratch, wrong ball first, no cushion after contact) gives your opponent <b>ball in hand</b> anywhere on the table.</li>
+            <li>On an open table you may not hit the 8 first.</li>
+            <li>After a scratch on the break the cue ball goes behind the head string, and it must cross the string before hitting a ball that is also behind it.</li>
+            <li>You lose the rack if you pocket the 8 before your group is cleared, in an uncalled pocket, together with your last group ball, or on a foul (for example the cue ball follows it in). Scratching on the 8 without pocketing it is just a foul.</li>
           </ul>
           <h3>Controls</h3>
           <ul>

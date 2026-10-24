@@ -355,11 +355,23 @@ export class UI {
           this.hideOverlays();
           if (this.cb.onConcede) this.cb.onConcede();
         });
-      case 'quit':
-        this.hideOverlays();
-        if (this.cb.onQuit) this.cb.onQuit();
-        this.showMenu();
-        return;
+      case 'quit': {
+        const quit = () => {
+          this.hideOverlays();
+          if (this.cb.onQuit) this.cb.onQuit();
+          this.showMenu();
+        };
+        // When the browser blocks storage the match only survives until the page closes.
+        if (this.cb.canPersist && !this.cb.canPersist()) {
+          return this._confirm(
+            'Quit to menu?',
+            'This browser is not saving games, so the match can only be resumed until you close the page.',
+            'Quit',
+            quit,
+          );
+        }
+        return quit();
+      }
       case 'confirm-no':
         this.el.pause.classList.remove('confirming');
         this._confirmFn = null;
@@ -601,7 +613,7 @@ export class UI {
         }
         el.querySelector('.pl-balls').innerHTML = balls;
       }
-      el.classList.toggle('active', turn === p && !over);
+      el.classList.toggle('active', turn === p && !over && h.phase !== 'toss');
     }
 
     const score = Array.isArray(h.score) ? h.score : [0, 0];
@@ -639,9 +651,15 @@ export class UI {
         hint = kitchen ? 'Ball in hand — behind the head string' : 'Ball in hand — drag the cue ball';
         short = kitchen ? 'Ball in hand · kitchen' : 'Ball in hand';
         kind = 'k-hand';
+        if (kitchen && h.kitchenBlocked > 0) {
+          // Kitchen rule: balls behind the head string can't be hit directly.
+          hint = 'Ball in hand · shoot out of the kitchen';
+          short = 'Kitchen · shoot up-table';
+        }
         if (curOnEight) {
-          hint += ' · call the 8';
-          short += ' · call the 8';
+          // Keep it short so "call the 8" is never cut off on narrow phones.
+          hint = 'Ball in hand · call the 8';
+          short = 'Ball in hand · call the 8';
         }
       } else if (curOnEight) {
         hint = 'Call a pocket for the 8 — tap a pocket';
