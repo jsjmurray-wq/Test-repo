@@ -33,7 +33,7 @@ metres). Wind shows in mph (or km/h).
 | Course | `src/noise.js`, `src/spline.js`, `src/terrain.js`, `src/course.js`, `scripts/course-report.mjs`, `tests/terrain.test.js`, `tests/course.test.js` |
 | Render | `src/mat4.js`, `src/gl.js`, `src/shaders.js`, `src/meshes.js`, `src/bake.js`, `src/render.js`, `src/camera.js`, `tests/camera.test.js`, `tests/meshes.test.js`, `tests/visual/render-preview.html` and `.js` |
 | Shell/UI | `index.html`, `style.css`, `manifest.webmanifest`, `package.json`, `eslint.config.js`, `scripts/build-single.mjs`, `scripts/make-icons.mjs`, `icons/*`, `src/ui.js`, `src/input.js`, `src/audio.js`, `README.md` |
-| Game | `src/lie.js`, `src/swing.js`, `src/caddie.js`, `src/rules.js`, `src/scoring.js`, `src/game.js`, `src/bot.js`, `tests/swing.test.js`, `tests/rules.test.js`, `tests/game.test.js`, `tests/bot.test.js` |
+| Game | `src/lie.js`, `src/swing.js`, `src/caddie.js`, `src/rules.js`, `src/scoring.js`, `src/game.js`, `src/bot.js`, `tests/lie.test.js`, `tests/swing.test.js`, `tests/rules.test.js`, `tests/game.test.js`, `tests/bot.test.js` |
 | Integration | `src/main.js`, `tests/e2e.spec.mjs`, `dist/*`, plus fixes anywhere |
 
 ## Pure modules
@@ -51,13 +51,13 @@ metres). Wind shows in mph (or km/h).
 | `course.js` | `COURSE = {name, holes: [HoleDef × 9]}` (pure data), `holePar(i)`, `coursePar()` |
 | `terrain.js` | `buildHole(def, {pinIndex, seed}) -> HoleTerrain` (see below) |
 | `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`. Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
-| `lie.js` | `lieAt(terrain, pos, aimYaw) -> Lie`, `applyLie(launchParams, lie, club)` |
+| `lie.js` | `lieAt(terrain, pos, aimYaw, {handed}) -> Lie`, `applyLie(launchParams, lie, club)` |
 | `swing.js` | `interpretSwing(samples, opts) -> SwingResult`, `swingToLaunch(club, lie, swing, aimYaw, rng, opts) -> Launch` |
 | `caddie.js` | `clubTable(terrain, pos, lie, wind)`, `suggestClub(...)`, `playsLike(...)`, `puttRange(dist)` |
 | `rules.js` | `resolveShot(ctx, shot) -> Resolution`, `waterRelief(...)`, `scoreName(strokes, par)`, `maxStrokes(par) = 2*par` |
 | `scoring.js` | `newCard(course)`, `recordHole(card, i, {strokes, putts, penalties, fir, gir})`, `totals(card)` |
 | `game.js` | `Game` state machine, plus `serialize()` and `static restore()` |
-| `bot.js` | `planShot(game) -> {clubId, yaw, swing}`, a simulated "decent player" used by `?autoplay` and the playability tests |
+| `bot.js` | `planShot(game) -> {clubId, yaw, swing, puttRange?}`, `playBotShot(game)`, `botDecide(game)`: a simulated "decent player" used by `?autoplay` and the playability tests |
 | `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
 | `meshes.js` | Geometry builders that return typed arrays |
 | `bake.js` | `bakeTerrainColor(terrain)` and `bakeClouds(seed)` |
@@ -406,6 +406,106 @@ export class Game {
 
 - Wind is seeded per hole: Light is 0–4 m/s, Breezy is 3–8 m/s.
 - Autosave happens on `shotEnd` and `nextHole` (from `main.js`).
+
+### Game logic API (Game group, as built)
+
+The header comments of `lie.js`, `swing.js`, `caddie.js`, `rules.js`, `scoring.js`, `game.js` and
+`bot.js` are the full reference. Additions and refinements to the contract above:
+
+**Lie** — `lieAt(terrain, pos, aimYaw, {handed='R'})`. `slopeAlong` is + uphill toward the target;
+`slopeAcross` is the rise to the RIGHT of the aim line (+ = ball above a right-hander's feet).
+Extra fields: `dirOffset` (deg, + = right; the sidehill start shift, which goes the way the ground
+falls for either hand), `greenDist` (m to the green edge, 0 on it) and `aimYaw`. Labels: the surface
+name plus the dominant slope when ≥ 5% (`' · Uphill'`, `' · Downhill'`, `' · Ball above feet'`,
+`' · Ball below feet'`; none on tee or green). `applyLie({ballSpeed, launchDeg, spinRpm,
+startDirDeg}, lie, club)` returns a copy with the factors and `dirOffset` applied (putter: unchanged).
+The greenside explosion (wedge, bunker, `greenDist ≤ 40`) **replaces** the generic bunker factors;
+the wood penalties multiply on top of them. Also `greenEdgeDist(green, x, y)`, `isExplosion(lie, club)`.
+
+**Swing** — `interpretSwing(samples, {padRefH, kind, difficulty, handed, club?})` uses input.js's
+`FULL_POWER_FRAC`/`PUTT_POWER_FRAC`/`MAX_POWER` and the deepest point of the trace, exactly like the
+live gauge. Result extras: `kind`, and for full swings `alpha`/`kappa` (raw deg) and `downswingS`.
+`face`/`path` use the club's D-plane k when `club` is given, else 0.8 (`swingToLaunch` re-splits
+with the real club, so the launch's start direction equals `startDir` plus scatter).
+- The downswing starts at the last sample at the bottom of the final upward run (3 px jitter
+  allowed), so a pause at the top of the backswing does not count as downswing time. The strike
+  speed is the mean upward speed over the 50 ms before the crossing. A fast flick lifted within
+  50 ms (extrapolated) of the line still strikes.
+- Putts: release anywhere, or a flick (≥ 400 px/s), strokes; coming back within 25% of the depth
+  slowly cancels. Drift gain 0.08°/px is for Normal and scales with `G_s` (Easy ×0.6, Pro ×1.4)
+  with a `dzA`-px dead zone (4/2/0 px).
+- `swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange})`; `rng = null` gives the intended
+  shot with no scatter (caddie and bot). Scatter: σ_dir = 0.6°·(2 if overswing) + lie.sdir on the
+  start direction; σ_face = 0.4°·(2 if overswing) + 1.5° if rushed on the face (it moves the curve
+  fully and the start direction by k); σ_speed = 1.5%·(2 if overswing). Putts: σ_speed 1%, σ_dir 0.3°.
+  `launch.meta` adds `power`, `faceDeg`, `pathDeg`, `faceToPathDeg` (putts: `puttDistance`, `puttRange`).
+- Exports `DIFFICULTY`, `STRIKE_SPEED`, `PUTT_RANGES = [3, 6, 9, 12, 18, 24, 30]`, `swingLabel`.
+
+**Caddie** — `clubTable(terrain, pos, lie, wind, {aimYaw})` → rows `{id, name, short, kind, carry,
+total, carry0, total0, apex, landAngle}` (stock full swing with the lie, flat fairway at the ball's
+height; `carry0`/`total0` without wind; no putter row). `suggestClub(terrain, pos, lie, wind, {table,
+par, teeShot, aimYaw})` → club id: putter on the green and fringe; otherwise (approaches and par-3
+tee shots) the shortest club whose carry reaches the plays-like distance (SW from sand when it
+reaches); par-4/5 tee shots and lay-ups go by total, longest first, skipping clubs that run > 20 m
+past the cup or whose predicted rest (stock shot on the real hole with wind) is water, OB or sand;
+no driver off the deck. `playsLike(terrain, pos, target, wind, table)` = distance × (no-wind/wind
+carry ratio of the nearest club) + Δz / tan(descent angle). `puttRange(dist)`. Also
+`powerCurve(...)`/`curveAt(curve, power)` (carry against power, for the power-arc readout),
+`predictShot(...)`, `isSafeRest(res)`.
+
+**Rules** — `resolveShot(ctx, shot)` with `ctx = {terrain, par, strokes (before this shot),
+prevSpot, fromTee, fromSurface}` → `{outcome, strokes (after, penalties included), penalty, ball,
+reTee, decision: null | {kind:'water', waterKind, options:['drop','replay'], drop, replay,
+replayTee, entry}, holed, pickUp, putt, fir, gir, message}`. `waterRelief(terrain, entry, kind,
+{cup})`. Red relief: the nearest point within 2.28 m of the entry, no nearer the hole, not water,
+bunker or OOB, preferring points with no water within 0.6 m (falls back to back-on-the-line if
+nothing qualifies). Yellow relief: back on the line from the hole through the entry, ≥ 2 m behind
+it — the first such spot that is dry, ≥ 2 m clear of the water and on ground ≤ 8% (else the first
+dry one). FIR is judged on the first stroke of a par 4/5 (fairway, fringe, green or holed); GIR when
+the ball rests on the green (or is holed) in ≤ par − 2 strokes, penalties included; a putt is a
+stroke played from the green. Pick-up at 2·par takes precedence over relief.
+
+**Scoring** — `newCard(course)` → `{course, holes:[{n, par, si, lengthM, strokes:null, putts,
+penalties, fir, gir, pickUp}]}` (the shape `ui.showScorecard` takes); `recordHole(card, i, {...})`;
+`totals(card)` → `{played, strokes, par, toPar, coursePar, putts, penalties, fir:{hit, of},
+gir:{hit, of}, pickUps}` (par 3s have `fir: null`).
+
+**Game**
+- `phase` is `null` until the first `loadHole`. `'holed'` moves to `'scorecard'` after
+  `HOLED_HOLD` = 2.5 s of `update()` time (or `skip()`); after the last hole it goes to `'roundOver'`
+  instead (show the final card), and `nextHole()` from `'holed'`/`'scorecard'` on the last hole
+  also ends the round. A shot resolves `END_HOLD` = 0.8 s after the ball stops.
+- Events: `'phase' (phase, prev)`, `'hole' (holeInfo())`, `'shotStart' (shot)`, `'shotEvent'
+  (physics event; the launch event also has kind, club, power)`, `'shotEnd' ({shot, resolution})`,
+  `'decision' (decision)`, `'holed' ({holeIndex, strokes, par, name, pickUp, toPar, card, totals})`,
+  `'roundOver' ({card, totals})`, `'message' ({text, tone:'info'|'over'})`. State is updated before
+  `shotEnd`, so an autosave there stores the next lie. A restored game re-announces `'hole'`,
+  `'phase'` and `'decision'` on its first `update()`.
+- `shot = {result, playT, launch, clubId, seed, resolution, swing, from, next, done}`; it stays
+  set after the shot (trail, camera) until the next swing, hole or `debugPlace`.
+- Extra members: `skip()` (intro → address, flight → fast-forward, holed → scorecard),
+  `holeInfo()`, `table` (club table for this spot), `clubInfo(id?)` → `{id, name, carry, total}` or
+  `{..., puttRange}` for the putter, `carryForPower(power)` → `{carry, total}` (putter: total =
+  flat roll), `playsLike()` (m, null on the green or with the putter), `puttRange`,
+  `setPuttRange(m)`, `stepPuttRange(±1)`, `isPutt`, `totals()`, `setSettings(partial)` (a wind
+  change applies at once).
+- Every new spot (`loadHole`, rest, relief, `debugPlace`) re-aims at `terrain.aimPoint(ball)` (the
+  cup from the green or fringe), sets the caddie's club and the putt range.
+- One rng stream (`state.rng`, mulberry32) drives the contact scatter and the per-shot physics seed;
+  pins come from the round seed, wind from `windFor(seed, hole, setting)`, trees from `TREE_SEED = 1`
+  (the course looks the same every round).
+- `serialize()` returns a JSON-safe object (`main.js` stringifies it). During a flight it stores
+  the state at the strike plus `pendingShot {launch, seed, clubId, swing}`; `restore(json,
+  {buildHole, terrain, course})` re-simulates and resolves it, so quitting mid-flight cannot undo a
+  stroke. Restorable phases: intro, address, decision, holed, scorecard, roundOver.
+
+**Bot** — `planShot(game, {rng})` → `{clubId, yaw, swing, puttRange?, target, expected}`;
+`playBotShot(game)` applies it (club, aim, putt range) and swings; `botDecide(game)` picks drop or
+replay. Candidates are simulated on the real hole with the wind and scored by expected strokes to
+hole out from the rest point (penalties weighted a little extra), the best few re-scored with
+seeded misses. Putts are read by simulating and correcting aim and pace until the putt drops in
+the middle. The swing it returns carries its own seeded execution error (`BOT_SKILL`); it averages
+about 1–3 over par for nine holes.
 
 ## 5. Rendering and camera
 

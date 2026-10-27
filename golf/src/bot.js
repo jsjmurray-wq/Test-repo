@@ -2,7 +2,9 @@
 // playability tests. Pure module.
 //
 //   planShot(game, {rng}) -> {clubId, yaw, swing, puttRange?, target, expected}
-//   playBotShot(game, opts) -> game.swing() result (applies the plan: club, aim, putt range)
+//   playBotShot(game, opts) -> game.swing() result plus {plan} (sets club, aim and putt range)
+//   botDecide(game) -> 'drop' | 'replay' (applies it with game.decide)
+// The rng defaults to one derived from the game state, so a plan is reproducible.
 //
 // How it thinks: every candidate shot is simulated with the real physics on the real hole, with
 // the wind, and scored by the expected number of strokes still needed from where it comes to rest

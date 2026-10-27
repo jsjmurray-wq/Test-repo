@@ -7,6 +7,8 @@
 //   suggestClub(terrain, pos, lie, wind, {table, par, teeShot, aimYaw}) -> club id
 //   playsLike(terrain, pos, target, wind, table) -> metres
 //   puttRange(dist) -> metres
+//   powerCurve(terrain, pos, lie, wind, clubId, aimYaw) -> [{power, carry, total}]
+//   curveAt(curve, power) -> {carry, total}      (for the live power-arc readout)
 //
 // Distances in the table are a stock full swing (power 1, straight, no contact scatter) with the
 // lie's factors, simulated over flat fairway at the ball's height: carry/total with the wind
@@ -74,6 +76,37 @@ export function playsLike(terrain, pos, target, wind, table) {
 export function puttRange(dist) {
   for (const r of PUTT_RANGES) if (r >= 1.25 * dist) return r;
   return PUTT_RANGES[PUTT_RANGES.length - 1];
+}
+
+// Carry and total of one club against swing power, over flat ground with the lie and the wind
+// (8 short simulations; the HUD interpolates it while the player draws the club back).
+export const CURVE_POWERS = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1, 1.1];
+
+export function powerCurve(terrain, pos, lie, wind, clubId, aimYaw) {
+  const z = terrain.heightAt(pos.x, pos.y);
+  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z });
+  const start = { x: pos.x, y: pos.y, z: z + BALL_R };
+  return CURVE_POWERS.map((power) => {
+    const launch = swingToLaunch(clubId, lie, { ...STOCK, power }, aimYaw, null, { pos: start });
+    const r = simulateShot(plane, launch, { wind, record: false, pin: false });
+    return { power, carry: r.carry, total: r.total };
+  });
+}
+
+export function curveAt(curve, power) {
+  if (power <= curve[0].power) {
+    const f = Math.max(0, power) / curve[0].power;
+    return { carry: curve[0].carry * f, total: curve[0].total * f };
+  }
+  for (let i = 1; i < curve.length; i++) {
+    if (power <= curve[i].power || i === curve.length - 1) {
+      const a = curve[i - 1];
+      const b = curve[i];
+      const f = Math.min(1, (power - a.power) / (b.power - a.power));
+      return { carry: a.carry + (b.carry - a.carry) * f, total: a.total + (b.total - a.total) * f };
+    }
+  }
+  return { carry: 0, total: 0 };
 }
 
 // Predicted stock shot on the real hole (with wind, trees and hazards).

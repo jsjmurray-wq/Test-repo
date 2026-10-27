@@ -31,8 +31,8 @@
 //
 // Putt gesture: drag down to set the pace (power = depth / (0.30 padRefH) maps to a flat-roll
 // distance power x puttRange), then release or flick up. Coming back slowly to the start line
-// cancels. The sideways drift of the last 150 ms (x 0.08 deg/px, clamped to +-3 deg) pushes or
-// pulls the putt.
+// cancels. The sideways drift of the last 150 ms (x 0.08 deg/px on Normal, scaled like G_s on
+// Easy/Pro and with a dzA px dead zone, clamped to +-3 deg) pushes or pulls the putt.
 
 import { BALL_R, SURF, SURFACES } from './constants.js';
 import { clamp, DEG } from './vec3.js';

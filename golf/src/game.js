@@ -16,7 +16,7 @@
 //   'shotEvent' (physics event; the launch event also carries kind, club, power)
 //   'shotEnd' ({shot, resolution})                            'decision' (decision)
 //   'holed' ({holeIndex, strokes, par, name, pickUp, toPar, card, totals})
-//   'roundOver' ({card, totals})  'message' ({text, tone:'info'|'over'|'under'|'par'|'ace'})
+//   'roundOver' ({card, totals})  'message' ({text, tone:'info'|'over'}) for OB, water, pick-up
 // A restored game re-announces 'hole', 'phase' (and 'decision') on its first update().
 //
 // Randomness: one mulberry32 stream (state.rng) feeds the swing contact scatter and the per-shot
@@ -31,7 +31,7 @@ import { clubById } from './clubs.js';
 import { simulateShot } from './physics.js';
 import { lieAt } from './lie.js';
 import { swingToLaunch, PUTT_RANGES } from './swing.js';
-import { clubTable, suggestClub, playsLike, puttRange } from './caddie.js';
+import { clubTable, suggestClub, playsLike, puttRange, powerCurve, curveAt } from './caddie.js';
 import { resolveShot, scoreName } from './rules.js';
 import { newCard, recordHole, totals } from './scoring.js';
 import { normalizeAngle } from './vec3.js';
@@ -110,6 +110,8 @@ export class Game {
     this._lieKey = '';
     this._table = null;
     this._tableKey = '';
+    this._curve = null;
+    this._curveKey = '';
     const s = seed >>> 0;
     const pinRng = mulberry32(s ^ 0x51ed270b);
     this.state = {
@@ -169,10 +171,11 @@ export class Game {
     this._preShot = null;
     this._holedT = 0;
     this._newLie();
+    const prev = this.phase;
     this.phase = 'intro';
     st.phase = 'intro';
     this._emit('hole', this.holeInfo());
-    this._emit('phase', 'intro', null);
+    this._emit('phase', 'intro', prev);
     return this.terrain;
   }
 
@@ -312,6 +315,21 @@ export class Game {
     if (c.kind === 'putter') return { id, name: c.name, carry: null, total: null, puttRange: this.state.puttRange };
     const row = this.table.find((r) => r.id === id);
     return { id, name: c.name, carry: row ? row.carry : null, total: row ? row.total : null };
+  }
+
+  // Expected carry/total (m) of the selected club at a swing power, for the live power readout;
+  // for the putter, the flat-roll distance. The curve is cached per spot and club.
+  carryForPower(power) {
+    const c = this.club;
+    if (c.kind === 'putter') return { carry: 0, total: power * this.state.puttRange };
+    const b = this.state.hole.ball;
+    const w = this.state.wind;
+    const key = `${b.x},${b.y},${w.x},${w.y},${c.id}`;
+    if (!this._curve || this._curveKey !== key) {
+      this._curve = powerCurve(this.terrain, b, this.lie, w, c.id, this.state.aimYaw);
+      this._curveKey = key;
+    }
+    return curveAt(this._curve, power);
   }
 
   suggestClub() {
