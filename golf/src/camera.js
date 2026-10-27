@@ -1,9 +1,10 @@
 // Camera rig (pure maths, no DOM). Produces {eye, target, up, fovY, near, far} for the renderer.
 //
 // Modes
-//   address  behind the golfer, ADDRESS_H above the ball, looking down the aim line; distance
-//            and pitch from addressFraming(aspect) put the ball low on the screen (in the swing
-//            arc) and the horizon in the upper half on every aspect
+//   address  behind the ball looking down the aim line; height, distance and pitch from
+//            addressFraming(aspect, {dist, dz}) put the ball low on the screen (in the swing arc)
+//            and the shot's target just above the centre, raising the eye for long shots and
+//            whenever a ridge would hide the landing area
 //   putt     low behind the ball (further back and higher for long putts), looking along the
 //            putt line with the ball low on the screen
 //   read     orbit above the green (orbit(dyaw) from a drag); target between ball and cup
@@ -12,13 +13,17 @@
 //            shot.landing (known in advance), which then follows the ball until it stops
 //   holed    slow orbit around the cup
 //   map      high overview between ball and cup, oriented so the hole plays up the screen
+//   relief   water relief: looks down on the entry, the drop spot and (if near) the replay spot,
+//            in the part of the screen the decision sheet leaves free (ctx.relief)
 //   flyover  5 s along terrain.path from the tee, ending looking at the green
 //
 // Every frame the eye is pushed to >= 1 m above the terrain (0.3 m in putt mode), and position and
 // target are smoothed with frame-rate independent exponential damping. fovY comes from a 55 degree
 // horizontal FOV for the current aspect, clamped to 40..75 degrees.
 //
-// ctx: {ball:{x,y,z}, aimYaw, cup:{x,y,z}, terrain, shot, aspect}. shot may be the game's
+// ctx: {ball:{x,y,z}, aimYaw, cup:{x,y,z}, terrain, shot, aspect, carry?, padShift?, relief?}. carry is the
+// club's carry (m) for the address framing; padShift the NDC x of the swing pad's centre (a lens
+// shift for address and putt, output as shiftX). shot may be the game's
 // {result, playT, launch} or a bare ShotResult; landing comes from result.landing (or the first
 // 'land' event), the landing time from that event's t, and the clock from shot.playT when present
 // (otherwise the rig's own time since setMode).
@@ -28,6 +33,7 @@ import { yawDir, damp, clamp, lerp } from './vec3.js';
 const DEG = Math.PI / 180;
 export const HFOV = 55 * DEG;
 export const FLYOVER_T = 5;
+const RELIEF_SHIFT = 0.48; // landscape relief view: points on the right, the sheet on the left
 
 export function fovForAspect(aspect) {
   const a = aspect > 0 ? aspect : 1;
@@ -36,20 +42,57 @@ export function fovForAspect(aspect) {
 }
 
 // Address framing. The HUD puts the swing pad (and its power arc) in the lower part of the
-// screen, so the camera sits behind the ball at ADDRESS_H above it and is pitched down so that
-// the ball projects low on the screen (NDC y = yBall: inside the arc) while the horizon lands at
-// NDC y = yHorizon. Solving for those two screen positions makes the shot look the same on any
-// aspect: in landscape (vertical FOV 40 deg) the eye ends up ~5 m back, in portrait (75 deg)
-// ~2.4 m back. Returns {back, h, pitch} (m, m, rad below horizontal).
+// screen, so the ball must project low (NDC y = yBall, inside the arc), while the shot's target
+// (the landing point `dist` m down the aim line, `dz` m above the ball's ground) sits a little
+// above the centre (NDC y = yTarget). A low eye flattens everything past ~60 m into a few pixels
+// at the horizon (the green and flag vanish, a pond behind a convex bank is hidden), so the eye
+// rises with the target distance: ADDRESS_H for anything within ADDRESS_NEAR, up to
+// ADDRESS_H_MAX for a drive, which gives the landing area a few degrees of grazing angle. Given
+// the height, the distance back is solved (bisection) so both screen positions hold on any
+// aspect; landscape puts the ball higher (the arc is beside it, see `shiftX` in update()).
+// Returns {back, h, pitch, yBall, yTarget, dist} (m, m, rad below horizontal, NDC, NDC, m).
 export const ADDRESS_H = 1.6;
-export function addressFraming(aspect) {
+export const ADDRESS_H_MAX = 9;
+export const ADDRESS_NEAR = 40; // m
+// The rise per metre scales with the vertical field of view: a narrow (landscape) view needs less
+// height for the same look, and would otherwise have to back far away to fit ball and target.
+export function addressEyeH(dist, aspect = 0.5) {
+  const k = 0.05 * (Math.tan(fovForAspect(aspect) / 2) / Math.tan((75 * DEG) / 2));
+  return clamp(ADDRESS_H + k * (dist - ADDRESS_NEAR), ADDRESS_H, ADDRESS_H_MAX);
+}
+export function addressFraming(aspect, { dist = 0, dz = 0, h = null } = {}) {
   const T = Math.tan(fovForAspect(aspect) / 2);
   const wide = aspect >= 1;
-  const yBall = wide ? -0.7 : -0.6;
-  const yHorizon = wide ? 0.12 : 0.22;
-  const pitch = Math.atan(yHorizon * T);
-  const toBall = pitch + Math.atan(-yBall * T);
-  return { back: ADDRESS_H / Math.tan(toBall), h: ADDRESS_H, pitch };
+  const yBall = wide ? -0.45 : -0.6;
+  const yTarget = wide ? 0.3 : 0.12;
+  const D = Math.max(dist, ADDRESS_NEAR);
+  const hh = h ?? addressEyeH(D, aspect);
+  const below = Math.atan(-yBall * T);
+  // Angle between ball and target seen from `b` m behind the ball; it shrinks as b grows.
+  const want = below + Math.atan(yTarget * T);
+  const sep = (b) => Math.atan(hh / b) - Math.atan((hh - dz) / (b + D));
+  let lo = 0.3;
+  let hi = 30;
+  if (sep(hi) > want) lo = hi;
+  for (let i = 0; i < 40 && lo < hi; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (sep(mid) > want) lo = mid;
+    else hi = mid;
+  }
+  const back = 0.5 * (lo + hi);
+  return { back, h: hh, pitch: Math.atan(hh / back) - below, yBall, yTarget, dist: D };
+}
+
+// Is the straight line from eye to p clear of the terrain (with a margin)?
+function sightClear(terrain, eye, p, margin = 0.3) {
+  if (!terrain || !terrain.heightAt) return true;
+  for (let k = 2; k <= 19; k++) {
+    const f = k / 20;
+    const x = eye.x + (p.x - eye.x) * f;
+    const y = eye.y + (p.y - eye.y) * f;
+    if (terrain.heightAt(x, y) > eye.z + (p.z - eye.z) * f - margin) return false;
+  }
+  return true;
 }
 
 // Eye and target `back` m behind `ball` along dir, `h` m above it, looking down at `pitch`.
@@ -92,6 +135,9 @@ export class CameraRig {
     this.readYaw = 0;
     this.snap = true; // first update jumps straight to the goal
     this.flight = null;
+    this.framing = null; // last address framing (tests, HUD)
+    this.snap0 = true;
+    this.shiftX = 0; // NDC lens shift (landscape: the ball sits under the swing arc on the right)
   }
 
   setMode(mode, ctx = {}) {
@@ -161,7 +207,7 @@ export class CameraRig {
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
         const back = clamp(1.3 + d * 0.12, 1.3, 4.5);
         const h = clamp(0.85 + d * 0.05, 0.85, 2.2);
-        const yBall = (c.aspect || 1) >= 1 ? -0.6 : -0.55;
+        const yBall = (c.aspect || 1) >= 1 ? -0.45 : -0.55;
         const pitch = Math.atan2(h, back) - Math.atan(-yBall * Math.tan(fovForAspect(c.aspect || 1) / 2));
         ({ eye, target } = behindBall(ball, dir, back, h, pitch));
         clear = 0.3;
@@ -172,9 +218,10 @@ export class CameraRig {
         const mx = (ball.x + cup.x) / 2;
         const my = (ball.y + cup.y) / 2;
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
-        const r = clamp(d * 0.75 + 7, 9, 30);
+        // Close enough on a short putt that ball and cup are more than dots.
+        const r = clamp(d * 0.85 + 4, 5.5, 30);
         const mz = groundZ(T, mx, my);
-        eye = { x: mx + Math.cos(this.readYaw) * r, y: my + Math.sin(this.readYaw) * r, z: mz + r * 0.95 };
+        eye = { x: mx + Math.cos(this.readYaw) * r, y: my + Math.sin(this.readYaw) * r, z: mz + r * 0.85 };
         target = { x: mx, y: my, z: mz };
         lambda = 7;
         break;
@@ -201,6 +248,33 @@ export class CameraRig {
         lambda = 4;
         break;
       }
+      case 'relief': {
+        // Water relief: look down on where the ball went in (entry), the drop spot and, when it
+        // is nearby, where it was played from, so the choice is an informed one. The points sit
+        // in the part of the screen the decision sheet leaves free: the upper half in portrait
+        // (sheet at the bottom), the right half in landscape (lens shift, sheet on the left).
+        const r = c.relief || {};
+        const entry = r.entry || ball;
+        const pts = [entry, r.drop || ball];
+        if (r.replay && Math.hypot(r.replay.x - entry.x, r.replay.y - entry.y) < 90) pts.push(r.replay);
+        const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+        const my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+        let span = 0;
+        for (const p of pts) span = Math.max(span, Math.hypot(p.x - mx, p.y - my));
+        const T2 = Math.tan(fovForAspect(c.aspect || 1) / 2);
+        const wide = (c.aspect || 1) >= 1;
+        const h = clamp((span + 12) / (T2 * (wide ? 0.8 : 0.45)), 25, 260);
+        const dd = r.drop ? Math.hypot(cup.x - r.drop.x, cup.y - r.drop.y) : 0;
+        const hx = dd > 1 ? (cup.x - r.drop.x) / dd : dir.x;
+        const hy = dd > 1 ? (cup.y - r.drop.y) / dd : dir.y;
+        const off = wide ? 0 : 0.25 * h * T2; // the look point sits behind the points: they rise
+        const gz = groundZ(T, mx, my);
+        target = { x: mx - hx * off, y: my - hy * off, z: gz };
+        eye = { x: target.x - hx * h * 0.25, y: target.y - hy * h * 0.25, z: gz + h };
+        up = { x: hx, y: hy, z: 0 };
+        lambda = 4;
+        break;
+      }
       case 'flyover': {
         const P = T && T.path;
         const L = P ? P.length : Math.hypot(cup.x - ball.x, cup.y - ball.y);
@@ -221,9 +295,22 @@ export class CameraRig {
       case 'flight':
         return this._flightGoal(dt);
       default: {
-        // address: behind the ball, framed for the aspect (see addressFraming)
-        const f = addressFraming(c.aspect || 1);
+        // address: behind the ball, framed for the aspect and the shot (see addressFraming): the
+        // target is the club's carry down the aim line (not past the cup). If a ridge hides it
+        // (a raised tee over a convex bank), the eye climbs until the landing area is in sight.
+        const dCup = Math.hypot(cup.x - ball.x, cup.y - ball.y);
+        const dist = clamp(Math.min(c.carry ?? dCup, dCup + 10), 0, 280);
+        const tx = ball.x + dir.x * Math.max(dist, ADDRESS_NEAR);
+        const ty = ball.y + dir.y * Math.max(dist, ADDRESS_NEAR);
+        const tz = T && T.heightAt ? groundZ(T, tx, ty) : ball.z;
+        const dz = tz - (ball.z - 0.02);
+        let f = addressFraming(c.aspect || 1, { dist, dz });
         ({ eye, target } = behindBall(ball, dir, f.back, f.h, f.pitch));
+        for (let k = 0; k < 6 && !sightClear(T, eye, { x: tx, y: ty, z: tz + 0.5 }); k++) {
+          f = addressFraming(c.aspect || 1, { dist, dz, h: f.h + 1.5 });
+          ({ eye, target } = behindBall(ball, dir, f.back, f.h, f.pitch));
+        }
+        this.framing = f;
         lambda = 6;
       }
     }
@@ -289,6 +376,7 @@ export class CameraRig {
     // Terrain clearance applied to the goal (so damping never drags the eye through a hill).
     const minZ = (x, y) => groundZ(T, x, y) + g.clear;
     g.eye.z = Math.max(g.eye.z, minZ(g.eye.x, g.eye.y));
+    this.snap0 = this.snap;
     if (this.snap) {
       this.eye = { ...g.eye };
       this.target = { ...g.target };
@@ -319,6 +407,11 @@ export class CameraRig {
       this.target.x += 1e-2;
     }
     this.fovY = fovForAspect(c.aspect || 1);
+    // Lens shift: at address and putting the view's centre moves to the swing pad (landscape puts
+    // the pad on the right), so the ball sits in the arc while the aim line stays vertical.
+    let shiftGoal = this.mode === 'address' || this.mode === 'putt' ? c.padShift || 0 : 0;
+    if (this.mode === 'relief' && (c.aspect || 1) >= 1.25) shiftGoal = RELIEF_SHIFT;
+    this.shiftX = this.snap0 ? shiftGoal : damp(this.shiftX, shiftGoal, 6, dt);
     const near = this.mode === 'putt' ? 0.08 : this.mode === 'address' ? 0.15 : 0.3;
     return {
       eye: { ...this.eye },
@@ -327,6 +420,7 @@ export class CameraRig {
       fovY: this.fovY,
       near,
       far: 6000,
+      shiftX: this.shiftX,
     };
   }
 }

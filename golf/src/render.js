@@ -9,7 +9,7 @@
 // - Every GPU resource is rebuilt from CPU copies on webglcontextrestored.
 // - Resolution: DPR capped at 2 times an adaptive renderScale (0.6..1) driven by the frame interval.
 
-import { createContext, createProgram, makeBuffer, makeTexture, AttribState } from './gl.js';
+import { createContext, contextExtensions, createProgram, makeBuffer, makeTexture, AttribState } from './gl.js';
 import { perspective, lookAt, multiply, invert, project as projectPt, unproject } from './mat4.js';
 import {
   terrainChunks, skirtMesh, icosphere, MeshBuilder, pineMesh, broadleafMesh, flagMesh, waterMesh,
@@ -70,6 +70,8 @@ export class Renderer {
     });
     canvas.addEventListener('webglcontextrestored', () => {
       this.lost = false;
+      // Fresh extension objects for the new context (WebGL1 instancing would silently no-op).
+      this.ctx = { ...this.ctx, ...contextExtensions(this.gl, this.ctx.gl2) };
       this._initGL();
       if (this.cpu) this._uploadHole();
     });
@@ -415,6 +417,9 @@ export class Renderer {
     const aspect = this.cssW / this.cssH;
     const fovY = cam.fovY || 1;
     const proj = perspective(fovY, aspect, cam.near || 0.2, cam.far || 6000);
+    // Lens shift (NDC x): the view's centre moves sideways without turning the camera (landscape
+    // address puts the ball under the swing arc on the right). project/pick use the same matrix.
+    proj[8] = -(cam.shiftX || 0);
     const fwd = { x: cam.target.x - e.x, y: cam.target.y - e.y, z: cam.target.z - e.z };
     const view = lookAt(ZERO, fwd, cam.up || { x: 0, y: 0, z: 1 });
     multiply(proj, view, this.vp);
@@ -528,33 +533,18 @@ export class Renderer {
       drawTrees(this.G.pine, R.pines, PINE_TINT);
       drawTrees(this.G.broad, R.broads, BROAD_TINT);
 
-      // ---- flagstick and flag (widened with distance so the target stays readable)
-      if (T.cup && (!scene.pin || scene.pin.visible !== false)) {
-        const fp = this.P.flag;
-        const c = T.cup;
-        const d = Math.hypot(c.x - e.x, c.y - e.y, c.z + 1.5 - e.z);
-        const mPerPx = d / this.pxPerRad;
-        u = this._use(fp, frame);
-        gl.uniform3f(u.uOff, c.x - e.x, c.y - e.y, c.z - e.z);
-        gl.uniform1f(u.uPoleR, Math.max(FLAGSTICK_R, 0.8 * mPerPx));
-        gl.uniform1f(u.uFlagS, Math.min(8, Math.max(1, (11 * mPerPx) / 0.52)));
-        gl.uniform1f(u.uPoleH, FLAGSTICK_H);
-        A.bind(fp.a.aPos, this.G.flag.pos, 3);
-        A.bind(fp.a.aNrm, this.G.flag.nrm, 3);
-        A.bind(fp.a.aAttr, this.G.flag.attr, 3);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.flag.idx);
-        this._drawElements(this.G.flag.count);
-      }
       gl.enable(gl.CULL_FACE);
     }
 
-    // ---- ball (icosphere when it covers >= 2.5 px, else a billboard after the sky)
+    // ---- ball (icosphere when it covers its minimum size, else a billboard after the sky).
+    // scene.ball.minPx (CSS px radius, default 2.5) keeps it readable from a raised camera.
     const ball = scene.ball;
     let farBall = null;
     if (ball && ball.visible !== false) {
       const d = Math.hypot(ball.x - e.x, ball.y - e.y, ball.z - e.z);
       const rPx = (BALL_R / Math.max(d, 1e-3)) * this.pxPerRad;
-      if (rPx >= 2.5) {
+      const minPx = Math.max(2.5, ball.minPx || 0);
+      if (rPx >= minPx) {
         const pp = this.P.prop;
         const u = this._use(pp, frame);
         gl.uniform3f(u.uOff, ball.x - e.x, ball.y - e.y, ball.z - e.z);
@@ -567,7 +557,7 @@ export class Renderer {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.ico.idx);
         this._drawElements(this.G.ico.count);
       } else {
-        farBall = { d, r: (2.5 * d) / this.pxPerRad };
+        farBall = { d, r: (minPx * d) / this.pxPerRad };
       }
     }
 
@@ -656,6 +646,27 @@ export class Renderer {
       this._drawStrip(n);
     }
     gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    // ---- flagstick and flag, after the aim line so the line never paints over the pin. Far away
+    // they keep a minimum size on screen (pole >= 40 px tall, flag >= 18 px long): the target.
+    if (R && T && T.cup && (!scene.pin || scene.pin.visible !== false)) {
+      const fp = this.P.flag;
+      const c = T.cup;
+      const d = Math.hypot(c.x - e.x, c.y - e.y, c.z + 1.5 - e.z);
+      const mPerPx = d / this.pxPerRad;
+      const u = this._use(fp, frame);
+      gl.depthMask(true);
+      gl.uniform3f(u.uOff, c.x - e.x, c.y - e.y, c.z - e.z);
+      gl.uniform1f(u.uPoleR, Math.max(FLAGSTICK_R, 0.8 * mPerPx));
+      gl.uniform1f(u.uFlagS, Math.min(30, Math.max(1, (18 * mPerPx) / 0.52)));
+      gl.uniform1f(u.uPoleH, Math.max(FLAGSTICK_H, 40 * mPerPx));
+      A.bind(fp.a.aPos, this.G.flag.pos, 3);
+      A.bind(fp.a.aNrm, this.G.flag.nrm, 3);
+      A.bind(fp.a.aAttr, this.G.flag.attr, 3);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.flag.idx);
+      this._drawElements(this.G.flag.count);
+      gl.depthMask(false);
+    }
 
     // Shot trail.
     if (scene.trail && scene.trail.count > 1) {

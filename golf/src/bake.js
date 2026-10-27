@@ -186,28 +186,48 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7 } = {}) {
     }
   }
 
-  // Soft tree blob shadows, cast away from the sun along the ground.
+  // Tree shadows, cast away from the sun along the ground: a thin trunk shadow from the base up
+  // to the canopy shadow, which is the canopy ellipsoid projected (a blob stretched along the
+  // shadow direction). The trunk line ties the canopy shadow to its tree, which would otherwise
+  // sit several metres off on open grass (a 42 deg sun throws a 6-10 m canopy 7-11 m away) and
+  // read as a hole in the rough.
   const sx = -sunDir.x / Math.max(0.2, sunDir.z);
   const sy = -sunDir.y / Math.max(0.2, sunDir.z);
   const shade = new Float32Array(N);
   for (const t of terrain.trees || []) {
-    const ch = (t.canopy ? t.canopy.cz - t.z : 6) * 0.85; // canopy-centre height above the base
+    const cz = t.canopy ? t.canopy.cz - t.z : 6; // canopy-centre height above the base
     const rx = t.canopy ? t.canopy.rx : 3;
-    // A canopy-shaped blob displaced by the shadow vector, plus a small dark spot at the trunk.
-    for (const [ox, oy, r, k0] of [[sx * ch, sy * ch, rx * 1.1, 0.55], [sx * ch * 0.3, sy * ch * 0.3, rx * 0.7, 0.25]]) {
-      const cx = t.x + ox;
-      const cy = t.y + oy;
-      const i0 = Math.max(0, Math.floor((cx - r - sg.minX) / st));
-      const i1 = Math.min(W - 1, Math.ceil((cx + r - sg.minX) / st));
-      const j0 = Math.max(0, Math.floor((cy - r - sg.minY) / st));
-      const j1 = Math.min(H - 1, Math.ceil((cy + r - sg.minY) / st));
-      for (let j = j0; j <= j1; j++) {
-        const py = sg.minY + (j + 0.5) * st - cy;
-        for (let i = i0; i <= i1; i++) {
-          const px = sg.minX + (i + 0.5) * st - cx;
-          const d = Math.hypot(px, py) / r;
-          if (d >= 1) continue;
-          const f = k0 * (1 - d * d) * (1 - d * d);
+    const rz = t.canopy ? t.canopy.rz : 3;
+    const trunkTop = Math.min(t.trunkH || cz - rz, cz);
+    const discs = []; // [height of the shadow-casting point, radius, strength]
+    const tr = Math.max(0.3, (t.trunkR || 0.25) * 1.4);
+    for (let k = 0; k <= 6; k++) discs.push([(trunkTop * k) / 6, tr, 0.3]);
+    for (const f of [-0.6, -0.3, 0, 0.3, 0.6]) discs.push([cz + f * rz, rx * Math.sqrt(1 - f * f) * 1.05, 0.45]);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [hgt, r] of discs) {
+      x0 = Math.min(x0, t.x + sx * hgt - r);
+      x1 = Math.max(x1, t.x + sx * hgt + r);
+      y0 = Math.min(y0, t.y + sy * hgt - r);
+      y1 = Math.max(y1, t.y + sy * hgt + r);
+    }
+    const i0 = Math.max(0, Math.floor((x0 - sg.minX) / st));
+    const i1 = Math.min(W - 1, Math.ceil((x1 - sg.minX) / st));
+    const j0 = Math.max(0, Math.floor((y0 - sg.minY) / st));
+    const j1 = Math.min(H - 1, Math.ceil((y1 - sg.minY) / st));
+    for (let j = j0; j <= j1; j++) {
+      const wy = sg.minY + (j + 0.5) * st;
+      for (let i = i0; i <= i1; i++) {
+        const wx = sg.minX + (i + 0.5) * st;
+        // One tree's shadow is the union of its parts (max), not their sum.
+        let f = 0;
+        for (const [hgt, r, k0] of discs) {
+          const d = Math.hypot(wx - (t.x + sx * hgt), wy - (t.y + sy * hgt)) / r;
+          if (d < 1) f = Math.max(f, k0 * (1 - d * d) * (1 - d * d));
+        }
+        if (f > 0) {
           const k = j * W + i;
           shade[k] = 1 - (1 - shade[k]) * (1 - f);
         }

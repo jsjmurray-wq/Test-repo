@@ -544,7 +544,7 @@ export class Renderer {
   stats() -> {drawCalls, tris, renderScale, ms}
   debugPixel(sx, sy) -> [r,g,b,a]           // tests: reads back right after draw
 }
-scene = { time, cam:{eye,target,up,fovY,near,far}, ball:{x,y,z,visible}, trail:{data:Float32Array([x,y,z]*), count}|null,
+scene = { time, cam:{eye,target,up,fovY,near,far,shiftX?}, ball:{x,y,z,visible,minPx?}, trail:{data:Float32Array([x,y,z]*), count}|null,
           aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir? }
 ```
 
@@ -560,27 +560,41 @@ scene = { time, cam:{eye,target,up,fovY,near,far}, ball:{x,y,z,visible}, trail:{
   (height above the turf) and `dash` (dash period, m); main.js uses them for the putt line. The
   flag droops in calm air but never folds flat (it is the target from 200 m), and the horizon
   ridges carry most of the haze so they blend with the fogged skirt instead of reading as a wall.
+- As built after review: `cam.shiftX` is an NDC lens shift (projection only; `project` and
+  `pickTerrain` use the same matrix). `scene.ball.minPx` is the ball's minimum on-screen radius
+  (CSS px, default 2.5). The flagstick and flag are drawn after the aim line (the line never paints
+  over the pin) with a minimum on-screen size (pole ≥ 40 px, flag ≥ 18 px). Fog adds aerial
+  perspective (up to 80% haze from 200 m to 1.4 km) so far woods grade into the hazed ridges.
+  Baked tree shadows are a trunk line from the base plus the projected canopy, so a canopy shadow
+  thrown 7–11 m by the 42° sun stays tied to its tree. On `webglcontextrestored` the WebGL1
+  extensions are fetched again (`contextExtensions(gl, gl2)` in gl.js) before the rebuild.
 
 ### Camera (`camera.js`, pure)
 
 ```js
 export class CameraRig {
   constructor()
-  mode                   // 'address'|'putt'|'read'|'flight'|'holed'|'map'|'flyover'
-  setMode(mode, ctx)     // ctx: {ball, aimYaw, cup, terrain, shot, aspect}
-  update(dt, ctx) -> {eye, target, up, fovY, near, far}
+  mode                   // 'address'|'putt'|'read'|'flight'|'holed'|'map'|'flyover'|'relief'
+  setMode(mode, ctx)     // ctx: {ball, aimYaw, cup, terrain, shot, aspect, carry?, padShift?, relief?}
+  update(dt, ctx) -> {eye, target, up, fovY, near, far, shiftX}
   orbit(dyaw)            // read-mode drag
+  framing                // last address framing (tests)
 }
-// also: fovForAspect(aspect), addressFraming(aspect) -> {back, h, pitch}, ADDRESS_H, FLYOVER_T
+// also: fovForAspect(aspect), addressFraming(aspect, {dist, dz, h}) -> {back, h, pitch, yBall,
+// yTarget, dist}, addressEyeH(dist, aspect), ADDRESS_H, ADDRESS_H_MAX, ADDRESS_NEAR, FLYOVER_T
 ```
 
 - The eye is always ≥ 1 m above the terrain (≥ 0.3 m for putts).
 - `fovY` comes from a 55° horizontal FOV, clamped to 40–75°.
-- Address (as built): the eye is `ADDRESS_H` = 1.6 m above the ball and behind it along the aim;
-  `addressFraming(aspect) -> {back, h, pitch}` solves the distance and downward pitch so that the
-  ball projects at NDC y = −0.6 (portrait/square) or −0.7 (landscape), inside the swing arc, and
-  the horizon at NDC y = 0.22 / 0.12. That is ~2.4 m back in portrait (vertical FOV 75°) and ~5 m
-  in landscape (40°), where a fixed 3.2 m put the ball below the bottom edge. Flight: TV-style
+- Address (as built after review): the framed target is the club's carry down the aim line
+  (`ctx.carry`, capped at the cup + 10 m). The eye height rises from `ADDRESS_H` = 1.6 m (targets
+  within 40 m) by 5 cm per metre (scaled down with the vertical FOV in landscape) up to 9 m, and
+  `addressFraming` solves the distance back so the ball projects at NDC y = −0.6 (portrait) or −0.45
+  (landscape) and the target at +0.12 / +0.3. If the terrain hides the target (a raised tee over a
+  convex bank) the eye climbs 1.5 m at a time until the line of sight clears. In landscape the view
+  centre is lens-shifted onto the swing pad (`ctx.padShift` → `shiftX`) for address and putt, so
+  the ball sits in the arc on the right. Relief: a raised view of the water entry, the drop spot
+  and (within 90 m) the replay spot, in the screen area the decision sheet leaves free. Flight: TV-style
   shot, then a chase cam, then a landing cam (`shot.landing` is known in advance). Flyover: 5 s
   along the spline. Putt: low behind the ball (1.3–4.5 m back, 0.85–2.2 m up with the putt
   length), pitched so the ball sits at NDC y ≈ −0.55. Read: orbit above the green.
@@ -592,7 +606,7 @@ export class CameraRig {
 - **Info card:** distance to the pin, "plays like", the lie chip and a wind arrow (relative to
   the camera yaw).
 - **Club picker:** ◀ club ▶ with carry and total; it auto-picks on every new lie.
-- **Power arc** around the swing pad. Shot toast: "7 Iron · Carry 158 yd · Total 164 yd".
+- **Power arc** around the swing pad. Shot toast: "7i · 158/164 yd · Straight".
 - **Scorecard overlay** (`#scorecard`, with a `[data-act="next-hole"]` button).
 - **Menus:** main menu (`[data-act="new-round"]`, `[data-act="resume"]`, settings, how to play),
   pause sheet, settings, and a `#nogl` message.
@@ -639,15 +653,23 @@ export class CameraRig {
   stroke. The live arc readout is `game.carryForPower(power)` (carry, or flat roll for putts), and
   the aim ring follows it. The power curve is warmed on every address so the first gauge move
   does not hitch.
-- **Scene:** the pin is out for putts (address, flight, holed and scorecard after a holed putt);
+- **Scene:** the pin is out for putts (address, flight, holed and scorecard after a holed putt),
+  except that it is attended at address for putts over 9 m and shown in Read; the ball has a
+  minimum on-screen size at address (3.5 px), in Read (4.5) and at the relief decision (5), where
+  it sits at the drop spot with a dashed line from the water entry; in flight the lie chip reads
+  "In the air" / "Rolling"; Read also shows the putt line;
   the trail shows full shots in flight/holed/decision; putts get a thin short-dashed line with a
   0.2 m ring (`aimRibbon` options `ring`, `width`, `lift`, `dash`) and a faint read grid.
-- **Toasts:** shot result `'7 Iron · Carry 158 yd · Total 164 yd · Push fade'` (the label comes
-  from the launch actually played, scatter included, plus `· Rushed`/`· Decel`); putts `'Putter ·
-  12 ft · 2 ft left'`; rule messages; "Lip out".
+- **Toasts:** shot result `'7i · 158/164 yd · Push fade'` (short club name, carry/total; the
+  label is the swipe's own shape, and when contact scatter changed the result it says so:
+  `'Straight → pull'`; plus `· Rushed`/`· Decel`); putts `'Putter · 12 ft · 2 ft left'`; rule
+  messages; "Lip out". The toast wraps onto two lines on a narrow screen; in putt mode it sits at
+  the top under the info card (it would cover the cup).
 - **Saves:** on every new hole, phase change to intro/address/decision/scorecard, shot end, relief
   choice, pause, `visibilitychange`(hidden) and `pagehide`; cleared at round over. `?autoplay`
-  never saves.
+  never saves. A failed write removes the stored (stale) copy, and loading takes the newer of the
+  stored and in-memory copies (by `savedAt`; the best round by `date`). The resize key includes
+  the safe-area insets (a 180° landscape flip moves the pad without a size change).
 - **Settings:** apply at once (wind via `game.setSettings`, quality by rebuilding the hole).
 - **`?autoplay=1`:** `playBotShot` after 0.6 s of game time in address (run in a `setTimeout` so
   the frame paints first), `botDecide` for relief, next hole 0.8 s after the scorecard;
@@ -686,7 +708,9 @@ input.resize(); input.destroy()
   clockwise (dyaw < 0); ~0.13°/px, up to 3× for fast drags.
 - **read:** drag → `onOrbit(dyaw)` (drag right → dyaw < 0). **map:** tap → `onTap(sx, sy)` (CSS px,
   for `renderer.pickTerrain`); a horizontal drag still sends `onAim`. **intro / watch:** a tap →
-  `onSkip()` (use 'watch' during flight to fast-forward). Only the first pointer is tracked.
+  `onSkip()` (use 'watch' during flight to fast-forward), ignored for `SKIP_GUARD_MS` = 350 ms after
+  entering the mode (the second tap of a double tap on a closing overlay button). Only the first
+  pointer is tracked.
 - **Pad rect:** portrait/square = lower 40% of the canvas above the bottom safe inset, full width;
   landscape = right 40% of the width, lower 72% of the height (deviation from "lower 40%": a 40%
   strip of a 390 px tall screen leaves too little backswing travel). Safe insets come from the CSS

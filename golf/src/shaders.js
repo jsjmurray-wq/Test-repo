@@ -39,9 +39,14 @@ vec3 fogCol(vec3 d) {
   return skyCol(h) * vec3(0.9, 0.93, 0.95);
 }
 
+// exp2 fog, plus aerial perspective that takes anything past ~200 m most of the way to the haze
+// colour by 1.4 km. The far skirt and woods then grade smoothly up into the (lighter still) ridge
+// silhouettes and the sky: nearer is darker, further is lighter, and no dark band forms between
+// the tree line and the hills.
 vec3 applyFog(vec3 c, vec3 rel) {
   float d = length(rel);
   float f = 1.0 - exp(-d * d * uFogK * uFogK);
+  f = max(f, 0.8 * smoothstep(200.0, 1400.0, d));
   return mix(c, fogCol(rel / max(d, 1e-4)), f);
 }
 
@@ -113,8 +118,8 @@ void main() {
   vec3 hz = fogCol(d);
   // Both ridges sit kilometres away, so they carry most of the haze: the fogged skirt terrain in
   // front of them is already close to hz, and dark ridges would read as a wall on the horizon.
-  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.72);
-  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.6);
+  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.86);
+  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.78);
   c = mix(c, farCol, smoothstep(far + 0.0015, far - 0.0015, e));
   c = mix(c, nearCol, smoothstep(near + 0.001, near - 0.001, e));
 
@@ -174,7 +179,8 @@ void main() {
   if (uSkirt > 0.5) {
     // Beyond the hole: rough at the grid edge (vN.x = 0) turning into woodland further out.
     float wood = smoothstep(0.35, 0.65, nz2.a * 0.6 + vN.x * 0.55);
-    alb = mix(vec3(0.21, 0.37, 0.13), vec3(0.07, 0.14, 0.06), wood) * (0.88 + 0.24 * nz2.r);
+    // (Woodland seen from above is canopy tops in sun, not shadow: a mid green, not near black.)
+    alb = mix(vec3(0.21, 0.37, 0.13), vec3(0.12, 0.22, 0.09), wood) * (0.88 + 0.24 * nz2.r);
   } else {
     vec4 b = texture2D(uBake, (vWorld - uBakeMin) * uBakeInv);
     alb = b.rgb;
@@ -385,10 +391,10 @@ void main() {
   vec3 p;
   vec3 n;
   if (aAttr.x < 0.5) {
-    p = vec3(aPos.xy * uPoleR, aPos.z);
+    p = vec3(aPos.xy * uPoleR, aAttr.z * uPoleH); // aAttr.z: 0 at the foot, 1 at the top
     n = aNrm;
     // White pole with a darker band every 30 cm near the top for scale.
-    vCol = mix(vec3(0.92, 0.92, 0.88), vec3(0.75, 0.1, 0.08), step(0.5, fract(aPos.z / 0.3)) * step(uPoleH - 0.6, aPos.z));
+    vCol = mix(vec3(0.92, 0.92, 0.88), vec3(0.75, 0.1, 0.08), step(0.5, fract(p.z / 0.3)) * step(uPoleH - 0.6, p.z));
   } else {
     float wl = length(uWind);
     vec2 wd = wl > 0.05 ? uWind / wl : vec2(0.8, 0.6);
@@ -528,8 +534,12 @@ void main() {
     float al = dot(q, dn);
     float ac = dot(q, vec2(-dn.y, dn.x));
     al = fract(al + 0.5 - uTime * (0.15 + s * 0.08)) - 0.5;
-    float chev = 1.0 - smoothstep(0.025, 0.05, abs(al + abs(ac) * 0.9 - 0.05));
-    chev *= 1.0 - smoothstep(0.14, 0.18, abs(ac));
+    // An arrow: a V head pointing downhill on a short stem, so the direction reads in a still
+    // frame and in perspective (a bare V looks like a tick from a low angle).
+    float head = 1.0 - smoothstep(0.025, 0.05, abs(al + abs(ac) * 0.9 - 0.05));
+    head *= 1.0 - smoothstep(0.14, 0.18, abs(ac));
+    float stem = (1.0 - smoothstep(0.018, 0.035, abs(ac))) * step(-0.34, al) * step(al, 0.04);
+    float chev = max(head, stem);
     c = mix(c, vec3(1.0), chev * 0.8);
     a = max(a, chev * 0.85);
   }

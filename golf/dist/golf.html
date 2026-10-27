@@ -200,6 +200,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .lie-chip[data-surf="rough"], .lie-chip[data-surf="oob"] { background: rgba(140, 170, 70, 0.22); color: #dbe9a8; box-shadow: inset 0 0 0 1px rgba(170, 200, 90, 0.45); }
 .lie-chip[data-surf="bunker"] { background: rgba(232, 210, 154, 0.22); color: #f6e7bf; box-shadow: inset 0 0 0 1px rgba(232, 210, 154, 0.5); }
 .lie-chip[data-surf="green"], .lie-chip[data-surf="fringe"] { background: rgba(124, 240, 168, 0.2); color: #c8ffe0; }
+.lie-chip[data-surf="flight"] { background: rgba(255, 255, 255, 0.1); color: #e8eef5; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
 .lie-chip[data-surf="tee"] { background: rgba(255, 255, 255, 0.14); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
 .lie-chip[data-surf="water"] { background: rgba(124, 196, 255, 0.2); color: #cfe9ff; box-shadow: inset 0 0 0 1px rgba(124, 196, 255, 0.45); }
 .wind { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; white-space: nowrap; }
@@ -302,6 +303,11 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 }
 .pad-hint::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--gold); vertical-align: 1px; animation: pulse 1.6s ease-in-out infinite; }
 #pad[data-state="swing"] .pad-hint { opacity: 0; }
+/* Putting: the cup is just above the ball on a short putt, so the hint goes below the ball and
+   result toasts go to the top, under the info card. */
+body:not([data-layout="landscape"]) #hud[data-putt="1"] .pad-hint { top: 57%; }
+#hud[data-putt="1"][data-hinted="1"] .pad-hint { opacity: 0; }
+body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(--sat) + 158px); }
 @keyframes pulse { 50% { opacity: 0.3; transform: scale(0.7); } }
 
 /* ---------------- phases ---------------- */
@@ -330,10 +336,13 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   top: calc(var(--pad-y) - 70px);
   transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  width: max-content; max-width: calc(100vw - 24px);
+  width: max-content; max-width: calc(100vw - 24px - var(--sal) - var(--sar));
 }
+/* Segments wrap onto a second line rather than run off a narrow screen. */
+.toast .tb { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; padding: 2px 0; }
 .toast {
   display: flex; align-items: stretch;
+  max-width: 100%;
   border-radius: 12px; overflow: hidden;
   background: var(--glass-strong);
   border: 1px solid var(--line);
@@ -342,8 +351,8 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   animation: toast-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .toast.out { animation: toast-out 0.3s ease forwards; }
-.toast b { background: linear-gradient(160deg, #2bb062, #137a3c); padding: 9px 12px; font-weight: 800; white-space: nowrap; }
-.toast span { padding: 9px 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast b { background: linear-gradient(160deg, #2bb062, #137a3c); padding: 9px 12px; font-weight: 800; white-space: nowrap; display: flex; align-items: center; }
+.toast span { padding: 7px 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%; }
 .toast span + span { padding-left: 0; }
 .toast span + span::before { content: ''; display: inline-block; width: 1px; height: 12px; background: var(--line); margin-right: 13px; vertical-align: -1px; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
@@ -532,6 +541,10 @@ table.sc { width: 100%; border-collapse: separate; border-spacing: 0; font-size:
 #scorecard[data-final="1"] [data-act="next-hole"] { display: none; }
 
 /* ---------------- decision ---------------- */
+/* A bottom sheet (left panel in landscape) with a light scrim: the camera frames where the ball
+   went in and the drop spot in the free part of the screen. */
+#decision { align-items: flex-end; background: linear-gradient(to top, rgba(3, 8, 14, 0.55), rgba(3, 8, 14, 0.05) 55%); }
+body[data-layout="landscape"] #decision { align-items: center; justify-content: flex-start; background: linear-gradient(to right, rgba(3, 8, 14, 0.55), rgba(3, 8, 14, 0.05) 60%); }
 .dec-opts { display: flex; flex-direction: column; gap: 10px; }
 .dec-opts .btn { flex-direction: column; min-height: 58px; }
 .dec-opts .btn small { font-size: 12px; font-weight: 600; opacity: 0.7; margin-top: 2px; }
@@ -860,7 +873,8 @@ const COURSE = {
       bounds: { margin: 72 },
     },
 
-    // 8. Reachable par 5: water (yellow) all down the right of the second half, green tucked right.
+    // 8. Reachable par 5: water (red, lateral relief) all down the right of the second half, green
+    // tucked right. It runs alongside the hole, so yellow back-on-the-line relief would be unusable.
     {
       n: 8, par: 5, name: 'Temptation', si: 4,
       path: [[0, 0], [6, -150], [0, -288], [-22, -388], [-56, -438]],
@@ -877,7 +891,7 @@ const COURSE = {
         pins: [[3, 5], [-4, -4], [1, 0]],
       },
       water: [{
-        kind: 'yellow', level: -1.0, bank: 6,
+        kind: 'red', level: -1.0, bank: 6,
         poly: [[228, 26], [290, 21], [350, 22], [405, 21], [430, 25], [455, 33], [470, 52], [445, 62], [390, 58], [320, 55], [250, 52], [222, 40]],
       }],
       bunkers: [
@@ -2231,19 +2245,19 @@ const PUTTER_ID = 'P';
 
 // prettier-ignore
 const CLUBS = [
-  { id: 'D',  name: 'Driver',         short: 'Dr', kind: 'wood',   loft: 10.5, spinLoft: 13, ballSpeed: 67.0, launch: 12.0, spinRpm: 2800, targetCarryYd: 244 },
-  { id: '3W', name: '3 Wood',         short: '3W', kind: 'wood',   loft: 15,   spinLoft: 16, ballSpeed: 63.0, launch: 10.5, spinRpm: 3800, targetCarryYd: 228 },
-  { id: '5W', name: '5 Wood',         short: '5W', kind: 'wood',   loft: 18,   spinLoft: 19, ballSpeed: 59.8, launch: 11.5, spinRpm: 4400, targetCarryYd: 216 },
-  { id: '4H', name: '4 Hybrid',       short: '4H', kind: 'hybrid', loft: 22,   spinLoft: 22, ballSpeed: 56.6, launch: 12.5, spinRpm: 4700, targetCarryYd: 203 },
-  { id: '5i', name: '5 Iron',         short: '5i', kind: 'iron',   loft: 26,   spinLoft: 25, ballSpeed: 53.7, launch: 13.0, spinRpm: 5300, targetCarryYd: 190 },
-  { id: '6i', name: '6 Iron',         short: '6i', kind: 'iron',   loft: 30,   spinLoft: 28, ballSpeed: 51.0, launch: 14.5, spinRpm: 6100, targetCarryYd: 178 },
-  { id: '7i', name: '7 Iron',         short: '7i', kind: 'iron',   loft: 34,   spinLoft: 31, ballSpeed: 48.3, launch: 16.5, spinRpm: 7000, targetCarryYd: 165 },
-  { id: '8i', name: '8 Iron',         short: '8i', kind: 'iron',   loft: 38,   spinLoft: 34, ballSpeed: 45.7, launch: 18.5, spinRpm: 7800, targetCarryYd: 152 },
-  { id: '9i', name: '9 Iron',         short: '9i', kind: 'iron',   loft: 42,   spinLoft: 37, ballSpeed: 42.7, launch: 21,   spinRpm: 8500, targetCarryYd: 138 },
-  { id: 'PW', name: 'Pitching Wedge', short: 'PW', kind: 'wedge',  loft: 46,   spinLoft: 40, ballSpeed: 39.4, launch: 24,   spinRpm: 9000, targetCarryYd: 123 },
-  { id: 'GW', name: 'Gap Wedge',      short: 'GW', kind: 'wedge',  loft: 50,   spinLoft: 43, ballSpeed: 36.1, launch: 27,   spinRpm: 9400, targetCarryYd: 108 },
-  { id: 'SW', name: 'Sand Wedge',     short: 'SW', kind: 'wedge',  loft: 56,   spinLoft: 47, ballSpeed: 32.2, launch: 31,   spinRpm: 9800, targetCarryYd: 91 },
-  { id: 'LW', name: 'Lob Wedge',      short: 'LW', kind: 'wedge',  loft: 60,   spinLoft: 50, ballSpeed: 28.3, launch: 34,   spinRpm: 9600, targetCarryYd: 74 },
+  { id: 'D',  name: 'Driver',         short: 'Dr', kind: 'wood',   loft: 10.5, spinLoft: 13, ballSpeed: 68.6, launch: 12.0, spinRpm: 2800, targetCarryYd: 244 },
+  { id: '3W', name: '3 Wood',         short: '3W', kind: 'wood',   loft: 15,   spinLoft: 16, ballSpeed: 66.0, launch: 10.5, spinRpm: 3800, targetCarryYd: 228 },
+  { id: '5W', name: '5 Wood',         short: '5W', kind: 'wood',   loft: 18,   spinLoft: 19, ballSpeed: 63.6, launch: 11.5, spinRpm: 4400, targetCarryYd: 216 },
+  { id: '4H', name: '4 Hybrid',       short: '4H', kind: 'hybrid', loft: 22,   spinLoft: 22, ballSpeed: 60.7, launch: 12.5, spinRpm: 4700, targetCarryYd: 203 },
+  { id: '5i', name: '5 Iron',         short: '5i', kind: 'iron',   loft: 26,   spinLoft: 25, ballSpeed: 58.1, launch: 13.0, spinRpm: 5300, targetCarryYd: 190 },
+  { id: '6i', name: '6 Iron',         short: '6i', kind: 'iron',   loft: 30,   spinLoft: 28, ballSpeed: 55.7, launch: 14.5, spinRpm: 6100, targetCarryYd: 178 },
+  { id: '7i', name: '7 Iron',         short: '7i', kind: 'iron',   loft: 34,   spinLoft: 31, ballSpeed: 53.0, launch: 16.5, spinRpm: 7000, targetCarryYd: 165 },
+  { id: '8i', name: '8 Iron',         short: '8i', kind: 'iron',   loft: 38,   spinLoft: 34, ballSpeed: 50.1, launch: 18.5, spinRpm: 7800, targetCarryYd: 152 },
+  { id: '9i', name: '9 Iron',         short: '9i', kind: 'iron',   loft: 42,   spinLoft: 37, ballSpeed: 46.7, launch: 21,   spinRpm: 8500, targetCarryYd: 138 },
+  { id: 'PW', name: 'Pitching Wedge', short: 'PW', kind: 'wedge',  loft: 46,   spinLoft: 40, ballSpeed: 42.9, launch: 24,   spinRpm: 9000, targetCarryYd: 123 },
+  { id: 'GW', name: 'Gap Wedge',      short: 'GW', kind: 'wedge',  loft: 50,   spinLoft: 43, ballSpeed: 39.0, launch: 27,   spinRpm: 9400, targetCarryYd: 108 },
+  { id: 'SW', name: 'Sand Wedge',     short: 'SW', kind: 'wedge',  loft: 56,   spinLoft: 47, ballSpeed: 34.7, launch: 31,   spinRpm: 9800, targetCarryYd: 91 },
+  { id: 'LW', name: 'Lob Wedge',      short: 'LW', kind: 'wedge',  loft: 60,   spinLoft: 50, ballSpeed: 30.2, launch: 34,   spinRpm: 9600, targetCarryYd: 74 },
   { id: 'P',  name: 'Putter',         short: 'Pt', kind: 'putter', loft: 3,    spinLoft: 3,  ballSpeed: 0,    launch: 0,    spinRpm: 0,    targetCarryYd: 0 },
 ];
 
@@ -2332,14 +2346,20 @@ return { PUTTER_ID, CLUBS, clubById, dPlane, makeLaunch, stockLaunch };
 const __m_aero = (() => {
 // Golf ball aerodynamics. Pure module: no DOM, no clock, no Math.random.
 //
-// Model (Smits & Smith style, SI units, z up). The force on the ball depends on the air-relative
-// velocity u = v - W(z_agl) and the spin parameter S = R|w|/|u|:
+// Model (SI units, z up). The force on the ball depends on the air-relative velocity
+// u = v - W(z_agl) and the spin parameter S = R|w|/|u|:
 //
-//   C_D = 0.24 + 0.18 S            drag rises with spin (more wake turbulence)
-//   C_L = 0.54 S^0.4               Magnus lift, steep at low S, flattening at high S
+//   C_D = 0.186 + 0.545 S - 0.42 S^2 + 0.063 (50/|u| - 1)   drag rises with spin (wake), and a
+//                                     little at low speed (the dimples' drag crisis is behind us
+//                                     at driver speed, still fading at wedge speed)
+//   C_L = 1.15 S^0.766 / (1 + 1.55 S)  Magnus lift: weak at driver spin (S ~ 0.09), saturating
+//                                     at wedge spin (S ~ 0.5)
 //   a   = -g z  - k C_D |u| u  +  k C_L |u|^2 (w_hat x u_hat),   k = rho A / (2 m)
 //
-// S is clamped to [0, 0.6]; beyond that the fits are extrapolations and real balls plateau.
+// The coefficients were fitted to TrackMan's PGA Tour and LPGA averages (ball speed, launch and
+// spin in; carry, apex and descent angle out): irons and wedges land within ~2 deg and ~2 yd of
+// apex, the driver about 3 deg steep. S is clamped to [0, 0.6] and |u| to >= 15 m/s in the drag
+// term; beyond those the fits are extrapolations.
 //
 // Wind follows a neutral-atmosphere log profile anchored at 10 m:
 //   W(z) = W10 ln(max(z, 0.5) / z0) / ln(10 / z0)
@@ -2352,14 +2372,23 @@ const S_MAX = 0.6;
 
 const LOG_REF = Math.log(WIND_REF_Z / WIND_Z0);
 
-function dragCoeff(S) {
-  const s = S < 0 ? 0 : S > S_MAX ? S_MAX : S;
-  return 0.24 + 0.18 * s;
+const U_REF = 50; // m/s: the speed at which the drag's speed term is zero
+// Fit coefficients (see the header).
+const CD = { a: 0.186, b: 0.545, b2: -0.42, e: 0.063 };
+const CL = { c: 1.15, p: 0.766, q: 1.55 };
+
+const clampS = (S) => (S < 0 ? 0 : S > S_MAX ? S_MAX : S);
+
+// Drag coefficient at spin parameter S and air speed u (m/s; default U_REF = no speed term).
+function dragCoeff(S, u = U_REF) {
+  const s = clampS(S);
+  const uu = u > 15 ? u : 15;
+  return CD.a + CD.b * s + CD.b2 * s * s + CD.e * (U_REF / uu - 1);
 }
 
 function liftCoeff(S) {
-  const s = S < 0 ? 0 : S > S_MAX ? S_MAX : S;
-  return s > 0 ? 0.54 * Math.pow(s, 0.4) : 0;
+  const s = clampS(S);
+  return s > 0 ? (CL.c * Math.pow(s, CL.p)) / (1 + CL.q * s) : 0;
 }
 
 // Scale factor of the log wind profile at height zAgl above ground (1 at 10 m).
@@ -2393,7 +2422,7 @@ function flightAccel(state, wind, out = { x: 0, y: 0, z: 0 }) {
   if (u < 1e-9) return out;
   const wm = Math.sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
   const S = (BALL_R * wm) / u;
-  const drag = AERO_K * dragCoeff(S) * u;
+  const drag = AERO_K * dragCoeff(S, u) * u;
   out.x -= drag * ux;
   out.y -= drag * uy;
   out.z -= drag * uz;
@@ -2407,7 +2436,7 @@ function flightAccel(state, wind, out = { x: 0, y: 0, z: 0 }) {
   return out;
 }
 
-return { AERO_K, S_MAX, dragCoeff, liftCoeff, windFactor, windAt, flightAccel };
+return { AERO_K, S_MAX, U_REF, CD, CL, dragCoeff, liftCoeff, windFactor, windAt, flightAccel };
 })();
 
 // ---- src/physics.js ----
@@ -2444,6 +2473,9 @@ const T_FALL = Math.sqrt((2 * R) / G); // time to fall one ball radius into the 
 const CUP_DEPTH = 0.1016;
 const SLIP_EPS = 0.01; // m/s contact slip below which the ball rolls
 const REST_V = 0.01; // m/s
+const STALL_V = 0.03; // m/s: below this a ball may be creeping, see the stall test
+const STALL_T = 0.5; // s
+const STALL_D = 0.015; // m moved over STALL_T below which a creeping ball counts as stopped
 const LAND_VN = 0.5; // m/s outgoing normal speed below which a bounce becomes ground contact
 const CREST_EPS = 2e-5; // m the free-fall path must clear the ground by to take off from a crest
 const TRUNK_E = 0.4;
@@ -2737,9 +2769,12 @@ function cupCheck(p0, p1, v, cup) {
 
 // Geometry of the ball centre moving p0 -> p1 against one tree. tree = {x, y, z, trunkR, trunkH,
 // canopy:{cz, rx, rz}}; z is the ground at the trunk and canopy.cz is the ABSOLUTE world z of the
-// canopy centre (the HoleTerrain convention, also used by the renderer). Returns null, {kind:'trunk', tau, nx, ny} (tau = segment fraction at contact,
-// n = outward horizontal normal) or {kind:'canopy', len} (p1 inside the canopy; len = chord length
-// of the line through the ellipsoid along the direction of travel).
+// canopy centre (the HoleTerrain convention, also used by the renderer). Returns null,
+// {kind:'trunk', tau, nx, ny, rr, inside} (tau = segment fraction at contact, n = outward
+// horizontal normal, rr = trunk radius + R; inside: p0 already overlapped the trunk),
+// {kind:'cap', tau, nx, ny, rr, top} (the ball dropped onto the top of the trunk, where the
+// branches fork) or {kind:'canopy', len} (p1 inside the canopy; len = chord length of the line
+// through the ellipsoid along the direction of travel).
 function treeHit(tree, p0, p1) {
   const base = tree.z || 0;
   // Trunk: swept circle of radius trunkR + R in the horizontal plane.
@@ -2751,6 +2786,21 @@ function treeHit(tree, p0, p1) {
   const a = dx * dx + dy * dy;
   const c0 = fx * fx + fy * fy - rr * rr;
   if (rr > R) {
+    const top = base + (tree.trunkH || 0);
+    // Cap: the segment falls through the top of the trunk inside its radius.
+    if (p0.z > top && p1.z <= top) {
+      const tt = (p0.z - top) / (p0.z - p1.z);
+      const hx = fx + dx * tt;
+      const hy = fy + dy * tt;
+      if (hx * hx + hy * hy <= rr * rr) {
+        const hl = Math.hypot(hx, hy);
+        const ml = Math.sqrt(a);
+        // Outward from the axis; dead centre: the way the ball was travelling.
+        const nx = hl > 1e-6 ? hx / hl : ml > 1e-9 ? dx / ml : 1;
+        const ny = hl > 1e-6 ? hy / hl : ml > 1e-9 ? dy / ml : 0;
+        return { kind: 'cap', tau: tt, nx, ny, rr, top };
+      }
+    }
     let tau = -1;
     if (c0 <= 0) tau = 0;
     else if (a > 0) {
@@ -2763,11 +2813,11 @@ function treeHit(tree, p0, p1) {
     }
     if (tau >= 0) {
       const z = p0.z + (p1.z - p0.z) * tau;
-      if (z >= base - R && z <= base + (tree.trunkH || 0)) {
+      if (z >= base - R && z <= top) {
         const hx = fx + dx * tau;
         const hy = fy + dy * tau;
         const hl = Math.hypot(hx, hy) || 1;
-        return { kind: 'trunk', tau, nx: hx / hl, ny: hy / hl };
+        return { kind: 'trunk', tau, nx: hx / hl, ny: hy / hl, rr, inside: c0 <= 0 };
       }
     }
   }
@@ -3027,15 +3077,51 @@ function simulateShot(terrain, launch, opts = {}) {
         canopyInside.delete(tr);
         continue;
       }
+      if (hit.kind === 'cap') {
+        // Dropped onto the top of the trunk, where the limbs fork: it glances off outward with a
+        // small hop, losing most of its speed (no ball may perch on the trunk).
+        const sp = speed();
+        p.x = tr.x + hit.nx * (hit.rr + 1e-3);
+        p.y = tr.y + hit.ny * (hit.rr + 1e-3);
+        p.z = hit.top + R;
+        const out = 0.3 * sp;
+        v.x = 0.3 * v.x + out * hit.nx;
+        v.y = 0.3 * v.y + out * hit.ny;
+        v.z = Math.max(0, -v.z) * 0.15;
+        w.x *= 0.5;
+        w.y *= 0.5;
+        w.z *= 0.5;
+        emit('tree', gs);
+        changed = true;
+        continue;
+      }
       if (hit.kind === 'trunk') {
-        // Hard cylinder: move to the contact point and reflect the radial velocity.
-        p.x = p0.x + (p.x - p0.x) * hit.tau + hit.nx * 1e-3;
-        p.y = p0.y + (p.y - p0.y) * hit.tau + hit.ny * 1e-3;
-        p.z = p0.z + (p.z - p0.z) * hit.tau;
-        const vn = v.x * hit.nx + v.y * hit.ny;
+        let nx = hit.nx;
+        let ny = hit.ny;
+        if (hit.inside) {
+          // Already overlapping the trunk at the start of the step: push it out radially and keep
+          // this step's motion (resetting to p0 would pin it there while gravity builds up).
+          const ox = p.x - tr.x;
+          const oy = p.y - tr.y;
+          const ol = Math.hypot(ox, oy);
+          if (ol > 1e-6) {
+            nx = ox / ol;
+            ny = oy / ol;
+          }
+          if (ol < hit.rr) {
+            p.x = tr.x + nx * (hit.rr + 1e-3);
+            p.y = tr.y + ny * (hit.rr + 1e-3);
+          }
+        } else {
+          // Hard cylinder: move to the contact point and reflect the radial velocity.
+          p.x = p0.x + (p.x - p0.x) * hit.tau + nx * 1e-3;
+          p.y = p0.y + (p.y - p0.y) * hit.tau + ny * 1e-3;
+          p.z = p0.z + (p.z - p0.z) * hit.tau;
+        }
+        const vn = v.x * nx + v.y * ny;
         if (vn < 0) {
-          v.x -= (1 + TRUNK_E) * vn * hit.nx;
-          v.y -= (1 + TRUNK_E) * vn * hit.ny;
+          v.x -= (1 + TRUNK_E) * vn * nx;
+          v.y -= (1 + TRUNK_E) * vn * ny;
           v.x *= 0.8;
           v.y *= 0.8;
           w.x *= 0.5;
@@ -3156,6 +3242,10 @@ function simulateShot(terrain, launch, opts = {}) {
   };
 
   const grad = { x: 0, y: 0 };
+  let stallT = -1;
+  let stallX = 0;
+  let stallY = 0;
+  let stallV = 0;
 
   while (!outcome) {
     if (t >= maxT) {
@@ -3167,6 +3257,7 @@ function simulateShot(terrain, launch, opts = {}) {
     p0.z = p.z;
     if (mode === 'air') {
       const gz0 = gz;
+      stallT = -1;
       save();
       flightStep(s, DT_AIR, wind, gz0);
       t += DT_AIR;
@@ -3210,12 +3301,31 @@ function simulateShot(terrain, launch, opts = {}) {
     const skidding = rollStep(s, n, surf, DT_GROUND);
     const sp = speed();
     if (!skidding && sp < REST_V) {
+      // Static hold: the same downhill pull rollStep applies, (5/7) g sin(theta), against a0.
       const gr = terrain.gradAt(p.x, p.y, grad) || grad;
-      if ((5 / 7) * G * Math.hypot(gr.x, gr.y) < surf.a0 * 1.05) {
+      const tn = Math.hypot(gr.x, gr.y);
+      if ((5 / 7) * G * (tn / Math.sqrt(1 + tn * tn)) < surf.a0 * 1.05) {
         finishRest();
         break;
       }
     }
+    // Stall: where the pull only just beats the drag the ball can creep at a few mm/s for ever.
+    // A ball that has moved less than STALL_D over STALL_T without speeding up has, to the eye,
+    // stopped (one just starting to roll down a slope is speeding up and carries on).
+    if (!skidding && sp < STALL_V) {
+      if (stallT < 0) {
+        stallT = t;
+        stallX = p.x;
+        stallY = p.y;
+        stallV = sp;
+      } else if (t - stallT >= STALL_T) {
+        if (Math.hypot(p.x - stallX, p.y - stallY) < STALL_D && sp <= stallV * 1.05 + 1e-4) {
+          finishRest();
+          break;
+        }
+        stallT = -1;
+      }
+    } else stallT = -1;
     p.x += v.x * DT_GROUND;
     p.y += v.y * DT_GROUND;
     p.z += v.z * DT_GROUND;
@@ -3320,12 +3430,17 @@ const __m_lie = (() => {
 //   clamped to +-4 deg.
 // * Bunker: woods can't be swept off sand (speed x 0.5). A greenside wedge plays an explosion
 //   shot: the club enters the sand behind the ball, so speed x 0.6, spin x 0.5 and launch +6 deg
-//   replace the generic bunker factors. Woods from rough lose another 15% (grass between club and
-//   ball, and the shallow face can't get under it).
+//   replace the generic bunker factors.
+// * Rough: grass between the face and the ball cuts the spin (a "flier"), most for the lofted
+//   clubs whose spin comes from a clean strike: the full rough spin factor for 8-iron and up,
+//   rising to about x0.8 for woods, which have little spin to lose. Woods sweep the ball but the
+//   shallow face can't get under it: their ball speed totals x0.85 in rough (slope terms apply).
 const { SURF, SURF_NAMES, SURFACES } = __m_constants;
 const { clamp, DEG } = __m_vec3;
 
 const EXPLOSION_RANGE = 40; // m from the green edge for a greenside explosion shot
+const WOOD_ROUGH_SPEED = 0.85; // total ball-speed factor of a wood from the rough
+const ROUGH_SPIN_LOFT = [10, 35]; // deg: the rough's spin cut scales from 45% to 100% over these lofts
 const LABEL_SLOPE = 0.05; // 5% before a slope is worth naming in the lie chip
 
 // Distance (m) from (x, y) to the edge of the green ellipse {cx, cy, rx, ry, rot}, 0 inside.
@@ -3408,8 +3523,12 @@ function applyLie(params, lie, club) {
     } else if (kind === 'wood') {
       speed *= 0.5;
     }
-  } else if (lie.surface === SURF.ROUGH && kind === 'wood') {
-    speed *= 0.85;
+  } else if (lie.surface === SURF.ROUGH) {
+    const base = SURFACES[SURF.ROUGH].lie;
+    const loft = club ? club.loft : 34;
+    const cut = clamp((loft - ROUGH_SPIN_LOFT[0]) / (ROUGH_SPIN_LOFT[1] - ROUGH_SPIN_LOFT[0]), 0.45, 1);
+    spin = (spin / base.spin) * (1 - (1 - base.spin) * cut);
+    if (kind === 'wood') speed *= WOOD_ROUGH_SPEED / base.speed;
   }
   out.ballSpeed = (params.ballSpeed || 0) * speed;
   out.spinRpm = (params.spinRpm || 0) * spin;
@@ -3423,7 +3542,7 @@ function isExplosion(lie, club) {
   return !!lie && !!club && lie.surface === SURF.BUNKER && club.kind === 'wedge' && lie.greenDist <= EXPLOSION_RANGE;
 }
 
-return { EXPLOSION_RANGE, greenEdgeDist, lieAt, applyLie, isExplosion };
+return { EXPLOSION_RANGE, WOOD_ROUGH_SPEED, greenEdgeDist, lieAt, applyLie, isExplosion };
 })();
 
 // ---- src/input.js ----
@@ -3448,7 +3567,7 @@ const __m_input = (() => {
 //                pointercancel -> onSwingCancel().
 //   read         drag anywhere -> onOrbit(dyaw) (grab-the-world: drag right orbits clockwise).
 //   map          tap -> onTap(sx, sy); a horizontal drag still aims (onAim) for fine tuning.
-//   intro/watch  tap anywhere -> onSkip().
+//   intro/watch  tap anywhere -> onSkip() (not within SKIP_GUARD_MS of entering the mode).
 //   disabled     nothing.
 // Only the first pointer is tracked; extra fingers are ignored until it lifts.
 const { clamp } = __m_vec3;
@@ -3464,6 +3583,11 @@ const ORBIT_RAD_PER_PX = 0.007;
 const TAP_PX = 10;
 const TAP_MS = 350;
 const DOWN_SLOP_PX = 6; // finger must climb this far above its lowest point to count as the downswing
+// Taps to skip are ignored this long after the input enters 'intro' or 'watch': the second tap of
+// a double tap on an overlay button ("Next hole", "Resume") lands on the canvas once the overlay
+// has closed, and must not skip the flyover or fast-forward the shot.
+const SKIP_GUARD_MS = 350;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // ------------------------------------------------------------------ pure helpers (unit-tested)
 
@@ -3602,6 +3726,7 @@ class InputController {
     if (this._g && this._g.kind === 'swing') this.onSwingCancel();
     this._g = null;
     this._mode = m;
+    if (m === 'intro' || m === 'watch') this._skipGuard = now() + SKIP_GUARD_MS;
   }
 
   get padRefH() {
@@ -3642,6 +3767,7 @@ class InputController {
         kind = 'map';
         break;
       default: // intro / watch
+        if (now() < (this._skipGuard || 0)) return; // the tail of a double tap on a closing overlay
         kind = 'tap';
     }
     try {
@@ -3701,7 +3827,7 @@ class InputController {
   }
 }
 
-return { FULL_POWER_FRAC, PUTT_POWER_FRAC, MAX_POWER, layoutMode, padRectFor, inRect, swingProgress, aimDelta, orbitDelta, isTap, readSafeInsets, InputController };
+return { FULL_POWER_FRAC, PUTT_POWER_FRAC, MAX_POWER, SKIP_GUARD_MS, layoutMode, padRectFor, inRect, swingProgress, aimDelta, orbitDelta, isTap, readSafeInsets, InputController };
 })();
 
 // ---- src/swing.js ----
@@ -3718,7 +3844,7 @@ const __m_swing = (() => {
 // PUTT_POWER_FRAC x padRefH, capped at MAX_POWER).
 //
 // SwingResult = {ok, reason?:'cancel'|'tooSlow'|'short', kind, power, overswing, startDir,
-//                faceToPath, face, path, tempo:'smooth'|'rushed'|'decel', label}
+//                faceToPath, face, path, tempo:'smooth'|'rushed'|'decel', tempoErr, label}
 //   startDir, faceToPath, face, path are degrees, + = RIGHT of the aim line (screen right is
 //   the golfer's right: the camera looks down the aim line). faceToPath > 0 curves the ball
 //   right (a fade or slice for a right-hander).
@@ -3734,13 +3860,19 @@ const __m_swing = (() => {
 //      the bend of the upswing (heading of the last 40% of its length minus that of the first
 //      60%) sets the face-to-path, i.e. the curve. Gains and dead zones depend on difficulty;
 //      left-handed play flips the sign of the bend.
-//   4. Tempo: the downswing (bottom to strike) ideally takes 0.10 + 0.15 x power s. Under half of
-//      that is 'rushed' (extra face scatter); over twice is 'decel' (ball speed x 0.92).
+//   4. Tempo: the downswing (from the moment the finger starts up out of the bottom to the strike)
+//      ideally takes 0.10 + 0.15 x power s, and any brisk flick (up to ~2400 px/s at full power)
+//      is fine. Under RUSHED_FRAC of the ideal is 'rushed': extra face scatter growing from half
+//      to all of RUSHED_FACE the quicker it is (tempoErr 0..1). Over twice the ideal is 'decel'
+//      (ball speed x 0.92). A still pause at the bottom fires no touch events, so the move's start
+//      is extrapolated back from the first samples that leave the bottom.
 //
 // Putt gesture: drag down to set the pace (power = depth / (0.30 padRefH) maps to a flat-roll
-// distance power x puttRange), then release or flick up. Coming back slowly to the start line
-// cancels. The sideways drift of the last 150 ms (x 0.08 deg/px on Normal, scaled like G_s on
-// Easy/Pro and with a dzA px dead zone, clamped to +-3 deg) pushes or pulls the putt.
+// distance power x puttRange), then release, or flick up through the start line. Sliding back to
+// within 25% of the depth of the start line (and no further), or sliding far sideways, cancels at
+// any speed: that is how a player changes their mind. Presses under PUTT_MIN_DEPTH_PX are slips.
+// The sideways drift of the last 150 ms (x 0.08 deg/px on Normal, scaled like G_s on Easy/Pro and
+// with a dzA px dead zone, clamped to +-3 deg) pushes or pulls the putt.
 const { BALL_R, SURF, SURFACES } = __m_constants;
 const { clamp, DEG } = __m_vec3;
 const { gaussian } = __m_rng;
@@ -3768,13 +3900,18 @@ const BOTTOM_TOL_PX = 3; // jitter allowed while the finger rests at the bottom
 const PUTT_DRIFT_MS = 150;
 const PUTT_DRIFT_GAIN = 0.08; // deg per px of sideways drift
 const PUTT_MAX_DIR = 3; // deg
-const PUTT_CANCEL_FRAC = 0.25; // a putt brought back within 25% of its depth, slowly, cancels
+const PUTT_CANCEL_FRAC = 0.25; // a putt brought back within 25% of its depth of the line cancels
+const PUTT_THROUGH_PX = 12; // ...unless it flicks this far through the line (a flick stroke)
+const PUTT_SIDE_CANCEL_PX = 60; // a putt dragged this far sideways is abandoned, not struck
+const PUTT_MIN_DEPTH_PX = 20; // shallower putt presses are slips, not strokes
+const RUSHED_FRAC = 0.18; // downswing under this fraction of the ideal is rushed
+const DECEL_FRAC = 2; // ...over this multiple is decelerating
 
 // Random contact (deg, fraction): the scatter of a good amateur's strike. Overswing doubles it.
 const SIGMA_DIR = 0.6; // start direction, plus the lie's sdir
 const SIGMA_FACE = 0.4; // face (curve) scatter of a normal swing
 const SIGMA_SPEED = 0.015;
-const RUSHED_FACE = 1.5; // extra face sigma for a rushed tempo
+const RUSHED_FACE = 0.6; // extra face sigma (max) for a rushed tempo
 const DECEL_SPEED = 0.92;
 const PUTT_SIGMA_SPEED = 0.01;
 const PUTT_SIGMA_DIR = 0.3;
@@ -3849,6 +3986,7 @@ function failed(kind, reason, power) {
     face: 0,
     path: 0,
     tempo: 'smooth',
+    tempoErr: 0,
     label: labels[reason],
   };
 }
@@ -3865,7 +4003,7 @@ function interpretSwing(samples, opts = {}) {
   const depth = maxY - y0;
   const frac = kind === 'putt' ? PUTT_POWER_FRAC : FULL_POWER_FRAC;
   const power = clamp(depth / (frac * H), 0, MAX_POWER);
-  if (depth < MIN_DEPTH_PX) return failed(kind, 'short', power);
+  if (depth < (kind === 'putt' ? PUTT_MIN_DEPTH_PX : MIN_DEPTH_PX)) return failed(kind, 'short', power);
   return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, power, diff, opts);
 }
 
@@ -3913,10 +4051,11 @@ function interpretFull(S, y0, power, diff, opts) {
   }
   if (vStrike < STRIKE_SPEED) return failed('full', 'tooSlow', power);
 
-  // Tempo of the downswing.
-  const T = Math.max(0, tc - bottom.t) / 1000;
+  // Tempo of the downswing, from when the finger starts up out of the bottom.
+  const T = Math.max(0, tc - moveStart(S, b, tc, y0)) / 1000;
   const ideal = 0.1 + 0.15 * power;
-  const tempo = T < 0.5 * ideal ? 'rushed' : T > 2 * ideal ? 'decel' : 'smooth';
+  const tempoErr = T < RUSHED_FRAC * ideal ? 1 - T / (RUSHED_FRAC * ideal) : 0;
+  const tempo = tempoErr > 0 ? 'rushed' : T > DECEL_FRAC * ideal ? 'decel' : 'smooth';
 
   // Direction: chord from the bottom of the backswing to the release point.
   const end = S[n - 1];
@@ -3963,6 +4102,7 @@ function interpretFull(S, y0, power, diff, opts) {
     face: path + faceToPath,
     path,
     tempo,
+    tempoErr,
     label,
     alpha,
     kappa,
@@ -3970,18 +4110,31 @@ function interpretFull(S, y0, power, diff, opts) {
   };
 }
 
+// Time (ms) the finger started up out of the bottom sample b, the strike being at (tc, y0). The
+// first sample clearly above the bottom is traced back at the mean speed of the rest of the
+// upswing, so a motionless pause (no events) or a coarse first sample does not count.
+function moveStart(S, b, tc, y0) {
+  const n = S.length;
+  let u = b + 1;
+  while (u < n && S[b].y - S[u].y <= BOTTOM_TOL_PX) u++;
+  if (u >= n) return S[b].t;
+  const q = S[u];
+  const rest = q.y - y0;
+  const dtRest = tc - q.t;
+  const v = rest > 1 && dtRest > 1 ? rest / dtRest : (S[b].y - q.y) / Math.max(1, q.t - S[b].t);
+  return Math.max(S[b].t, q.t - (S[b].y - q.y) / Math.max(v, 1e-3));
+}
+
 function interpretPutt(S, y0, depth, power, diff, opts) {
   const n = S.length;
   const end = S[n - 1];
-  // A slow return to (near) the start line is a change of mind; a release anywhere else, or a
-  // flick up, strokes the putt.
+  // Sliding back to (near) the start line, at any speed, or far off sideways is a change of mind;
+  // a release anywhere else, or a flick on through the line, strokes the putt.
   let iMax = 0;
   for (let i = 1; i < n; i++) if (S[i].y > S[iMax].y) iMax = i;
   const back = end.y - y0;
-  if (back <= PUTT_CANCEL_FRAC * depth) {
-    const v = upSpeed(S, S[iMax].t, end.t, end.y);
-    if (v < STRIKE_SPEED) return failed('putt', 'cancel', power);
-  }
+  if (back <= PUTT_CANCEL_FRAC * depth && back >= -PUTT_THROUGH_PX) return failed('putt', 'cancel', power);
+  if (Math.abs(end.x - S[iMax].x) > PUTT_SIDE_CANCEL_PX) return failed('putt', 'cancel', power);
   // Sideways drift over the last 150 ms pushes (right) or pulls (left) the putt. Easier settings
   // damp it and ignore a few px of wobble (same ratio as the full-swing gains).
   const from = sampleAt(S, end.t - PUTT_DRIFT_MS);
@@ -4001,8 +4154,23 @@ function interpretPutt(S, y0, depth, power, diff, opts) {
     face: startDir,
     path: startDir,
     tempo: 'smooth',
+    tempoErr: 0,
     label,
   };
+}
+
+// Launch and spin of a shorter, softer swing. A pitch is played with the face open and little
+// shaft lean, so it launches higher than the full shot (up to PARTIAL_LAUNCH deg more for wedges,
+// a little for irons), and its spin falls more slowly than its ball speed (a 40 yd sand-wedge
+// pitch still has ~6000 rpm): it lands at 40-50 deg and stops within a few yards.
+const PARTIAL_LAUNCH = { wedge: 8, iron: 2 };
+function partialSwing(club, power, speedFactor = 0.15 + 0.85 * power) {
+  const short = 1 - Math.min(1, Math.max(0, power));
+  const sf = Math.max(0, speedFactor);
+  if (club.kind === 'wedge') {
+    return { launchDeg: club.launch + PARTIAL_LAUNCH.wedge * short, spinRpm: club.spinRpm * Math.pow(sf, 0.5) * (1 - 0.2 * short) };
+  }
+  return { launchDeg: club.launch + (club.kind === 'iron' ? PARTIAL_LAUNCH.iron * short : 0), spinRpm: club.spinRpm * sf };
 }
 
 // Builds the Launch for a swing. rng (a mulberry32 function) adds the random contact; pass null for
@@ -4037,7 +4205,7 @@ function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const disp = over ? 2 : 1;
   const k = dPlane(c, 1, 0).startDirDeg; // start = path + k x (face - path)
   const sDir = SIGMA_DIR * disp + (lie ? lie.factors.sdir : 0);
-  const sFace = SIGMA_FACE * disp + (swing.tempo === 'rushed' ? RUSHED_FACE : 0);
+  const sFace = SIGMA_FACE * disp + (swing.tempo === 'rushed' ? RUSHED_FACE * (0.5 + 0.5 * clamp(swing.tempoErr ?? 1, 0, 1)) : 0);
   const sSpeed = SIGMA_SPEED * disp;
   const nDir = g();
   const nFace = g();
@@ -4048,13 +4216,7 @@ function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const faceToPath = (swing.faceToPath || 0) + faceErr;
   const startDir = (swing.startDir || 0) + nDir * sDir + k * faceErr;
   const speedFactor = (0.15 + 0.85 * power) * Math.max(0.5, 1 + nSpeed * sSpeed) * (swing.tempo === 'decel' ? DECEL_SPEED : 1);
-  // Partial wedges are hit with a shorter, softer swing: less spin than the speed alone implies.
-  const partial = c.kind === 'wedge' ? 0.7 + 0.3 * Math.min(1, power) : 1;
-  const p = applyLie(
-    { ballSpeed: c.ballSpeed * speedFactor, launchDeg: c.launch, spinRpm: c.spinRpm * speedFactor * partial, startDirDeg: startDir },
-    lie,
-    c,
-  );
+  const p = applyLie({ ballSpeed: c.ballSpeed * speedFactor, ...partialSwing(c, power, speedFactor), startDirDeg: startDir }, lie, c);
   const pathDeg = p.startDirDeg - k * faceToPath;
   const faceDeg = pathDeg + faceToPath;
   const d = dPlane(c, faceDeg, pathDeg);
@@ -4073,7 +4235,7 @@ function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   return launch;
 }
 
-return { DIFFICULTY, STRIKE_SPEED, MAX_START_DIR, MAX_FACE_TO_PATH, PUTT_RANGES, SIGMA_DIR, SIGMA_FACE, SIGMA_SPEED, RUSHED_FACE, DECEL_SPEED, PUTT_SIGMA_SPEED, PUTT_SIGMA_DIR, swingLabel, interpretSwing, swingToLaunch };
+return { DIFFICULTY, STRIKE_SPEED, MAX_START_DIR, MAX_FACE_TO_PATH, PUTT_RANGES, PUTT_MIN_DEPTH_PX, RUSHED_FRAC, DECEL_FRAC, SIGMA_DIR, SIGMA_FACE, SIGMA_SPEED, RUSHED_FACE, DECEL_SPEED, PUTT_SIGMA_SPEED, PUTT_SIGMA_DIR, swingLabel, interpretSwing, PARTIAL_LAUNCH, partialSwing, swingToLaunch };
 })();
 
 // ---- src/caddie.js ----
@@ -4082,9 +4244,10 @@ const __m_caddie = (() => {
 // distance and the putt range. Pure module; every number comes from simulateShot, so the advice
 // always matches the physics the shot will actually get.
 //
-//   clubTable(terrain, pos, lie, wind, {aimYaw}) -> [{id, name, short, kind, carry, total, carry0,
-//                                                   total0, apex, landAngle}]   (m, deg; no putter)
+//   clubTable(terrain, pos, lie, wind, {aimYaw}) -> [{id, name, short, kind, carry, total, totalG,
+//                                                   carry0, total0, apex, landAngle}]   (m, deg; no putter)
 //   suggestClub(terrain, pos, lie, wind, {table, par, teeShot, aimYaw}) -> club id
+//   expectedFinish(row) -> carry + RELEASE_K x release on a green (m): what an approach is chosen by
 //   playsLike(terrain, pos, target, wind, table) -> metres
 //   puttRange(dist) -> metres
 //   powerCurve(terrain, pos, lie, wind, clubId, aimYaw) -> [{power, carry, total}]
@@ -4092,7 +4255,7 @@ const __m_caddie = (() => {
 //
 // Distances in the table are a stock full swing (power 1, straight, no contact scatter) with the
 // lie's factors, simulated over flat fairway at the ball's height: carry/total with the wind
-// blowing along aimYaw, carry0/total0 without wind.
+// blowing along aimYaw, carry0/total0 without wind; totalG is the total over a flat green.
 const { SURF, BALL_R } = __m_constants;
 const { CLUBS, PUTTER_ID } = __m_clubs;
 const { simulateShot, planeTerrain } = __m_physics;
@@ -4102,6 +4265,10 @@ const { DEG } = __m_vec3;
 const STOCK = { ok: true, kind: 'full', power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' };
 const ZERO_WIND = { x: 0, y: 0 };
 const OVERRUN = 20; // m: a lay-up club may not run more than this past the cup
+// Approaches aim to finish at the pin: carry plus most of the stock release on a green (some
+// approaches land short of it, on slower grass).
+const RELEASE_K = 0.85;
+const REACH = 0.97; // a club "gets there" when its expected finish is within 3% of plays-like
 const CADDIE_SEED = 7; // fixed seed for the caddie's look-ahead shots (canopy luck)
 
 const yawTo = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
@@ -4111,6 +4278,7 @@ function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const aimYaw = opts.aimYaw ?? (lie && lie.aimYaw !== undefined ? lie.aimYaw : terrain.cup ? yawTo(pos, terrain.cup) : 0);
   const z = terrain.heightAt(pos.x, pos.y);
   const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z });
+  const greenPlane = planeTerrain({ surface: SURF.GREEN, z0: z });
   const start = { x: pos.x, y: pos.y, z: z + BALL_R };
   const windy = hasWind(wind);
   const rows = [];
@@ -4119,6 +4287,8 @@ function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
     const launch = swingToLaunch(c, lie, STOCK, aimYaw, null, { pos: start });
     const r = simulateShot(plane, launch, { wind, record: false, pin: false });
     const r0 = windy ? simulateShot(plane, launch, { record: false, pin: false }) : r;
+    // The same shot landing on a green, which lets a low-spin ball (a flier) run much further.
+    const rg = simulateShot(greenPlane, launch, { wind, record: false, pin: false });
     const land = r.events.find((e) => e.type === 'land');
     rows.push({
       id: c.id,
@@ -4127,6 +4297,7 @@ function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
       kind: c.kind,
       carry: r.carry,
       total: r.total,
+      totalG: rg.total,
       carry0: r0.carry,
       total0: r0.total,
       apex: r.apex,
@@ -4202,6 +4373,11 @@ function isSafeRest(res) {
   return f.surface !== SURF.BUNKER && f.surface !== SURF.WATER && f.surface !== SURF.OOB;
 }
 
+// Where a stock shot is expected to stop, along the line (m).
+function expectedFinish(row) {
+  return row.carry + RELEASE_K * Math.max(0, (row.totalG ?? row.total) - row.carry);
+}
+
 function suggestClub(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const surf = lie ? lie.surface : terrain.surfaceAt(pos.x, pos.y);
   if (surf === SURF.GREEN || surf === SURF.FRINGE) return PUTTER_ID;
@@ -4210,14 +4386,16 @@ function suggestClub(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const aimYaw = opts.aimYaw ?? (lie && lie.aimYaw !== undefined ? lie.aimYaw : yawTo(pos, cup));
   const par = opts.par ?? terrain.par ?? 4;
   const teeShot = opts.teeShot ?? surf === SURF.TEE;
-  // The driver is a tee club.
-  const usable = table.filter((r) => r.id !== 'D' || surf === SURF.TEE);
+  // The driver is a tee club, and a club is no use when a shorter one carries at least as far
+  // (woods from the rough).
+  const usable = table.filter((r, i) => (r.id !== 'D' || surf === SURF.TEE) && !table.slice(i + 1).some((q) => q.carry >= r.carry));
   const dist = Math.hypot(cup.x - pos.x, cup.y - pos.y);
 
   if (!(teeShot && par >= 4)) {
-    // Approach (and par-3 tee shots): the shortest club that carries the plays-like distance.
+    // Approach (and par-3 tee shots): the shortest club whose stock shot finishes (carry plus
+    // most of its release) at the plays-like distance; the power gauge handles the difference.
     const pl = playsLike(terrain, pos, cup, wind, table);
-    const reach = usable.filter((r) => r.carry >= 0.98 * pl);
+    const reach = usable.filter((r) => expectedFinish(r) >= REACH * pl);
     if (reach.length) {
       if (surf === SURF.BUNKER && reach.some((r) => r.id === 'SW')) return 'SW';
       return reach[reach.length - 1].id;
@@ -4235,7 +4413,7 @@ function suggestClub(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   return fallback;
 }
 
-return { clubTable, playsLike, puttRange, CURVE_POWERS, powerCurve, curveAt, predictShot, isSafeRest, suggestClub };
+return { RELEASE_K, clubTable, playsLike, puttRange, CURVE_POWERS, powerCurve, curveAt, predictShot, isSafeRest, expectedFinish, suggestClub };
 })();
 
 // ---- src/rules.js ----
@@ -4256,7 +4434,8 @@ const __m_rules = (() => {
 //   penalty,          0 or 1
 //   ball:{x,y,z},     where the next stroke is played from (ball centre; for water: the drop)
 //   reTee,            the next stroke is from the tee box (stroke and distance from the tee)
-//   decision,         null | {kind:'water', waterKind, options:['drop','replay'], drop, replay, replayTee}
+//   decision,         null | {kind:'water', waterKind, relief:'lateral'|'line', options:['drop','replay'],
+//                     drop, replay, replayTee, entry}
 //   holed, pickUp,    pickUp: 2 x par reached without holing out; the hole is recorded as 2 x par
 //   putt,             the stroke was played from the putting green (counts as a putt)
 //   fir,              tee shot of a par 4/5: true/false; undefined otherwise
@@ -4264,11 +4443,15 @@ const __m_rules = (() => {
 //   message           short text for a toast/banner, or null
 // }
 //
-// Water: red (lateral) relief is the nearest dry, non-hazard spot within two club lengths of where
-// the ball last crossed into the penalty area, no nearer the hole. Yellow relief is back on the
-// line from the hole through that point, at least 2 m behind it, on dry ground. The player may
-// instead replay from the previous spot. Both cost one stroke. OB is stroke and distance.
-const { SURF, CLUB_LENGTH, BALL_R } = __m_constants;
+// Water: red (lateral) relief is a spot within two club lengths of where the ball last crossed
+// into the penalty area, no nearer the hole, chosen like a golfer would: close to the entry but
+// off the steep bank (Rule 14.2e: the ball must stay where it is placed, so spots it would roll
+// away from are never used). Yellow relief is back on the line from the hole through that point,
+// at least 2 m behind it, on dry ground. The player may instead replay from the previous spot.
+// Both cost one stroke. OB is stroke and distance.
+const { SURF, SURFACES, CLUB_LENGTH, BALL_R, G } = __m_constants;
+const { simulateShot } = __m_physics;
+const { clamp } = __m_vec3;
 
 const RELIEF_R = 2 * CLUB_LENGTH; // 2.28 m
 const YELLOW_BACK = 2; // m behind the entry point, at least
@@ -4277,6 +4460,13 @@ const WATER_CLEAR = 0.6; // m: red drops prefer no water this close (the ball si
 // steep bank and clear of the water, so the next shot is not played from the water's edge.
 const YELLOW_CLEAR = 2;
 const YELLOW_MAX_SLOPE = 0.08;
+// Red relief: each 1% of slope costs as much as 8 cm of extra distance from the entry, and
+// ground steeper than RED_GENTLE is used only when the whole relief area is that steep.
+const RED_SLOPE_COST = 8;
+const RED_GENTLE = 0.1;
+const HOLD_MARGIN = 0.85; // a drop spot must hold the ball with this margin on the rolling drag
+const STAY_MOVE = 0.3; // m: a ball released at the spot may settle this far, no further
+const RED_LINE_MAX = 30; // m: how far back on the line a red drop looks for level ground
 
 function maxStrokes(par) {
   return 2 * par;
@@ -4312,9 +4502,34 @@ function clearOfWater(terrain, x, y, r) {
 }
 
 const spot = (terrain, x, y) => ({ x, y, z: terrain.heightAt(x, y) + BALL_R });
+const _g = { x: 0, y: 0 };
+
+function slopeAt(terrain, x, y) {
+  const g = terrain.gradAt(x, y, _g) || _g;
+  return Math.hypot(g.x, g.y);
+}
+
+// Can a ball sit still here? The downhill pull of a rolling ball, (5/7) g sin(theta), must stay
+// well under the surface's rolling drag a0 (the physics rest test, with a margin).
+function holdsBall(terrain, x, y) {
+  const surf = SURFACES[terrain.surfaceAt(x, y)] || SURFACES[SURF.ROUGH];
+  const t = slopeAt(terrain, x, y);
+  return (5 / 7) * G * (t / Math.sqrt(1 + t * t)) < surf.a0 * HOLD_MARGIN;
+}
+
+// Final check of a drop spot: release a ball there at zero speed and see that it stays put.
+function staysPut(terrain, s) {
+  const r = simulateShot(
+    terrain,
+    { pos: { x: s.x, y: s.y, z: s.z }, vel: { x: 0, y: 0, z: 0 }, spin: { x: 0, y: 0, z: 0 }, mode: 'roll' },
+    { record: false, maxT: 5, pin: false },
+  );
+  return r.final.outcome === 'rest' && r.total <= STAY_MOVE;
+}
 
 // Back on the line from the cup through `entry`, from `minBack` m behind it outward: the first
-// dry spot clear of the water by `clear` m on gentle ground, else the first dry spot.
+// dry spot clear of the water by `clear` m on gentle ground, else the first dry spot that holds
+// the ball.
 function backOnLine(terrain, entry, cup, minBack, clear = WATER_CLEAR) {
   let ux = entry.x - cup.x;
   let uy = entry.y - cup.y;
@@ -4332,7 +4547,7 @@ function backOnLine(terrain, entry, cup, minBack, clear = WATER_CLEAR) {
   for (let d = minBack; d <= 250; d += 0.5) {
     const x = entry.x + ux * d;
     const y = entry.y + uy * d;
-    if (!isDropOk(terrain, x, y)) continue;
+    if (!isDropOk(terrain, x, y) || !holdsBall(terrain, x, y)) continue;
     if (!firstDry) firstDry = spot(terrain, x, y);
     if (!clearOfWater(terrain, x, y, clear)) continue;
     if (!firstClear) firstClear = spot(terrain, x, y);
@@ -4346,29 +4561,68 @@ function backOnLine(terrain, entry, cup, minBack, clear = WATER_CLEAR) {
 function waterRelief(terrain, entry, kind = 'red', { cup = terrain.cup } = {}) {
   if (!entry) return null;
   if (kind === 'yellow') return backOnLine(terrain, entry, cup, YELLOW_BACK, YELLOW_CLEAR);
-  // Red: nearest acceptable point in the relief circle. Points with water right next to them are
-  // only used when nothing better exists.
+  // Red: the cheapest spot in the relief circle, where cost = distance from the entry + slope.
+  // Spots that cannot hold a ball are never used; spots with water right next to them or on
+  // ground steeper than RED_GENTLE only when nothing better exists.
   const dEntry = Math.hypot(entry.x - cup.x, entry.y - cup.y);
-  let best = null;
-  let bestScore = Infinity;
+  const cands = [];
   for (let r = 0.25; r <= RELIEF_R + 1e-9; r += 0.25) {
     for (let k = 0; k < 48; k++) {
       const a = (k / 48) * Math.PI * 2;
       const x = entry.x + r * Math.cos(a);
       const y = entry.y + r * Math.sin(a);
       if (Math.hypot(x - cup.x, y - cup.y) < dEntry) continue;
-      if (!isDropOk(terrain, x, y)) continue;
-      const score = r + (clearOfWater(terrain, x, y, WATER_CLEAR) ? 0 : 100);
-      if (score < bestScore) {
-        bestScore = score;
-        best = { x, y };
-      }
+      if (!isDropOk(terrain, x, y) || !holdsBall(terrain, x, y)) continue;
+      const sl = slopeAt(terrain, x, y);
+      const cost = r + RED_SLOPE_COST * sl + (sl > RED_GENTLE ? 50 : 0) + (clearOfWater(terrain, x, y, WATER_CLEAR) ? 0 : 100);
+      cands.push({ x, y, cost, sl });
     }
   }
-  if (best) return spot(terrain, best.x, best.y);
-  // Nothing dry within two club lengths (a ball that crossed a wide stretch of water): fall back
-  // to going back on the line.
+  cands.sort((a, b) => a.cost - b.cost);
+  // Release a ball at the best few: bumps the slope sample misses can still roll it away.
+  let steep = null;
+  let steepSl = 1;
+  for (let i = 0; i < Math.min(cands.length, 12); i++) {
+    const s = spot(terrain, cands[i].x, cands[i].y);
+    if (!staysPut(terrain, s)) continue;
+    if (cands[i].cost < 50) return s;
+    steep = s;
+    steepSl = cands[i].sl;
+    break;
+  }
+  // The whole relief area is steep bank: like a golfer, use the other red-area option (Rule
+  // 17.1d(2)) when it finds level ground nearby, back on the line from the hole through the entry.
+  // The steeper the bank, the further back is worth walking (6 m at 10%, 24 m at 40%).
+  const maxBack = clamp(6 + 60 * (steepSl - RED_GENTLE), 6, RED_LINE_MAX);
+  const level = levelOnLine(terrain, entry, cup, maxBack);
+  if (level) return level;
+  if (steep) return steep;
+  // Nothing in two club lengths holds a ball (a wide stretch of water or a steep bank all
+  // round): go back on the line as far as it takes.
   return backOnLine(terrain, entry, cup, 0);
+}
+
+// Back on the line from the cup through `entry`, within maxBack m: the first spot on gentle
+// ground, clear of the water, that holds the ball. null if there is none.
+function levelOnLine(terrain, entry, cup, maxBack) {
+  const l = Math.hypot(entry.x - cup.x, entry.y - cup.y);
+  if (l < 1e-6) return null;
+  const ux = (entry.x - cup.x) / l;
+  const uy = (entry.y - cup.y) / l;
+  let dry = false;
+  for (let d = 0.5; d <= maxBack; d += 0.5) {
+    const x = entry.x + ux * d;
+    const y = entry.y + uy * d;
+    // Never across the water: stop where the line runs back into it.
+    const wet = terrain.surfaceAt(x, y) === SURF.WATER;
+    if (wet && dry) break;
+    dry = dry || !wet;
+    if (!isDropOk(terrain, x, y) || slopeAt(terrain, x, y) > RED_GENTLE) continue;
+    if (!holdsBall(terrain, x, y) || !clearOfWater(terrain, x, y, WATER_CLEAR)) continue;
+    const s = spot(terrain, x, y);
+    if (staysPut(terrain, s)) return s;
+  }
+  return null;
 }
 
 function resolveShot(ctx, shot) {
@@ -4405,8 +4659,10 @@ function resolveShot(ctx, shot) {
     const wa = terrain.waterAt ? terrain.waterAt(f.x, f.y) || terrain.waterAt(entry.x, entry.y) : null;
     const waterKind = wa ? wa.kind : 'red';
     const drop = waterRelief(terrain, entry, waterKind) || prev;
+    // How the drop was found, for the dialog: beside the entry, or back on the line.
+    const relief = waterKind === 'red' && Math.hypot(drop.x - entry.x, drop.y - entry.y) <= RELIEF_R + 1e-6 ? 'lateral' : 'line';
     res.ball = drop;
-    res.decision = { kind: 'water', waterKind, options: ['drop', 'replay'], drop, replay: prev, replayTee: !!ctx.fromTee, entry };
+    res.decision = { kind: 'water', waterKind, relief, options: ['drop', 'replay'], drop, replay: prev, replayTee: !!ctx.fromTee, entry };
     res.message = waterKind === 'yellow' ? 'Water hazard · Penalty stroke' : 'Penalty area · Penalty stroke';
   }
   res.strokes = strokes + res.penalty;
@@ -4427,7 +4683,7 @@ function resolveShot(ctx, shot) {
   return res;
 }
 
-return { RELIEF_R, YELLOW_BACK, maxStrokes, scoreName, isDropOk, waterRelief, resolveShot };
+return { RELIEF_R, YELLOW_BACK, maxStrokes, scoreName, isDropOk, holdsBall, waterRelief, resolveShot };
 })();
 
 // ---- src/scoring.js ----
@@ -5118,26 +5374,32 @@ function createContext(canvas, { test = false, forceGL1 = false } = {}) {
     gl = null;
   }
   if (!gl) return null;
-  let inst;
-  let uint32 = gl2;
+  return { gl, gl2, ...contextExtensions(gl, gl2) };
+}
+
+// Instancing and 32-bit index support for a context: {inst, uint32}. WebGL1 extension objects
+// belong to one context generation, so after webglcontextrestored this must be called again
+// (calls on the old objects are silent no-ops: instanced trees would vanish).
+function contextExtensions(gl, gl2) {
   if (gl2) {
-    inst = {
-      divisor: (loc, n) => gl.vertexAttribDivisor(loc, n),
-      drawElements: (mode, count, type, offset, n) => gl.drawElementsInstanced(mode, count, type, offset, n),
+    return {
+      uint32: true,
+      inst: {
+        divisor: (loc, n) => gl.vertexAttribDivisor(loc, n),
+        drawElements: (mode, count, type, offset, n) => gl.drawElementsInstanced(mode, count, type, offset, n),
+      },
     };
-  } else {
-    const ext = gl.getExtension('ANGLE_instanced_arrays');
-    uint32 = !!gl.getExtension('OES_element_index_uint');
-    if (ext) {
-      inst = {
-        divisor: (loc, n) => ext.vertexAttribDivisorANGLE(loc, n),
-        drawElements: (mode, count, type, offset, n) => ext.drawElementsInstancedANGLE(mode, count, type, offset, n),
-      };
-    } else {
-      inst = null; // the renderer falls back to one draw per instance batch (see render.js)
-    }
   }
-  return { gl, gl2, inst, uint32 };
+  const ext = gl.getExtension('ANGLE_instanced_arrays');
+  const uint32 = !!gl.getExtension('OES_element_index_uint');
+  if (!ext) return { uint32, inst: null }; // the renderer falls back to one draw per instance batch
+  return {
+    uint32,
+    inst: {
+      divisor: (loc, n) => ext.vertexAttribDivisorANGLE(loc, n),
+      drawElements: (mode, count, type, offset, n) => ext.drawElementsInstancedANGLE(mode, count, type, offset, n),
+    },
+  };
 }
 
 function compile(gl, type, src) {
@@ -5260,7 +5522,7 @@ class AttribState {
   }
 }
 
-return { createContext, createProgram, makeBuffer, makeTexture, AttribState };
+return { createContext, contextExtensions, createProgram, makeBuffer, makeTexture, AttribState };
 })();
 
 // ---- src/mat4.js ----
@@ -6383,28 +6645,48 @@ function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7 } = {}) {
     }
   }
 
-  // Soft tree blob shadows, cast away from the sun along the ground.
+  // Tree shadows, cast away from the sun along the ground: a thin trunk shadow from the base up
+  // to the canopy shadow, which is the canopy ellipsoid projected (a blob stretched along the
+  // shadow direction). The trunk line ties the canopy shadow to its tree, which would otherwise
+  // sit several metres off on open grass (a 42 deg sun throws a 6-10 m canopy 7-11 m away) and
+  // read as a hole in the rough.
   const sx = -sunDir.x / Math.max(0.2, sunDir.z);
   const sy = -sunDir.y / Math.max(0.2, sunDir.z);
   const shade = new Float32Array(N);
   for (const t of terrain.trees || []) {
-    const ch = (t.canopy ? t.canopy.cz - t.z : 6) * 0.85; // canopy-centre height above the base
+    const cz = t.canopy ? t.canopy.cz - t.z : 6; // canopy-centre height above the base
     const rx = t.canopy ? t.canopy.rx : 3;
-    // A canopy-shaped blob displaced by the shadow vector, plus a small dark spot at the trunk.
-    for (const [ox, oy, r, k0] of [[sx * ch, sy * ch, rx * 1.1, 0.55], [sx * ch * 0.3, sy * ch * 0.3, rx * 0.7, 0.25]]) {
-      const cx = t.x + ox;
-      const cy = t.y + oy;
-      const i0 = Math.max(0, Math.floor((cx - r - sg.minX) / st));
-      const i1 = Math.min(W - 1, Math.ceil((cx + r - sg.minX) / st));
-      const j0 = Math.max(0, Math.floor((cy - r - sg.minY) / st));
-      const j1 = Math.min(H - 1, Math.ceil((cy + r - sg.minY) / st));
-      for (let j = j0; j <= j1; j++) {
-        const py = sg.minY + (j + 0.5) * st - cy;
-        for (let i = i0; i <= i1; i++) {
-          const px = sg.minX + (i + 0.5) * st - cx;
-          const d = Math.hypot(px, py) / r;
-          if (d >= 1) continue;
-          const f = k0 * (1 - d * d) * (1 - d * d);
+    const rz = t.canopy ? t.canopy.rz : 3;
+    const trunkTop = Math.min(t.trunkH || cz - rz, cz);
+    const discs = []; // [height of the shadow-casting point, radius, strength]
+    const tr = Math.max(0.3, (t.trunkR || 0.25) * 1.4);
+    for (let k = 0; k <= 6; k++) discs.push([(trunkTop * k) / 6, tr, 0.3]);
+    for (const f of [-0.6, -0.3, 0, 0.3, 0.6]) discs.push([cz + f * rz, rx * Math.sqrt(1 - f * f) * 1.05, 0.45]);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [hgt, r] of discs) {
+      x0 = Math.min(x0, t.x + sx * hgt - r);
+      x1 = Math.max(x1, t.x + sx * hgt + r);
+      y0 = Math.min(y0, t.y + sy * hgt - r);
+      y1 = Math.max(y1, t.y + sy * hgt + r);
+    }
+    const i0 = Math.max(0, Math.floor((x0 - sg.minX) / st));
+    const i1 = Math.min(W - 1, Math.ceil((x1 - sg.minX) / st));
+    const j0 = Math.max(0, Math.floor((y0 - sg.minY) / st));
+    const j1 = Math.min(H - 1, Math.ceil((y1 - sg.minY) / st));
+    for (let j = j0; j <= j1; j++) {
+      const wy = sg.minY + (j + 0.5) * st;
+      for (let i = i0; i <= i1; i++) {
+        const wx = sg.minX + (i + 0.5) * st;
+        // One tree's shadow is the union of its parts (max), not their sum.
+        let f = 0;
+        for (const [hgt, r, k0] of discs) {
+          const d = Math.hypot(wx - (t.x + sx * hgt), wy - (t.y + sy * hgt)) / r;
+          if (d < 1) f = Math.max(f, k0 * (1 - d * d) * (1 - d * d));
+        }
+        if (f > 0) {
           const k = j * W + i;
           shade[k] = 1 - (1 - shade[k]) * (1 - f);
         }
@@ -6545,9 +6827,14 @@ vec3 fogCol(vec3 d) {
   return skyCol(h) * vec3(0.9, 0.93, 0.95);
 }
 
+// exp2 fog, plus aerial perspective that takes anything past ~200 m most of the way to the haze
+// colour by 1.4 km. The far skirt and woods then grade smoothly up into the (lighter still) ridge
+// silhouettes and the sky: nearer is darker, further is lighter, and no dark band forms between
+// the tree line and the hills.
 vec3 applyFog(vec3 c, vec3 rel) {
   float d = length(rel);
   float f = 1.0 - exp(-d * d * uFogK * uFogK);
+  f = max(f, 0.8 * smoothstep(200.0, 1400.0, d));
   return mix(c, fogCol(rel / max(d, 1e-4)), f);
 }
 
@@ -6619,8 +6906,8 @@ void main() {
   vec3 hz = fogCol(d);
   // Both ridges sit kilometres away, so they carry most of the haze: the fogged skirt terrain in
   // front of them is already close to hz, and dark ridges would read as a wall on the horizon.
-  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.72);
-  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.6);
+  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.86);
+  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.78);
   c = mix(c, farCol, smoothstep(far + 0.0015, far - 0.0015, e));
   c = mix(c, nearCol, smoothstep(near + 0.001, near - 0.001, e));
 
@@ -6680,7 +6967,8 @@ void main() {
   if (uSkirt > 0.5) {
     // Beyond the hole: rough at the grid edge (vN.x = 0) turning into woodland further out.
     float wood = smoothstep(0.35, 0.65, nz2.a * 0.6 + vN.x * 0.55);
-    alb = mix(vec3(0.21, 0.37, 0.13), vec3(0.07, 0.14, 0.06), wood) * (0.88 + 0.24 * nz2.r);
+    // (Woodland seen from above is canopy tops in sun, not shadow: a mid green, not near black.)
+    alb = mix(vec3(0.21, 0.37, 0.13), vec3(0.12, 0.22, 0.09), wood) * (0.88 + 0.24 * nz2.r);
   } else {
     vec4 b = texture2D(uBake, (vWorld - uBakeMin) * uBakeInv);
     alb = b.rgb;
@@ -6891,10 +7179,10 @@ void main() {
   vec3 p;
   vec3 n;
   if (aAttr.x < 0.5) {
-    p = vec3(aPos.xy * uPoleR, aPos.z);
+    p = vec3(aPos.xy * uPoleR, aAttr.z * uPoleH); // aAttr.z: 0 at the foot, 1 at the top
     n = aNrm;
     // White pole with a darker band every 30 cm near the top for scale.
-    vCol = mix(vec3(0.92, 0.92, 0.88), vec3(0.75, 0.1, 0.08), step(0.5, fract(aPos.z / 0.3)) * step(uPoleH - 0.6, aPos.z));
+    vCol = mix(vec3(0.92, 0.92, 0.88), vec3(0.75, 0.1, 0.08), step(0.5, fract(p.z / 0.3)) * step(uPoleH - 0.6, p.z));
   } else {
     float wl = length(uWind);
     vec2 wd = wl > 0.05 ? uWind / wl : vec2(0.8, 0.6);
@@ -7034,8 +7322,12 @@ void main() {
     float al = dot(q, dn);
     float ac = dot(q, vec2(-dn.y, dn.x));
     al = fract(al + 0.5 - uTime * (0.15 + s * 0.08)) - 0.5;
-    float chev = 1.0 - smoothstep(0.025, 0.05, abs(al + abs(ac) * 0.9 - 0.05));
-    chev *= 1.0 - smoothstep(0.14, 0.18, abs(ac));
+    // An arrow: a V head pointing downhill on a short stem, so the direction reads in a still
+    // frame and in perspective (a bare V looks like a tick from a low angle).
+    float head = 1.0 - smoothstep(0.025, 0.05, abs(al + abs(ac) * 0.9 - 0.05));
+    head *= 1.0 - smoothstep(0.14, 0.18, abs(ac));
+    float stem = (1.0 - smoothstep(0.018, 0.035, abs(ac))) * step(-0.34, al) * step(al, 0.04);
+    float chev = max(head, stem);
     c = mix(c, vec3(1.0), chev * 0.8);
     a = max(a, chev * 0.85);
   }
@@ -7057,7 +7349,7 @@ const __m_render = (() => {
 //   (instanced), props (stakes, tee markers, cup), flag, ball, blob shadow, read grid, aim, trail.
 // - Every GPU resource is rebuilt from CPU copies on webglcontextrestored.
 // - Resolution: DPR capped at 2 times an adaptive renderScale (0.6..1) driven by the frame interval.
-const { createContext, createProgram, makeBuffer, makeTexture, AttribState } = __m_gl;
+const { createContext, contextExtensions, createProgram, makeBuffer, makeTexture, AttribState } = __m_gl;
 const { perspective, lookAt, multiply, invert, project: projectPt, unproject } = __m_mat4;
 const { terrainChunks, skirtMesh, icosphere, MeshBuilder, pineMesh, broadleafMesh, flagMesh, waterMesh, greenReadMesh, trailRibbon, aimRibbon, skirtTrees } = __m_meshes;
 const { bakeTerrainColor, bakeClouds, bakeNoise, SUN_DIR } = __m_bake;
@@ -7112,6 +7404,8 @@ class Renderer {
     });
     canvas.addEventListener('webglcontextrestored', () => {
       this.lost = false;
+      // Fresh extension objects for the new context (WebGL1 instancing would silently no-op).
+      this.ctx = { ...this.ctx, ...contextExtensions(this.gl, this.ctx.gl2) };
       this._initGL();
       if (this.cpu) this._uploadHole();
     });
@@ -7457,6 +7751,9 @@ class Renderer {
     const aspect = this.cssW / this.cssH;
     const fovY = cam.fovY || 1;
     const proj = perspective(fovY, aspect, cam.near || 0.2, cam.far || 6000);
+    // Lens shift (NDC x): the view's centre moves sideways without turning the camera (landscape
+    // address puts the ball under the swing arc on the right). project/pick use the same matrix.
+    proj[8] = -(cam.shiftX || 0);
     const fwd = { x: cam.target.x - e.x, y: cam.target.y - e.y, z: cam.target.z - e.z };
     const view = lookAt(ZERO, fwd, cam.up || { x: 0, y: 0, z: 1 });
     multiply(proj, view, this.vp);
@@ -7570,33 +7867,18 @@ class Renderer {
       drawTrees(this.G.pine, R.pines, PINE_TINT);
       drawTrees(this.G.broad, R.broads, BROAD_TINT);
 
-      // ---- flagstick and flag (widened with distance so the target stays readable)
-      if (T.cup && (!scene.pin || scene.pin.visible !== false)) {
-        const fp = this.P.flag;
-        const c = T.cup;
-        const d = Math.hypot(c.x - e.x, c.y - e.y, c.z + 1.5 - e.z);
-        const mPerPx = d / this.pxPerRad;
-        u = this._use(fp, frame);
-        gl.uniform3f(u.uOff, c.x - e.x, c.y - e.y, c.z - e.z);
-        gl.uniform1f(u.uPoleR, Math.max(FLAGSTICK_R, 0.8 * mPerPx));
-        gl.uniform1f(u.uFlagS, Math.min(8, Math.max(1, (11 * mPerPx) / 0.52)));
-        gl.uniform1f(u.uPoleH, FLAGSTICK_H);
-        A.bind(fp.a.aPos, this.G.flag.pos, 3);
-        A.bind(fp.a.aNrm, this.G.flag.nrm, 3);
-        A.bind(fp.a.aAttr, this.G.flag.attr, 3);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.flag.idx);
-        this._drawElements(this.G.flag.count);
-      }
       gl.enable(gl.CULL_FACE);
     }
 
-    // ---- ball (icosphere when it covers >= 2.5 px, else a billboard after the sky)
+    // ---- ball (icosphere when it covers its minimum size, else a billboard after the sky).
+    // scene.ball.minPx (CSS px radius, default 2.5) keeps it readable from a raised camera.
     const ball = scene.ball;
     let farBall = null;
     if (ball && ball.visible !== false) {
       const d = Math.hypot(ball.x - e.x, ball.y - e.y, ball.z - e.z);
       const rPx = (BALL_R / Math.max(d, 1e-3)) * this.pxPerRad;
-      if (rPx >= 2.5) {
+      const minPx = Math.max(2.5, ball.minPx || 0);
+      if (rPx >= minPx) {
         const pp = this.P.prop;
         const u = this._use(pp, frame);
         gl.uniform3f(u.uOff, ball.x - e.x, ball.y - e.y, ball.z - e.z);
@@ -7609,7 +7891,7 @@ class Renderer {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.ico.idx);
         this._drawElements(this.G.ico.count);
       } else {
-        farBall = { d, r: (2.5 * d) / this.pxPerRad };
+        farBall = { d, r: (minPx * d) / this.pxPerRad };
       }
     }
 
@@ -7698,6 +7980,27 @@ class Renderer {
       this._drawStrip(n);
     }
     gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    // ---- flagstick and flag, after the aim line so the line never paints over the pin. Far away
+    // they keep a minimum size on screen (pole >= 40 px tall, flag >= 18 px long): the target.
+    if (R && T && T.cup && (!scene.pin || scene.pin.visible !== false)) {
+      const fp = this.P.flag;
+      const c = T.cup;
+      const d = Math.hypot(c.x - e.x, c.y - e.y, c.z + 1.5 - e.z);
+      const mPerPx = d / this.pxPerRad;
+      const u = this._use(fp, frame);
+      gl.depthMask(true);
+      gl.uniform3f(u.uOff, c.x - e.x, c.y - e.y, c.z - e.z);
+      gl.uniform1f(u.uPoleR, Math.max(FLAGSTICK_R, 0.8 * mPerPx));
+      gl.uniform1f(u.uFlagS, Math.min(30, Math.max(1, (18 * mPerPx) / 0.52)));
+      gl.uniform1f(u.uPoleH, Math.max(FLAGSTICK_H, 40 * mPerPx));
+      A.bind(fp.a.aPos, this.G.flag.pos, 3);
+      A.bind(fp.a.aNrm, this.G.flag.nrm, 3);
+      A.bind(fp.a.aAttr, this.G.flag.attr, 3);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.flag.idx);
+      this._drawElements(this.G.flag.count);
+      gl.depthMask(false);
+    }
 
     // Shot trail.
     if (scene.trail && scene.trail.count > 1) {
@@ -7810,9 +8113,10 @@ const __m_camera = (() => {
 // Camera rig (pure maths, no DOM). Produces {eye, target, up, fovY, near, far} for the renderer.
 //
 // Modes
-//   address  behind the golfer, ADDRESS_H above the ball, looking down the aim line; distance
-//            and pitch from addressFraming(aspect) put the ball low on the screen (in the swing
-//            arc) and the horizon in the upper half on every aspect
+//   address  behind the ball looking down the aim line; height, distance and pitch from
+//            addressFraming(aspect, {dist, dz}) put the ball low on the screen (in the swing arc)
+//            and the shot's target just above the centre, raising the eye for long shots and
+//            whenever a ridge would hide the landing area
 //   putt     low behind the ball (further back and higher for long putts), looking along the
 //            putt line with the ball low on the screen
 //   read     orbit above the green (orbit(dyaw) from a drag); target between ball and cup
@@ -7821,13 +8125,17 @@ const __m_camera = (() => {
 //            shot.landing (known in advance), which then follows the ball until it stops
 //   holed    slow orbit around the cup
 //   map      high overview between ball and cup, oriented so the hole plays up the screen
+//   relief   water relief: looks down on the entry, the drop spot and (if near) the replay spot,
+//            in the part of the screen the decision sheet leaves free (ctx.relief)
 //   flyover  5 s along terrain.path from the tee, ending looking at the green
 //
 // Every frame the eye is pushed to >= 1 m above the terrain (0.3 m in putt mode), and position and
 // target are smoothed with frame-rate independent exponential damping. fovY comes from a 55 degree
 // horizontal FOV for the current aspect, clamped to 40..75 degrees.
 //
-// ctx: {ball:{x,y,z}, aimYaw, cup:{x,y,z}, terrain, shot, aspect}. shot may be the game's
+// ctx: {ball:{x,y,z}, aimYaw, cup:{x,y,z}, terrain, shot, aspect, carry?, padShift?, relief?}. carry is the
+// club's carry (m) for the address framing; padShift the NDC x of the swing pad's centre (a lens
+// shift for address and putt, output as shiftX). shot may be the game's
 // {result, playT, launch} or a bare ShotResult; landing comes from result.landing (or the first
 // 'land' event), the landing time from that event's t, and the clock from shot.playT when present
 // (otherwise the rig's own time since setMode).
@@ -7836,6 +8144,7 @@ const { yawDir, damp, clamp, lerp } = __m_vec3;
 const DEG = Math.PI / 180;
 const HFOV = 55 * DEG;
 const FLYOVER_T = 5;
+const RELIEF_SHIFT = 0.48; // landscape relief view: points on the right, the sheet on the left
 
 function fovForAspect(aspect) {
   const a = aspect > 0 ? aspect : 1;
@@ -7844,20 +8153,57 @@ function fovForAspect(aspect) {
 }
 
 // Address framing. The HUD puts the swing pad (and its power arc) in the lower part of the
-// screen, so the camera sits behind the ball at ADDRESS_H above it and is pitched down so that
-// the ball projects low on the screen (NDC y = yBall: inside the arc) while the horizon lands at
-// NDC y = yHorizon. Solving for those two screen positions makes the shot look the same on any
-// aspect: in landscape (vertical FOV 40 deg) the eye ends up ~5 m back, in portrait (75 deg)
-// ~2.4 m back. Returns {back, h, pitch} (m, m, rad below horizontal).
+// screen, so the ball must project low (NDC y = yBall, inside the arc), while the shot's target
+// (the landing point `dist` m down the aim line, `dz` m above the ball's ground) sits a little
+// above the centre (NDC y = yTarget). A low eye flattens everything past ~60 m into a few pixels
+// at the horizon (the green and flag vanish, a pond behind a convex bank is hidden), so the eye
+// rises with the target distance: ADDRESS_H for anything within ADDRESS_NEAR, up to
+// ADDRESS_H_MAX for a drive, which gives the landing area a few degrees of grazing angle. Given
+// the height, the distance back is solved (bisection) so both screen positions hold on any
+// aspect; landscape puts the ball higher (the arc is beside it, see `shiftX` in update()).
+// Returns {back, h, pitch, yBall, yTarget, dist} (m, m, rad below horizontal, NDC, NDC, m).
 const ADDRESS_H = 1.6;
-function addressFraming(aspect) {
+const ADDRESS_H_MAX = 9;
+const ADDRESS_NEAR = 40; // m
+// The rise per metre scales with the vertical field of view: a narrow (landscape) view needs less
+// height for the same look, and would otherwise have to back far away to fit ball and target.
+function addressEyeH(dist, aspect = 0.5) {
+  const k = 0.05 * (Math.tan(fovForAspect(aspect) / 2) / Math.tan((75 * DEG) / 2));
+  return clamp(ADDRESS_H + k * (dist - ADDRESS_NEAR), ADDRESS_H, ADDRESS_H_MAX);
+}
+function addressFraming(aspect, { dist = 0, dz = 0, h = null } = {}) {
   const T = Math.tan(fovForAspect(aspect) / 2);
   const wide = aspect >= 1;
-  const yBall = wide ? -0.7 : -0.6;
-  const yHorizon = wide ? 0.12 : 0.22;
-  const pitch = Math.atan(yHorizon * T);
-  const toBall = pitch + Math.atan(-yBall * T);
-  return { back: ADDRESS_H / Math.tan(toBall), h: ADDRESS_H, pitch };
+  const yBall = wide ? -0.45 : -0.6;
+  const yTarget = wide ? 0.3 : 0.12;
+  const D = Math.max(dist, ADDRESS_NEAR);
+  const hh = h ?? addressEyeH(D, aspect);
+  const below = Math.atan(-yBall * T);
+  // Angle between ball and target seen from `b` m behind the ball; it shrinks as b grows.
+  const want = below + Math.atan(yTarget * T);
+  const sep = (b) => Math.atan(hh / b) - Math.atan((hh - dz) / (b + D));
+  let lo = 0.3;
+  let hi = 30;
+  if (sep(hi) > want) lo = hi;
+  for (let i = 0; i < 40 && lo < hi; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (sep(mid) > want) lo = mid;
+    else hi = mid;
+  }
+  const back = 0.5 * (lo + hi);
+  return { back, h: hh, pitch: Math.atan(hh / back) - below, yBall, yTarget, dist: D };
+}
+
+// Is the straight line from eye to p clear of the terrain (with a margin)?
+function sightClear(terrain, eye, p, margin = 0.3) {
+  if (!terrain || !terrain.heightAt) return true;
+  for (let k = 2; k <= 19; k++) {
+    const f = k / 20;
+    const x = eye.x + (p.x - eye.x) * f;
+    const y = eye.y + (p.y - eye.y) * f;
+    if (terrain.heightAt(x, y) > eye.z + (p.z - eye.z) * f - margin) return false;
+  }
+  return true;
 }
 
 // Eye and target `back` m behind `ball` along dir, `h` m above it, looking down at `pitch`.
@@ -7900,6 +8246,9 @@ class CameraRig {
     this.readYaw = 0;
     this.snap = true; // first update jumps straight to the goal
     this.flight = null;
+    this.framing = null; // last address framing (tests, HUD)
+    this.snap0 = true;
+    this.shiftX = 0; // NDC lens shift (landscape: the ball sits under the swing arc on the right)
   }
 
   setMode(mode, ctx = {}) {
@@ -7969,7 +8318,7 @@ class CameraRig {
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
         const back = clamp(1.3 + d * 0.12, 1.3, 4.5);
         const h = clamp(0.85 + d * 0.05, 0.85, 2.2);
-        const yBall = (c.aspect || 1) >= 1 ? -0.6 : -0.55;
+        const yBall = (c.aspect || 1) >= 1 ? -0.45 : -0.55;
         const pitch = Math.atan2(h, back) - Math.atan(-yBall * Math.tan(fovForAspect(c.aspect || 1) / 2));
         ({ eye, target } = behindBall(ball, dir, back, h, pitch));
         clear = 0.3;
@@ -7980,9 +8329,10 @@ class CameraRig {
         const mx = (ball.x + cup.x) / 2;
         const my = (ball.y + cup.y) / 2;
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
-        const r = clamp(d * 0.75 + 7, 9, 30);
+        // Close enough on a short putt that ball and cup are more than dots.
+        const r = clamp(d * 0.85 + 4, 5.5, 30);
         const mz = groundZ(T, mx, my);
-        eye = { x: mx + Math.cos(this.readYaw) * r, y: my + Math.sin(this.readYaw) * r, z: mz + r * 0.95 };
+        eye = { x: mx + Math.cos(this.readYaw) * r, y: my + Math.sin(this.readYaw) * r, z: mz + r * 0.85 };
         target = { x: mx, y: my, z: mz };
         lambda = 7;
         break;
@@ -8009,6 +8359,33 @@ class CameraRig {
         lambda = 4;
         break;
       }
+      case 'relief': {
+        // Water relief: look down on where the ball went in (entry), the drop spot and, when it
+        // is nearby, where it was played from, so the choice is an informed one. The points sit
+        // in the part of the screen the decision sheet leaves free: the upper half in portrait
+        // (sheet at the bottom), the right half in landscape (lens shift, sheet on the left).
+        const r = c.relief || {};
+        const entry = r.entry || ball;
+        const pts = [entry, r.drop || ball];
+        if (r.replay && Math.hypot(r.replay.x - entry.x, r.replay.y - entry.y) < 90) pts.push(r.replay);
+        const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+        const my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+        let span = 0;
+        for (const p of pts) span = Math.max(span, Math.hypot(p.x - mx, p.y - my));
+        const T2 = Math.tan(fovForAspect(c.aspect || 1) / 2);
+        const wide = (c.aspect || 1) >= 1;
+        const h = clamp((span + 12) / (T2 * (wide ? 0.8 : 0.45)), 25, 260);
+        const dd = r.drop ? Math.hypot(cup.x - r.drop.x, cup.y - r.drop.y) : 0;
+        const hx = dd > 1 ? (cup.x - r.drop.x) / dd : dir.x;
+        const hy = dd > 1 ? (cup.y - r.drop.y) / dd : dir.y;
+        const off = wide ? 0 : 0.25 * h * T2; // the look point sits behind the points: they rise
+        const gz = groundZ(T, mx, my);
+        target = { x: mx - hx * off, y: my - hy * off, z: gz };
+        eye = { x: target.x - hx * h * 0.25, y: target.y - hy * h * 0.25, z: gz + h };
+        up = { x: hx, y: hy, z: 0 };
+        lambda = 4;
+        break;
+      }
       case 'flyover': {
         const P = T && T.path;
         const L = P ? P.length : Math.hypot(cup.x - ball.x, cup.y - ball.y);
@@ -8029,9 +8406,22 @@ class CameraRig {
       case 'flight':
         return this._flightGoal(dt);
       default: {
-        // address: behind the ball, framed for the aspect (see addressFraming)
-        const f = addressFraming(c.aspect || 1);
+        // address: behind the ball, framed for the aspect and the shot (see addressFraming): the
+        // target is the club's carry down the aim line (not past the cup). If a ridge hides it
+        // (a raised tee over a convex bank), the eye climbs until the landing area is in sight.
+        const dCup = Math.hypot(cup.x - ball.x, cup.y - ball.y);
+        const dist = clamp(Math.min(c.carry ?? dCup, dCup + 10), 0, 280);
+        const tx = ball.x + dir.x * Math.max(dist, ADDRESS_NEAR);
+        const ty = ball.y + dir.y * Math.max(dist, ADDRESS_NEAR);
+        const tz = T && T.heightAt ? groundZ(T, tx, ty) : ball.z;
+        const dz = tz - (ball.z - 0.02);
+        let f = addressFraming(c.aspect || 1, { dist, dz });
         ({ eye, target } = behindBall(ball, dir, f.back, f.h, f.pitch));
+        for (let k = 0; k < 6 && !sightClear(T, eye, { x: tx, y: ty, z: tz + 0.5 }); k++) {
+          f = addressFraming(c.aspect || 1, { dist, dz, h: f.h + 1.5 });
+          ({ eye, target } = behindBall(ball, dir, f.back, f.h, f.pitch));
+        }
+        this.framing = f;
         lambda = 6;
       }
     }
@@ -8097,6 +8487,7 @@ class CameraRig {
     // Terrain clearance applied to the goal (so damping never drags the eye through a hill).
     const minZ = (x, y) => groundZ(T, x, y) + g.clear;
     g.eye.z = Math.max(g.eye.z, minZ(g.eye.x, g.eye.y));
+    this.snap0 = this.snap;
     if (this.snap) {
       this.eye = { ...g.eye };
       this.target = { ...g.target };
@@ -8127,6 +8518,11 @@ class CameraRig {
       this.target.x += 1e-2;
     }
     this.fovY = fovForAspect(c.aspect || 1);
+    // Lens shift: at address and putting the view's centre moves to the swing pad (landscape puts
+    // the pad on the right), so the ball sits in the arc while the aim line stays vertical.
+    let shiftGoal = this.mode === 'address' || this.mode === 'putt' ? c.padShift || 0 : 0;
+    if (this.mode === 'relief' && (c.aspect || 1) >= 1.25) shiftGoal = RELIEF_SHIFT;
+    this.shiftX = this.snap0 ? shiftGoal : damp(this.shiftX, shiftGoal, 6, dt);
     const near = this.mode === 'putt' ? 0.08 : this.mode === 'address' ? 0.15 : 0.3;
     return {
       eye: { ...this.eye },
@@ -8135,11 +8531,12 @@ class CameraRig {
       fovY: this.fovY,
       near,
       far: 6000,
+      shiftX: this.shiftX,
     };
   }
 }
 
-return { HFOV, FLYOVER_T, fovForAspect, ADDRESS_H, addressFraming, CameraRig };
+return { HFOV, FLYOVER_T, fovForAspect, ADDRESS_H, ADDRESS_H_MAX, ADDRESS_NEAR, addressEyeH, addressFraming, CameraRig };
 })();
 
 // ---- src/ui.js ----
@@ -8219,7 +8616,7 @@ const CHOICES = {
   quality: ['auto', 'low'],
 };
 const HINT_FULL = 'Drag down, then swipe up';
-const HINT_PUTT = 'Drag down, then release';
+const HINT_PUTT = 'Drag down, release · slide back to cancel';
 const TOAST_MS = 2600;
 const TOAST_MAX = 2;
 
@@ -8611,11 +9008,15 @@ class UI {
     const t = this.doc.createElement('div');
     t.className = 'toast';
     const parts = String(text).split(' · ');
+    // The first segment is a bold tab; the rest wrap inside their own box on a narrow screen.
+    const body = this.doc.createElement('div');
+    body.className = 'tb';
     parts.forEach((part, i) => {
       const n = this.doc.createElement(i === 0 && parts.length > 1 ? 'b' : 'span');
       n.textContent = part;
-      t.appendChild(n);
+      (n.tagName === 'B' ? t : body).appendChild(n);
     });
+    t.appendChild(body);
     box.appendChild(t);
     setTimeout(() => {
       t.classList.add('out');
@@ -9236,13 +9637,13 @@ const { DEG, clamp } = __m_vec3;
 // Execution error of the bot (on top of the game's random contact).
 // Putting error grows with length: a long putt is harder to read as well as to start on line.
 const BOT_SKILL = {
-  dirSigma: 2.0, // deg, start direction
-  curveSigma: 1.5, // deg, face-to-path
-  powerSigma: 0.035, // fraction of power on a full swing
-  partialSigma: 0.06, // extra fraction of power on a short-game swing (power -> 0)
-  puttDirSigma: 0.8, // deg, plus puttDirPerM per metre of putt
+  dirSigma: 3.5, // deg, start direction
+  curveSigma: 2, // deg, face-to-path
+  powerSigma: 0.05, // fraction of power on a full swing
+  partialSigma: 0.1, // extra fraction of power on a short-game swing (power -> 0)
+  puttDirSigma: 1.4, // deg, plus puttDirPerM per metre of putt
   puttDirPerM: 0.15,
-  puttPaceSigma: 0.06, // fraction of the flat-roll distance, plus puttPacePerM per metre
+  puttPaceSigma: 0.1, // fraction of the flat-roll distance, plus puttPacePerM per metre
   puttPacePerM: 0.004,
 };
 
@@ -9576,7 +9977,7 @@ const { COURSE, coursePar } = __m_course;
 const { buildHole } = __m_terrain;
 const { Renderer } = __m_render;
 const { CameraRig, FLYOVER_T, fovForAspect } = __m_camera;
-const { InputController } = __m_input;
+const { InputController, readSafeInsets } = __m_input;
 const { UI, fmtToPar } = __m_ui;
 const { AudioFX } = __m_audio;
 const { interpretSwing, swingLabel } = __m_swing;
@@ -9591,6 +9992,7 @@ const INTRO_HOLD = 1.2; // s the intro holds on the green after the flyover befo
 const MAP_EXIT_S = 0.45; // after a Map tap, return to the address view this much later
 const BOT_THINK_S = 0.6; // autoplay pause before each shot (game time)
 const CUT_DIST = 60; // m: camera moves longer than this are hard cuts, not swoops
+const PIN_ATTEND_M = 9; // m: putts longer than this keep the flagstick in (attended) at address
 const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
@@ -9674,6 +10076,7 @@ const app = {
   wakeLock: null,
   bot: { phase: null, wait: 0, busy: false },
   hintTimer: 0,
+  customHint: false,
   errors: 0,
   lastScene: null,
   params: { DEBUG, AUTOPLAY, TEST, NOGL, FAST, START_HOLE, QUALITY, SEED },
@@ -9712,18 +10115,34 @@ function saveGame() {
   try {
     localStorage.setItem(SAVE_KEY, memSave);
   } catch {
-    /* in-memory copy only */
+    // In-memory copy only (quota full, storage blocked). Drop the stored copy, which is now
+    // stale (removing needs no quota), so it can never be resumed instead of this one.
+    try {
+      localStorage.removeItem(SAVE_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-function loadSave() {
+const parse = (raw) => {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (raw) return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+// The newer of two saved records by their timestamp field (either may be null).
+const newer = (a, b, key) => (!a ? b : !b ? a : (b[key] || 0) > (a[key] || 0) ? b : a);
+
+function loadSave() {
+  let stored = null;
+  try {
+    stored = parse(localStorage.getItem(SAVE_KEY));
   } catch {
     /* fall back to the in-memory copy */
   }
-  return memSave ? JSON.parse(memSave) : null;
+  return newer(stored, parse(memSave), 'savedAt');
 }
 
 function clearSave() {
@@ -9736,13 +10155,13 @@ function clearSave() {
 }
 
 function loadBest() {
+  let stored = null;
   try {
-    const raw = localStorage.getItem(BEST_KEY);
-    if (raw) return JSON.parse(raw);
+    stored = parse(localStorage.getItem(BEST_KEY));
   } catch {
     /* fall back to memory */
   }
-  return memBest;
+  return newer(stored, memBest, 'date');
 }
 
 // Records a completed nine; returns {best, isNew}.
@@ -9783,7 +10202,10 @@ function resize() {
   const dpr = globalThis.devicePixelRatio || 1;
   // iOS can leave the page scrolled after a rotation or toolbar change; the game never scrolls.
   if (vv && (vv.offsetTop || vv.pageTop) && globalThis.scrollTo) globalThis.scrollTo(0, 0);
-  const key = `${w}x${h}@${dpr}`;
+  // The safe-area insets are part of the key: flipping an iPhone from landscape-left to
+  // landscape-right swaps them without changing the size, and the swing pad must move too.
+  const ins = readSafeInsets();
+  const key = `${w}x${h}@${dpr}:${ins.top},${ins.right},${ins.bottom},${ins.left}`;
   if (key === app.sizeKey) return;
   app.sizeKey = key;
   app.cssW = w;
@@ -9814,7 +10236,12 @@ function rigBall(g) {
 function camCtx() {
   const g = app.game;
   const t = g.terrain;
-  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH };
+  // Address framing follows the club's stock carry (not the live gauge, so the view holds still
+  // during the swing); in landscape the view centre shifts onto the swing pad (lens shift).
+  const carry = g.phase === 'address' && !g.isPutt ? g.clubInfo().carry || 100 : undefined;
+  const pad = app.input.padRect;
+  const padShift = app.cssW > app.cssH * 1.25 ? (2 * (pad.x + pad.w / 2)) / app.cssW - 1 : 0;
+  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH, carry, padShift, relief: g.state.decision };
 }
 
 // Switch the camera mode; long moves are hard cuts (a swoop through trees looks wrong).
@@ -9828,8 +10255,24 @@ function camMode(mode, ctx = camCtx()) {
 
 function setHint(text, ms = 1800) {
   app.ui.setHint(text);
+  app.customHint = !!text;
+  syncHinted();
   clearTimeout(app.hintTimer);
-  if (text) app.hintTimer = setTimeout(() => app.ui.setHint(null), ms);
+  if (text) {
+    app.hintTimer = setTimeout(() => {
+      app.ui.setHint(null);
+      app.customHint = false;
+      syncHinted();
+    }, ms);
+  }
+}
+
+// After the first putt on a hole the idle putt hint is hidden (it would sit over the cup); a
+// message such as "Putt cancelled" still shows.
+function syncHinted() {
+  const g = app.game;
+  const on = !!g && g.phase && g.isPutt && g.state.hole.putts > 0 && !app.customHint;
+  app.ui.el.hud.dataset.hinted = on ? '1' : '0';
 }
 
 function closeDialogs() {
@@ -9884,6 +10327,7 @@ function syncControls() {
     map: app.view === 'map',
     puttRange: fmtPutt(g.puttRange),
   });
+  syncHinted();
 }
 
 function updateInputMode() {
@@ -10113,6 +10557,10 @@ function onPhase(phase, prev) {
     case 'holed':
       camMode('holed');
       break;
+    case 'decision':
+      // Look down on where it went in and where the drop would be before the choice.
+      camMode('relief');
+      break;
     case 'scorecard':
       ui.showScorecard(g.state.card, { current: g.state.holeIndex });
       // Prebuild the next hole's terrain while the card is up (about 0.1-0.2 s of CPU).
@@ -10150,27 +10598,44 @@ function onShotEnd({ shot, resolution: r }) {
       const left = app.game.distanceToCup();
       app.ui.toast(`${c.name} · ${fmtPutt(res.total)} · ${fmtShort(left)} left`, 2600);
     } else {
-      const m = shot.launch.meta;
-      let label = swingLabel(m.startDirDeg || 0, m.faceToPathDeg || 0, app.ui.getSetting('handed'));
-      if (shot.swing && shot.swing.tempo === 'rushed') label += ' · Rushed';
-      else if (shot.swing && shot.swing.tempo === 'decel') label += ' · Decel';
-      app.ui.toast(`${c.name} · Carry ${fmtLong(res.carry)} · Total ${fmtLong(res.total)} · ${label}`, 3400);
+      app.ui.toast(`${clubShort(c)} · ${fmtPair(res.carry, res.total)} · ${shotLabel(shot)}`, 3400);
     }
   }
   saveGame();
+}
+
+// Short club names for toasts ("PW", "7i"; the driver keeps its name).
+const clubShort = (c) => (c.id === 'D' ? 'Driver' : c.short);
+// "105/122 yd": carry / total in one segment.
+const fmtPair = (a, b) => `${fmtLong(a).split(' ')[0]}/${fmtLong(b)}`;
+
+// What the swipe did, and separately what random contact added: a straight swipe that the
+// contact scatter pulled reads "Straight → pull", so the player is not blamed for the dice.
+function shotLabel(shot) {
+  const handed = app.ui.getSetting('handed');
+  const m = shot.launch.meta;
+  const actual = swingLabel(m.startDirDeg || 0, m.faceToPathDeg || 0, handed);
+  const sw = shot.swing;
+  if (!sw || sw.kind !== 'full') return actual;
+  const swipe = swingLabel(sw.startDir || 0, sw.faceToPath || 0, handed);
+  let label = swipe === actual ? swipe : `${swipe} → ${actual.toLowerCase()}`;
+  if (sw.tempo === 'rushed') label += ', rushed';
+  else if (sw.tempo === 'decel') label += ', decel';
+  return label;
 }
 
 function onDecision(d) {
   const g = app.game;
   if (AUTOPLAY) return; // the bot decides in tickBot
   const yellow = d.waterKind === 'yellow';
+  const lateral = d.relief === 'lateral';
   app.ui
     .showDecision({
       kicker: 'Penalty · 1 stroke',
       title: yellow ? 'In the water' : 'In the penalty area',
       text: 'Take a drop, or replay from where you last played.',
       options: [
-        { id: 'drop', label: 'Drop', detail: yellow ? '+1 · back on the line from the hole' : '+1 · within two club lengths of where it crossed' },
+        { id: 'drop', label: 'Drop', detail: lateral ? '+1 · within two club lengths of where it crossed' : '+1 · back on the line from the hole, on level ground' },
         { id: 'replay', label: d.replayTee ? 'Re-tee' : 'Replay', detail: d.replayTee ? '+1 · play again from the tee' : '+1 · from where you last played' },
       ],
     })
@@ -10351,15 +10816,21 @@ function buildScene(time, cam) {
   if (!g || !g.phase) return scene;
   const phase = g.phase;
   const b = g.ballPos();
-  scene.ball = { x: b.x, y: b.y, z: b.z, visible: phase !== 'decision' };
+  // At address the camera may sit well back and up for a long shot: keep the ball readable.
+  const reading = phase === 'address' && app.view === 'read';
+  // In the relief decision the ball is shown at the drop spot (that is where it will be played).
+  scene.ball = { x: b.x, y: b.y, z: b.z, visible: true, minPx: reading ? 4.5 : phase === 'decision' ? 5 : phase === 'address' ? 3.5 : 2.5 };
   scene.wind = g.wind;
   scene.trail = buildTrail(g);
   const putting = g.isPutt;
   const rollShot = !!g.shot && g.shot.launch.mode === 'roll';
   // Flagstick out for putts (physics plays putts with the pin out too), and it stays out after a
-  // holed putt while the scorecard is up.
-  scene.pin.visible = !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
-  if (phase === 'address' && (app.view === 'play' || app.view === 'map')) {
+  // holed putt while the scorecard is up. On a long putt it is attended until the stroke, so the
+  // hole can be seen from 10+ m.
+  const attended = phase === 'address' && putting && g.distanceToCup() > PIN_ATTEND_M;
+  // Reading the green from above, the flag marks the hole (the cup alone is a dot).
+  scene.pin.visible = attended || reading || !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
+  if (phase === 'address' && (app.view === 'play' || app.view === 'map' || (reading && putting))) {
     if (putting) {
       // Putt line: thin, close to the turf, short dashes, and a small ring at the flat-roll
       // distance while the putter is drawn back (at the cup otherwise).
@@ -10369,6 +10840,14 @@ function buildScene(time, cam) {
       const carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
       scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(1, carry) };
     }
+  }
+  const dec = phase === 'decision' ? g.state.decision : null;
+  if (dec && dec.entry && dec.drop) {
+    // Dashed line from where it went in to the drop spot, ringed.
+    const e = dec.entry;
+    const d = dec.drop;
+    const len = Math.hypot(d.x - e.x, d.y - e.y);
+    scene.aim = { x: e.x, y: e.y, z: d.z, yaw: Math.atan2(d.y - e.y, d.x - e.x), carry: Math.max(0.3, len), ring: 1.2, dash: 1.2 };
   }
   if (phase === 'address' && (app.view === 'read' || (putting && app.view === 'play'))) {
     scene.read = app.view === 'read' ? { on: true, alpha: 0.85, chevrons: true } : { on: true, alpha: 0.3, chevrons: false };
@@ -10428,7 +10907,11 @@ function updateLiveHud(g, cam, dt) {
   app.hudT += dt;
   if (g.phase === 'flight' && app.hudT > 0.1) {
     app.hudT = 0;
-    app.ui.setHud({ distToPin: g.distanceToCup() });
+    // The lie chip follows the ball in flight instead of showing the old lie.
+    const sh = g.shot;
+    const land = sh && sh.result.events.find((ev) => ev.type === 'land');
+    const rolling = !sh || sh.launch.mode === 'roll' || (land && sh.playT >= land.t);
+    app.ui.setHud({ distToPin: g.distanceToCup(), lieLabel: rolling ? 'Rolling' : 'In the air', lieSurface: 'flight' });
   } else if (app.hudDirty && app.hudT > 0.05) {
     app.hudT = 0;
     refreshHud();
@@ -10838,9 +11321,9 @@ return {  };
     <div class="sheet-head"><div class="sheet-t">How to play</div><button class="x-btn" type="button" data-act="close" aria-label="Close">&times;</button></div>
     <div class="howto-body">
       <div class="ht"><b>Aim</b><span>Drag left or right on the upper screen. Tap <em>Map</em> and tap a spot to aim straight at it.</span></div>
-      <div class="ht"><b>Swing</b><span>On the lower pad, drag <em>down</em> to take the club back (the arc shows power), then swipe <em>up</em> fast through your start point. A straight swipe flies straight; a curved one draws or fades. Past the arc's end is an overswing: more power, less control.</span></div>
-      <div class="ht"><b>Tempo</b><span>Smooth and committed. Rushing the downswing opens the face; decelerating loses distance.</span></div>
-      <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
+      <div class="ht"><b>Swing</b><span>On the lower pad, drag <em>down</em> to take the club back (the arc shows power), then flick <em>up</em> briskly through your start point. A straight swipe flies straight; a curved one draws or fades. Past the arc's end is an overswing: more power, less control. Let go during the backswing to cancel.</span></div>
+      <div class="ht"><b>Tempo</b><span>A brisk, even flick is right. Only a frantic snap is <em>Rushed</em> (the face wanders); creeping up and then flicking is <em>Decel</em> (less distance).</span></div>
+      <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Changed your mind? Slide back up to the start, or off to the side, before you let go. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
       <div class="ht"><b>Clubs</b><span>The caddie picks a club for every lie. Use &#9664; &#9654; to change it.</span></div>
       <div class="ht"><b>Rules</b><span>Out of bounds: stroke and distance. Water: drop (+1) or replay (+1). Pick up at double par.</span></div>
     </div>

@@ -18,7 +18,7 @@
 //                pointercancel -> onSwingCancel().
 //   read         drag anywhere -> onOrbit(dyaw) (grab-the-world: drag right orbits clockwise).
 //   map          tap -> onTap(sx, sy); a horizontal drag still aims (onAim) for fine tuning.
-//   intro/watch  tap anywhere -> onSkip().
+//   intro/watch  tap anywhere -> onSkip() (not within SKIP_GUARD_MS of entering the mode).
 //   disabled     nothing.
 // Only the first pointer is tracked; extra fingers are ignored until it lifts.
 
@@ -35,6 +35,11 @@ const ORBIT_RAD_PER_PX = 0.007;
 const TAP_PX = 10;
 const TAP_MS = 350;
 const DOWN_SLOP_PX = 6; // finger must climb this far above its lowest point to count as the downswing
+// Taps to skip are ignored this long after the input enters 'intro' or 'watch': the second tap of
+// a double tap on an overlay button ("Next hole", "Resume") lands on the canvas once the overlay
+// has closed, and must not skip the flyover or fast-forward the shot.
+export const SKIP_GUARD_MS = 350;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 // ------------------------------------------------------------------ pure helpers (unit-tested)
 
@@ -173,6 +178,7 @@ export class InputController {
     if (this._g && this._g.kind === 'swing') this.onSwingCancel();
     this._g = null;
     this._mode = m;
+    if (m === 'intro' || m === 'watch') this._skipGuard = now() + SKIP_GUARD_MS;
   }
 
   get padRefH() {
@@ -213,6 +219,7 @@ export class InputController {
         kind = 'map';
         break;
       default: // intro / watch
+        if (now() < (this._skipGuard || 0)) return; // the tail of a double tap on a closing overlay
         kind = 'tap';
     }
     try {

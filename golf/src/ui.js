@@ -74,7 +74,7 @@ const CHOICES = {
   quality: ['auto', 'low'],
 };
 const HINT_FULL = 'Drag down, then swipe up';
-const HINT_PUTT = 'Drag down, then release';
+const HINT_PUTT = 'Drag down, release · slide back to cancel';
 const TOAST_MS = 2600;
 const TOAST_MAX = 2;
 
@@ -466,11 +466,15 @@ export class UI {
     const t = this.doc.createElement('div');
     t.className = 'toast';
     const parts = String(text).split(' · ');
+    // The first segment is a bold tab; the rest wrap inside their own box on a narrow screen.
+    const body = this.doc.createElement('div');
+    body.className = 'tb';
     parts.forEach((part, i) => {
       const n = this.doc.createElement(i === 0 && parts.length > 1 ? 'b' : 'span');
       n.textContent = part;
-      t.appendChild(n);
+      (n.tagName === 'B' ? t : body).appendChild(n);
     });
+    t.appendChild(body);
     box.appendChild(t);
     setTimeout(() => {
       t.classList.add('out');

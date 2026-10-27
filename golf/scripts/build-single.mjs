@@ -127,11 +127,14 @@ function artifactPage(html) {
   const style = pick(/<style>[\s\S]*?<\/style>/);
   const script = pick(/<script type="module">[\s\S]*<\/script>/);
   if (!title || !style || !script) throw new Error('artifact build: missing title, style or script');
-  // Set the layout before first paint (ui.applyLayout() takes over once the module runs).
+  // Set the layout before first paint (ui.applyLayout() takes over once the module runs). It runs
+  // after the page markup, where document.body exists even if the host does not wrap the content
+  // in a <body> (the parser opens one at the first element); if there is still none, it waits.
   const layout =
-    '<script>(function(){var a=innerWidth/Math.max(1,innerHeight);' +
-    "document.body.dataset.layout=a>=1.25?'landscape':a<=0.8?'portrait':'square';})();</script>";
-  return [title, icon, theme, style, layout, body.trim(), script, ''].join('\n');
+    '<script>(function(){function s(){var a=innerWidth/Math.max(1,innerHeight);' +
+    "document.body.dataset.layout=a>=1.25?'landscape':a<=0.8?'portrait':'square';}" +
+    "if(document.body)s();else document.addEventListener('DOMContentLoaded',s);})();</script>";
+  return [title, icon, theme, style, body.trim(), layout, script, ''].join('\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

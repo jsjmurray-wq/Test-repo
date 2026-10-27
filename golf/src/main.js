@@ -24,7 +24,7 @@ import { COURSE, coursePar } from './course.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
 import { CameraRig, FLYOVER_T, fovForAspect } from './camera.js';
-import { InputController } from './input.js';
+import { InputController, readSafeInsets } from './input.js';
 import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
 import { interpretSwing, swingLabel } from './swing.js';
@@ -39,6 +39,7 @@ const INTRO_HOLD = 1.2; // s the intro holds on the green after the flyover befo
 const MAP_EXIT_S = 0.45; // after a Map tap, return to the address view this much later
 const BOT_THINK_S = 0.6; // autoplay pause before each shot (game time)
 const CUT_DIST = 60; // m: camera moves longer than this are hard cuts, not swoops
+const PIN_ATTEND_M = 9; // m: putts longer than this keep the flagstick in (attended) at address
 const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
@@ -122,6 +123,7 @@ const app = {
   wakeLock: null,
   bot: { phase: null, wait: 0, busy: false },
   hintTimer: 0,
+  customHint: false,
   errors: 0,
   lastScene: null,
   params: { DEBUG, AUTOPLAY, TEST, NOGL, FAST, START_HOLE, QUALITY, SEED },
@@ -160,18 +162,34 @@ function saveGame() {
   try {
     localStorage.setItem(SAVE_KEY, memSave);
   } catch {
-    /* in-memory copy only */
+    // In-memory copy only (quota full, storage blocked). Drop the stored copy, which is now
+    // stale (removing needs no quota), so it can never be resumed instead of this one.
+    try {
+      localStorage.removeItem(SAVE_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-function loadSave() {
+const parse = (raw) => {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (raw) return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+// The newer of two saved records by their timestamp field (either may be null).
+const newer = (a, b, key) => (!a ? b : !b ? a : (b[key] || 0) > (a[key] || 0) ? b : a);
+
+function loadSave() {
+  let stored = null;
+  try {
+    stored = parse(localStorage.getItem(SAVE_KEY));
   } catch {
     /* fall back to the in-memory copy */
   }
-  return memSave ? JSON.parse(memSave) : null;
+  return newer(stored, parse(memSave), 'savedAt');
 }
 
 function clearSave() {
@@ -184,13 +202,13 @@ function clearSave() {
 }
 
 function loadBest() {
+  let stored = null;
   try {
-    const raw = localStorage.getItem(BEST_KEY);
-    if (raw) return JSON.parse(raw);
+    stored = parse(localStorage.getItem(BEST_KEY));
   } catch {
     /* fall back to memory */
   }
-  return memBest;
+  return newer(stored, memBest, 'date');
 }
 
 // Records a completed nine; returns {best, isNew}.
@@ -231,7 +249,10 @@ function resize() {
   const dpr = globalThis.devicePixelRatio || 1;
   // iOS can leave the page scrolled after a rotation or toolbar change; the game never scrolls.
   if (vv && (vv.offsetTop || vv.pageTop) && globalThis.scrollTo) globalThis.scrollTo(0, 0);
-  const key = `${w}x${h}@${dpr}`;
+  // The safe-area insets are part of the key: flipping an iPhone from landscape-left to
+  // landscape-right swaps them without changing the size, and the swing pad must move too.
+  const ins = readSafeInsets();
+  const key = `${w}x${h}@${dpr}:${ins.top},${ins.right},${ins.bottom},${ins.left}`;
   if (key === app.sizeKey) return;
   app.sizeKey = key;
   app.cssW = w;
@@ -262,7 +283,12 @@ function rigBall(g) {
 function camCtx() {
   const g = app.game;
   const t = g.terrain;
-  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH };
+  // Address framing follows the club's stock carry (not the live gauge, so the view holds still
+  // during the swing); in landscape the view centre shifts onto the swing pad (lens shift).
+  const carry = g.phase === 'address' && !g.isPutt ? g.clubInfo().carry || 100 : undefined;
+  const pad = app.input.padRect;
+  const padShift = app.cssW > app.cssH * 1.25 ? (2 * (pad.x + pad.w / 2)) / app.cssW - 1 : 0;
+  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH, carry, padShift, relief: g.state.decision };
 }
 
 // Switch the camera mode; long moves are hard cuts (a swoop through trees looks wrong).
@@ -276,8 +302,24 @@ function camMode(mode, ctx = camCtx()) {
 
 function setHint(text, ms = 1800) {
   app.ui.setHint(text);
+  app.customHint = !!text;
+  syncHinted();
   clearTimeout(app.hintTimer);
-  if (text) app.hintTimer = setTimeout(() => app.ui.setHint(null), ms);
+  if (text) {
+    app.hintTimer = setTimeout(() => {
+      app.ui.setHint(null);
+      app.customHint = false;
+      syncHinted();
+    }, ms);
+  }
+}
+
+// After the first putt on a hole the idle putt hint is hidden (it would sit over the cup); a
+// message such as "Putt cancelled" still shows.
+function syncHinted() {
+  const g = app.game;
+  const on = !!g && g.phase && g.isPutt && g.state.hole.putts > 0 && !app.customHint;
+  app.ui.el.hud.dataset.hinted = on ? '1' : '0';
 }
 
 function closeDialogs() {
@@ -332,6 +374,7 @@ function syncControls() {
     map: app.view === 'map',
     puttRange: fmtPutt(g.puttRange),
   });
+  syncHinted();
 }
 
 function updateInputMode() {
@@ -561,6 +604,10 @@ function onPhase(phase, prev) {
     case 'holed':
       camMode('holed');
       break;
+    case 'decision':
+      // Look down on where it went in and where the drop would be before the choice.
+      camMode('relief');
+      break;
     case 'scorecard':
       ui.showScorecard(g.state.card, { current: g.state.holeIndex });
       // Prebuild the next hole's terrain while the card is up (about 0.1-0.2 s of CPU).
@@ -598,14 +645,30 @@ function onShotEnd({ shot, resolution: r }) {
       const left = app.game.distanceToCup();
       app.ui.toast(`${c.name} · ${fmtPutt(res.total)} · ${fmtShort(left)} left`, 2600);
     } else {
-      const m = shot.launch.meta;
-      let label = swingLabel(m.startDirDeg || 0, m.faceToPathDeg || 0, app.ui.getSetting('handed'));
-      if (shot.swing && shot.swing.tempo === 'rushed') label += ' · Rushed';
-      else if (shot.swing && shot.swing.tempo === 'decel') label += ' · Decel';
-      app.ui.toast(`${c.name} · Carry ${fmtLong(res.carry)} · Total ${fmtLong(res.total)} · ${label}`, 3400);
+      app.ui.toast(`${clubShort(c)} · ${fmtPair(res.carry, res.total)} · ${shotLabel(shot)}`, 3400);
     }
   }
   saveGame();
+}
+
+// Short club names for toasts ("PW", "7i"; the driver keeps its name).
+const clubShort = (c) => (c.id === 'D' ? 'Driver' : c.short);
+// "105/122 yd": carry / total in one segment.
+const fmtPair = (a, b) => `${fmtLong(a).split(' ')[0]}/${fmtLong(b)}`;
+
+// What the swipe did, and separately what random contact added: a straight swipe that the
+// contact scatter pulled reads "Straight → pull", so the player is not blamed for the dice.
+function shotLabel(shot) {
+  const handed = app.ui.getSetting('handed');
+  const m = shot.launch.meta;
+  const actual = swingLabel(m.startDirDeg || 0, m.faceToPathDeg || 0, handed);
+  const sw = shot.swing;
+  if (!sw || sw.kind !== 'full') return actual;
+  const swipe = swingLabel(sw.startDir || 0, sw.faceToPath || 0, handed);
+  let label = swipe === actual ? swipe : `${swipe} → ${actual.toLowerCase()}`;
+  if (sw.tempo === 'rushed') label += ', rushed';
+  else if (sw.tempo === 'decel') label += ', decel';
+  return label;
 }
 
 function onDecision(d) {
@@ -800,15 +863,21 @@ function buildScene(time, cam) {
   if (!g || !g.phase) return scene;
   const phase = g.phase;
   const b = g.ballPos();
-  scene.ball = { x: b.x, y: b.y, z: b.z, visible: phase !== 'decision' };
+  // At address the camera may sit well back and up for a long shot: keep the ball readable.
+  const reading = phase === 'address' && app.view === 'read';
+  // In the relief decision the ball is shown at the drop spot (that is where it will be played).
+  scene.ball = { x: b.x, y: b.y, z: b.z, visible: true, minPx: reading ? 4.5 : phase === 'decision' ? 5 : phase === 'address' ? 3.5 : 2.5 };
   scene.wind = g.wind;
   scene.trail = buildTrail(g);
   const putting = g.isPutt;
   const rollShot = !!g.shot && g.shot.launch.mode === 'roll';
   // Flagstick out for putts (physics plays putts with the pin out too), and it stays out after a
-  // holed putt while the scorecard is up.
-  scene.pin.visible = !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
-  if (phase === 'address' && (app.view === 'play' || app.view === 'map')) {
+  // holed putt while the scorecard is up. On a long putt it is attended until the stroke, so the
+  // hole can be seen from 10+ m.
+  const attended = phase === 'address' && putting && g.distanceToCup() > PIN_ATTEND_M;
+  // Reading the green from above, the flag marks the hole (the cup alone is a dot).
+  scene.pin.visible = attended || reading || !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
+  if (phase === 'address' && (app.view === 'play' || app.view === 'map' || (reading && putting))) {
     if (putting) {
       // Putt line: thin, close to the turf, short dashes, and a small ring at the flat-roll
       // distance while the putter is drawn back (at the cup otherwise).
@@ -818,6 +887,14 @@ function buildScene(time, cam) {
       const carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
       scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(1, carry) };
     }
+  }
+  const dec = phase === 'decision' ? g.state.decision : null;
+  if (dec && dec.entry && dec.drop) {
+    // Dashed line from where it went in to the drop spot, ringed.
+    const e = dec.entry;
+    const d = dec.drop;
+    const len = Math.hypot(d.x - e.x, d.y - e.y);
+    scene.aim = { x: e.x, y: e.y, z: d.z, yaw: Math.atan2(d.y - e.y, d.x - e.x), carry: Math.max(0.3, len), ring: 1.2, dash: 1.2 };
   }
   if (phase === 'address' && (app.view === 'read' || (putting && app.view === 'play'))) {
     scene.read = app.view === 'read' ? { on: true, alpha: 0.85, chevrons: true } : { on: true, alpha: 0.3, chevrons: false };
@@ -877,7 +954,11 @@ function updateLiveHud(g, cam, dt) {
   app.hudT += dt;
   if (g.phase === 'flight' && app.hudT > 0.1) {
     app.hudT = 0;
-    app.ui.setHud({ distToPin: g.distanceToCup() });
+    // The lie chip follows the ball in flight instead of showing the old lie.
+    const sh = g.shot;
+    const land = sh && sh.result.events.find((ev) => ev.type === 'land');
+    const rolling = !sh || sh.launch.mode === 'roll' || (land && sh.playT >= land.t);
+    app.ui.setHud({ distToPin: g.distanceToCup(), lieLabel: rolling ? 'Rolling' : 'In the air', lieSurface: 'flight' });
   } else if (app.hudDirty && app.hudT > 0.05) {
     app.hudT = 0;
     refreshHud();

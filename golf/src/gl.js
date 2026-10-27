@@ -25,26 +25,32 @@ export function createContext(canvas, { test = false, forceGL1 = false } = {}) {
     gl = null;
   }
   if (!gl) return null;
-  let inst;
-  let uint32 = gl2;
+  return { gl, gl2, ...contextExtensions(gl, gl2) };
+}
+
+// Instancing and 32-bit index support for a context: {inst, uint32}. WebGL1 extension objects
+// belong to one context generation, so after webglcontextrestored this must be called again
+// (calls on the old objects are silent no-ops: instanced trees would vanish).
+export function contextExtensions(gl, gl2) {
   if (gl2) {
-    inst = {
-      divisor: (loc, n) => gl.vertexAttribDivisor(loc, n),
-      drawElements: (mode, count, type, offset, n) => gl.drawElementsInstanced(mode, count, type, offset, n),
+    return {
+      uint32: true,
+      inst: {
+        divisor: (loc, n) => gl.vertexAttribDivisor(loc, n),
+        drawElements: (mode, count, type, offset, n) => gl.drawElementsInstanced(mode, count, type, offset, n),
+      },
     };
-  } else {
-    const ext = gl.getExtension('ANGLE_instanced_arrays');
-    uint32 = !!gl.getExtension('OES_element_index_uint');
-    if (ext) {
-      inst = {
-        divisor: (loc, n) => ext.vertexAttribDivisorANGLE(loc, n),
-        drawElements: (mode, count, type, offset, n) => ext.drawElementsInstancedANGLE(mode, count, type, offset, n),
-      };
-    } else {
-      inst = null; // the renderer falls back to one draw per instance batch (see render.js)
-    }
   }
-  return { gl, gl2, inst, uint32 };
+  const ext = gl.getExtension('ANGLE_instanced_arrays');
+  const uint32 = !!gl.getExtension('OES_element_index_uint');
+  if (!ext) return { uint32, inst: null }; // the renderer falls back to one draw per instance batch
+  return {
+    uint32,
+    inst: {
+      divisor: (loc, n) => ext.vertexAttribDivisorANGLE(loc, n),
+      drawElements: (mode, count, type, offset, n) => ext.drawElementsInstancedANGLE(mode, count, type, offset, n),
+    },
+  };
 }
 
 function compile(gl, type, src) {

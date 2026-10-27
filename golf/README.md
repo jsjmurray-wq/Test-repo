@@ -10,10 +10,10 @@ load. It lives entirely in `golf/` and shares no code with the pool game in the 
 | Action | How |
 |---|---|
 | Aim | Drag left or right on the upper part of the screen (faster drags turn further) |
-| Swing | On the lower pad: drag **down** to take the club back (the arc shows power), then swipe **up** fast through your starting point |
+| Swing | On the lower pad: drag **down** to take the club back (the arc shows power), then flick **up** briskly through your starting point (only a frantic snap counts as *Rushed*) |
 | Shape the shot | A straight swipe flies straight; curving the swipe draws or fades the ball |
 | Overswing | Pulling past the end of the arc (red zone) gives more power but doubles the dispersion |
-| Putt | Drag down to set the pace (the readout shows the flat-roll distance), then release |
+| Putt | Drag down to set the pace (the readout shows the flat-roll distance), then release; slide back up to the start (or off to the side) to cancel |
 | Putt range | **−** / **+** next to the putter |
 | Read the green | **Read**, then drag to look around (slope grid on the green) |
 | Map | **Map**, then tap a point on the course to aim straight at it |
