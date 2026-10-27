@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Golf render preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #9fb8cc; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+  #info { position: fixed; left: 8px; top: 8px; font: 11px/1.3 -apple-system, system-ui, sans-serif; color: #fff;
+          background: rgba(0, 0, 0, 0.35); padding: 3px 6px; border-radius: 4px; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">loading…</div>
+<script type="module" src="./render-preview.js"></script>
+</body>
+</html>

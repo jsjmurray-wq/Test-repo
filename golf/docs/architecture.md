@@ -46,8 +46,8 @@ metres). Wind shows in mph (or km/h).
 | `mat4.js` | `perspective`, `lookAt`, `multiply`, `invert`, `transformPoint`, `project(viewProj, p, w, h)`, `unproject`. Matrices are column-major `Float32Array(16)` |
 | `noise.js` | `hash2(ix,iy,seed)`, `valueNoise2(x,y,seed)`, `fbm2(x,y,{oct,lac,gain,seed})`. Deterministic |
 | `spline.js` | Centripetal Catmull–Rom. `buildPath(points)` returns `{length, pointAt(s), tangentAt(s), project(x,y) -> {s, lat, dist}}`. `lat` is + to the right of travel. Uses a dense 1 m polyline plus a bucket grid |
-| `clubs.js` | `CLUBS` (array, longest first), `clubById(id)`, `stockLaunch(club)`, `PUTTER_ID = 'P'` |
-| `aero.js` | `dragCoeff(S)`, `liftCoeff(S)`, `windAt(wind10, zAgl)` (log profile), `flightAccel(state, wind, out)` |
+| `clubs.js` | `CLUBS` (array, longest first), `clubById(id)`, `stockLaunch(club, opts)`, `makeLaunch(...)`, `dPlane(club, face, path)`, `PUTTER_ID = 'P'` |
+| `aero.js` | `dragCoeff(S)`, `liftCoeff(S)`, `windAt(wind10, zAgl, out?)` (log profile), `windFactor(zAgl)`, `flightAccel(state:{v,w,zAgl}, wind10, out)` |
 | `course.js` | `COURSE = {name, holes: [HoleDef × 9]}` (pure data), `holePar(i)`, `coursePar()` |
 | `terrain.js` | `buildHole(def, {pinIndex, seed}) -> HoleTerrain` (see below) |
 | `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`. Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
@@ -154,7 +154,7 @@ The ball is constrained to the surface.
 - **Roll:** `a = (5/7)·g_t − (a0 + kv·|v|)·v̂`, where `g_t` is gravity projected onto the tangent
   plane.
   - Stimp closed form: `D = v0/kv − (a0/kv²)·ln(1 + kv·v0/a0)`. With v0 = 1.83 m/s on the green,
-    that gives about 10.5 ft.
+    that gives about 10.2 ft.
 - **Rest** when `|v| < 0.01` and `(5/7)·g·|∇h| < a0·1.05`.
 - Going over a crest makes the ball airborne again.
 - Surface `WATER` under the ball centre gives outcome `'water'`.
@@ -193,6 +193,35 @@ simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, re
 - The outcome is `'ob'` when the ball rests on `SURF.OOB` or `terrain.isOOB(x,y)` is true.
 - `carry` is the horizontal distance from launch to the first landing. `total` is the horizontal
   distance from launch to the final position.
+
+**Physics implementation notes (as built):**
+
+- `launch.pos` is the ball **centre** (ground + `BALL_R`); a lower z is lifted to ground + R.
+- `startDirDeg` and `tiltDeg` are both **+ = right**, so the launch direction is
+  `yawDir(aimYaw − startDir)` (yaw is counter-clockwise). `clubs.js` exports
+  `makeLaunch({pos, aimYaw, ballSpeed, launchDeg, spinRpm, tiltDeg, startDirDeg, club, mode})`
+  and `dPlane(club, faceDeg, pathDeg) -> {tiltDeg, startDirDeg}` for `swingToLaunch` to reuse;
+  `stockLaunch(club|id, {pos, aimYaw, speedScale, spinScale, tiltDeg, startDirDeg, faceToPathDeg,
+  ballSpeed})` is a full stock swing (putter: `mode:'roll'` with `opts.ballSpeed`).
+- `apex` is metres above the launch point. `land`/`bounce` events also carry `angle` (descent,
+  deg). Putts (`mode:'roll'`) never "land": `carry = 0`, `landing = null`.
+- Extra option `pin` (default `true` unless the launch is a putt) enables flagstick collisions in
+  the air (`'pin'` event). Slam dunk and rest-over-the-hole give `'cup'`.
+- `waterEntry` is where the path last crossed into `SURF.WATER` (bisected on `surfaceAt`);
+  `lastDry` is the last sampled ball position over dry ground. Over water the contact height is
+  `max(heightAt, waterAt().level)`.
+- Tree `canopy.cz` is the canopy centre height **above the tree base `z`**. `treesNear` is queried
+  with r = 12 m. A canopy hit keeps 25–45% of the speed, re-aims within a 30° half-angle cone
+  plus a downward bias, and keeps 30% of the spin.
+- `SURFACES` entries may have an optional `plough` (sand: 0.6), the fraction of the outgoing
+  tangential speed and spin lost on impact, because the Coulomb cap (2/7 slip) alone lets a ball
+  skip out of a bunker.
+- Other exports: `rollStep(s, n, surf, dt)`, `cupCheck(p0, p1, v, cup) -> {holed, lipout, b,
+  vCap}|null` (b + = ball passes right of centre; mutates v on a lip-out),
+  `treeHit(tree, p0, p1)`, `flightStep(s, dt, wind, groundZ)`, `bounceImpulse(v, w, n, surf)`,
+  and `planeTerrain({surface, sx, sy, z0, cup, heightFn, surfaceFn, waterFn, oobFn, trees})`, a
+  synthetic HoleTerrain for calibration, tests and caddie tables.
+- Calibrated green: a0 = 0.45, kv = 0.075 (Stimp 1.83 m/s → 3.10 m ≈ 10.2 ft).
 
 ## 3. Course (`course.js`, `terrain.js`)
 
@@ -258,6 +287,21 @@ too.
 `heightAt` is exact (analytic) on greens and bilinear elsewhere. It must be continuous.
 Pins are at least 4 m inside the fringe, with slope ≤ 2.5% within 2 m of the cup.
 Green slopes are ≤ 5%.
+
+Conventions as implemented (Course group):
+- `green.rot` is the world angle (radians, CCW from +x) of the `rx` semi-axis; `green.fringe` (m)
+  is also provided. Extra fields: `pins:[{x,y,z}×3]`, `pinIndex`, `corners` (dogleg arc lengths).
+- Trees: `z` is the ground height at the trunk; `canopy.cz` is the **absolute** world z of the
+  canopy ellipsoid centre (horizontal semi-axis `rx`, vertical `rz`); the trunk runs from `z` to
+  `z + trunkH`. `treesNear(x,y,r)` returns trees whose trunk is within `r + canopy.rx`.
+- `sgrid` cell `(i,j)` covers `[minX+i·step, minX+(i+1)·step) × [minY+j·step, …)` and stores
+  `surfaceAt` of its centre; `grid` node `(i,j)` is at `(minX+i, minY+j)`.
+- `aimPoint(from)`: the cup when within ~235 m; else the next dogleg corner if within ~260 m; if
+  that corner is out of reach, the centreline point ~245 m away; with no corner ahead, the cup.
+- `raycast(o, dir, maxT)`: `dir` need not be unit; the hit is `o + dir·t`.
+- `waters[].level` is absolute (the HoleDef level is relative to the centreline elevation).
+- `noise.js`: `hash2`, `valueNoise2` and `fbm2` all return values in [0, 1).
+- `holePar(i)` takes a 0-based hole index.
 
 ## 4. Swing, lie, game
 
@@ -435,3 +479,73 @@ export class CameraRig {
     `visibilitychange`/`pagehide`, and `globalThis.__golf = app`.
   - URL parameters: `?debug=1`, `?autoplay=1`, `?fast=N`, `?nogl=1`, `?hole=N`, `?test=1`,
     `?quality=low`.
+
+### Input API (`input.js`, Shell/UI group, as built)
+
+```js
+const input = new InputController(canvas, {onAim, onSwingStart, onSwingProgress, onSwing,
+                                           onSwingCancel, onOrbit, onTap, onSkip}); // all optional
+input.mode = 'full'|'putt'|'read'|'map'|'intro'|'watch'|'disabled'   // or setMode(m); starts 'disabled'
+input.padRect   // {x,y,w,h} CSS px, canvas-relative       input.padRefH  // = padRect.h, pass to interpretSwing
+input.resize(); input.destroy()
+// pure, unit-tested: padRectFor(w,h,insets), layoutMode(w,h), swingProgress(samples,padRefH,kind),
+// aimDelta(dx,dtMs), orbitDelta(dx), isTap(down,up), inRect(r,x,y), readSafeInsets()
+```
+
+- **full / putt:** a press inside `padRect` records a swing: `onSwingStart({x,y})`, then on every
+  move `onSwingProgress({depth, maxDepth, power, overswing, phase:'back'|'down'})` (power =
+  maxDepth / (0.32 or 0.30 · padRefH), capped at 1.1, held at the backswing peak during the
+  downswing), and on release `onSwing(samples)` (`[{t ms, x, y}]`, coalesced events included,
+  pointerdown to pointerup). `pointercancel` or a mode change mid-swing calls `onSwingCancel()`.
+  Input never decides strike/cancel; `interpretSwing` does.
+- A press above/outside the pad aims: `onAim(dyaw)` per move. Dragging right turns the aim
+  clockwise (dyaw < 0); ~0.13°/px, up to 3× for fast drags.
+- **read:** drag → `onOrbit(dyaw)` (drag right → dyaw < 0). **map:** tap → `onTap(sx, sy)` (CSS px,
+  for `renderer.pickTerrain`); a horizontal drag still sends `onAim`. **intro / watch:** a tap →
+  `onSkip()` (use 'watch' during flight to fast-forward). Only the first pointer is tracked.
+- **Pad rect:** portrait/square = lower 40% of the canvas above the bottom safe inset, full width;
+  landscape = right 40% of the width, lower 72% of the height (deviation from "lower 40%": a 40%
+  strip of a 390 px tall screen leaves too little backswing travel). Safe insets come from the CSS
+  tokens `--sat/--sar/--sab/--sal`.
+
+### UI API (`ui.js`, Shell/UI group, as built)
+
+`const ui = new UI(document)`. The full reference is the header comment of `src/ui.js`. Summary:
+
+- `ui.on(evt, fn) -> unsubscribe`. Events: `'new-round' 'resume' 'next-hole' 'club-prev' 'club-next'
+  'read' 'map' 'flyover' 'putt-range+' 'putt-range-' 'pause' 'unpause' 'restart' 'quit'`,
+  `'settings-changed' (settings, key)`, `'decision' (id)`, `'layout' (mode)`. The UI hides its own
+  overlay before emitting (menu on new-round/resume, scorecard on next-hole, pause sheet on
+  unpause/restart/quit; `#pause-btn` opens the pause sheet; quit also re-shows `#menu`).
+- Screens: `showMenu({canResume, courseName?, courseSub?})`, `hideMenu()`, `showPause({title?})`,
+  `hidePause()`, `paused`, `showSettings()`, `showHowTo()`, `setLoading(on, text)`, `showNoGL()`,
+  `showHud(on)` (`#hud` starts hidden).
+- HUD: `setHud({hole, par, lengthM | yards, si, strokes, toPar, distToPin, playsLike, lieLabel,
+  lieSurface?, windSpeed, windRelAngle, units?})` (partial merge; distances in **metres**, wind in
+  m/s; `windRelAngle` = wind travel direction minus camera yaw, CCW +, 0 = arrow up/helping;
+  `playsLike: null` hides it). `setClub({name, carry, total, sub?})` (metres).
+  `setPower({power, overswing, carryText} | null)`. `setHint(text|null)`.
+  `setControls({phase, putt, canRead, read, map, puttRange})` — club picker, tools and swing pad
+  are shown only for `phase === 'address'`. `showIntro({hole, name, par, lengthM, si})`,
+  `hideIntro()`. `toast(text, ms)` (`'7 Iron · Carry 158 yd · Total 164 yd'`; the first segment is
+  a bold tab). `banner(title, sub, {tone:'under'|'par'|'over'|'ace', ms})`.
+- `showScorecard(card, {final, current, title?, kicker?})`: `card.holes[i] = {n?, par, lengthM? |
+  yards?, strokes|null, putts?, fir?: bool|null, gir?: bool|null}` (or the array itself). Totals,
+  FIR/GIR/putt stats, circle (birdie or better) and square (bogey or worse) are computed by the UI.
+  `final` swaps `[data-act="next-hole"]` for Play again (`new-round`) and Menu (`quit`).
+- `showDecision(['drop','replay'] | {kicker, title, text, options:[id | {id,label,detail}]})
+  -> Promise<id>`; the first option is the primary default.
+- Settings: `ui.settings` (copy), `getSetting(k)`, `setSetting(k, v)`, `onChange(fn)`;
+  `{units:'yd'|'m', wind:'off'|'light'|'breezy', difficulty:'easy'|'normal'|'pro', handed:'R'|'L',
+  sound:bool, quality:'auto'|'low'}` in `localStorage['golf.settings.v1']` (try/catch).
+- `ui.padRect` / `ui.setPadRect(r)`: the HUD positions the power arc and club picker from the same
+  `padRectFor` as input.js; main may pass `input.padRect` to be explicit.
+
+### Audio API (`audio.js`)
+
+`new AudioFX()`: `unlock()` (call on every pointerup; idempotent), `setEnabled(on)`, `suspend()`,
+`resume()`, `setWind(mps)` (ambient loop), `whoosh(power)`, `impact(kind, power)` (club kind or
+`'driver'`), `land(surface, v)`, `tree(v)`, `pin(v)`, `lipout(v)`, `cup(v)`, `applause(strength)`,
+and `handle(eventOrEvents)` for shot events `{type, surface, v, kind?}` (`launch` → impact with
+`ev.kind` or `ev.club.kind`, else guessed from speed; `land`/`bounce`/`tree`/`pin`/`lipout`/`cup`/
+`water`; also synthetic `{type:'swing', power}` and `{type:'applause', strength}`).

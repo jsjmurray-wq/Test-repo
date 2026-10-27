@@ -19,19 +19,19 @@ export const PUTTER_ID = 'P';
 
 // prettier-ignore
 export const CLUBS = [
-  { id: 'D',  name: 'Driver',         short: 'Dr', kind: 'wood',   loft: 10.5, spinLoft: 13, ballSpeed: 67.1, launch: 12.0, spinRpm: 2800, targetCarryYd: 244 },
+  { id: 'D',  name: 'Driver',         short: 'Dr', kind: 'wood',   loft: 10.5, spinLoft: 13, ballSpeed: 67.0, launch: 12.0, spinRpm: 2800, targetCarryYd: 244 },
   { id: '3W', name: '3 Wood',         short: '3W', kind: 'wood',   loft: 15,   spinLoft: 16, ballSpeed: 63.0, launch: 10.5, spinRpm: 3800, targetCarryYd: 228 },
-  { id: '5W', name: '5 Wood',         short: '5W', kind: 'wood',   loft: 18,   spinLoft: 19, ballSpeed: 59.9, launch: 11.5, spinRpm: 4400, targetCarryYd: 216 },
-  { id: '4H', name: '4 Hybrid',       short: '4H', kind: 'hybrid', loft: 22,   spinLoft: 22, ballSpeed: 56.8, launch: 12.5, spinRpm: 4700, targetCarryYd: 203 },
-  { id: '5i', name: '5 Iron',         short: '5i', kind: 'iron',   loft: 26,   spinLoft: 25, ballSpeed: 53.6, launch: 13.0, spinRpm: 5300, targetCarryYd: 190 },
+  { id: '5W', name: '5 Wood',         short: '5W', kind: 'wood',   loft: 18,   spinLoft: 19, ballSpeed: 59.8, launch: 11.5, spinRpm: 4400, targetCarryYd: 216 },
+  { id: '4H', name: '4 Hybrid',       short: '4H', kind: 'hybrid', loft: 22,   spinLoft: 22, ballSpeed: 56.6, launch: 12.5, spinRpm: 4700, targetCarryYd: 203 },
+  { id: '5i', name: '5 Iron',         short: '5i', kind: 'iron',   loft: 26,   spinLoft: 25, ballSpeed: 53.7, launch: 13.0, spinRpm: 5300, targetCarryYd: 190 },
   { id: '6i', name: '6 Iron',         short: '6i', kind: 'iron',   loft: 30,   spinLoft: 28, ballSpeed: 51.0, launch: 14.5, spinRpm: 6100, targetCarryYd: 178 },
   { id: '7i', name: '7 Iron',         short: '7i', kind: 'iron',   loft: 34,   spinLoft: 31, ballSpeed: 48.3, launch: 16.5, spinRpm: 7000, targetCarryYd: 165 },
-  { id: '8i', name: '8 Iron',         short: '8i', kind: 'iron',   loft: 38,   spinLoft: 34, ballSpeed: 45.6, launch: 18.5, spinRpm: 7800, targetCarryYd: 152 },
-  { id: '9i', name: '9 Iron',         short: '9i', kind: 'iron',   loft: 42,   spinLoft: 37, ballSpeed: 42.9, launch: 21,   spinRpm: 8500, targetCarryYd: 138 },
-  { id: 'PW', name: 'Pitching Wedge', short: 'PW', kind: 'wedge',  loft: 46,   spinLoft: 40, ballSpeed: 39.8, launch: 24,   spinRpm: 9000, targetCarryYd: 123 },
-  { id: 'GW', name: 'Gap Wedge',      short: 'GW', kind: 'wedge',  loft: 50,   spinLoft: 43, ballSpeed: 36.7, launch: 27,   spinRpm: 9400, targetCarryYd: 108 },
-  { id: 'SW', name: 'Sand Wedge',     short: 'SW', kind: 'wedge',  loft: 56,   spinLoft: 47, ballSpeed: 33.1, launch: 31,   spinRpm: 9800, targetCarryYd: 91 },
-  { id: 'LW', name: 'Lob Wedge',      short: 'LW', kind: 'wedge',  loft: 60,   spinLoft: 50, ballSpeed: 29.1, launch: 34,   spinRpm: 9600, targetCarryYd: 74 },
+  { id: '8i', name: '8 Iron',         short: '8i', kind: 'iron',   loft: 38,   spinLoft: 34, ballSpeed: 45.7, launch: 18.5, spinRpm: 7800, targetCarryYd: 152 },
+  { id: '9i', name: '9 Iron',         short: '9i', kind: 'iron',   loft: 42,   spinLoft: 37, ballSpeed: 42.7, launch: 21,   spinRpm: 8500, targetCarryYd: 138 },
+  { id: 'PW', name: 'Pitching Wedge', short: 'PW', kind: 'wedge',  loft: 46,   spinLoft: 40, ballSpeed: 39.4, launch: 24,   spinRpm: 9000, targetCarryYd: 123 },
+  { id: 'GW', name: 'Gap Wedge',      short: 'GW', kind: 'wedge',  loft: 50,   spinLoft: 43, ballSpeed: 36.1, launch: 27,   spinRpm: 9400, targetCarryYd: 108 },
+  { id: 'SW', name: 'Sand Wedge',     short: 'SW', kind: 'wedge',  loft: 56,   spinLoft: 47, ballSpeed: 32.2, launch: 31,   spinRpm: 9800, targetCarryYd: 91 },
+  { id: 'LW', name: 'Lob Wedge',      short: 'LW', kind: 'wedge',  loft: 60,   spinLoft: 50, ballSpeed: 28.3, launch: 34,   spinRpm: 9600, targetCarryYd: 74 },
   { id: 'P',  name: 'Putter',         short: 'Pt', kind: 'putter', loft: 3,    spinLoft: 3,  ballSpeed: 0,    launch: 0,    spinRpm: 0,    targetCarryYd: 0 },
 ];
 

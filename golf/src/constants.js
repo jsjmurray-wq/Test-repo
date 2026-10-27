@@ -43,26 +43,27 @@ export const SURF = {
 
 export const SURF_NAMES = ['', 'Tee', 'Fairway', 'Rough', 'Fringe', 'Green', 'Bunker', 'Water', 'Out of bounds'];
 
-// Ground interaction per surface (starting values; physics calibration tests own the final numbers).
+// Ground interaction per surface (tuned by the physics calibration tests; see golf/tests/physics.test.js).
 //   e        restitution multiplier on the Penner restitution curve
 //   crater   multiplier on the Penner crater tilt
 //   mu       impact (tangential impulse) friction
 //   muS      skid friction while sliding on the ground
-//   a0, kv   rolling resistance a = a0 + kv*|v| (m/s^2); green tuned to Stimp ~10.5 ft
+//   a0, kv   rolling resistance a = a0 + kv*|v| (m/s^2); green tuned to Stimp ~10.2 ft (3.10 m)
 //   spinKeep spin multiplier applied before the impact impulse (grass between ball and face/turf)
 //   maxBack  cap on reverse horizontal speed after a bounce (m/s)
+//   plough   optional (sand): fraction of outgoing tangential speed and spin lost on impact
 //   lie      factors applied to a shot played FROM this surface:
 //            speed (ball speed), spin, launch (deg added), sdir (extra direction sigma deg)
 //   color    albedo (0..1 rgb) for renderer and UI
 //   stripe   mowing-stripe strength for the renderer
 export const SURFACES = {
   [SURF.TEE]: {
-    e: 1.0, crater: 0.8, mu: 0.35, muS: 0.4, a0: 0.9, kv: 0.6, spinKeep: 1, maxBack: 0.6,
+    e: 1.0, crater: 1.0, mu: 0.35, muS: 0.4, a0: 1.1, kv: 0.7, spinKeep: 1, maxBack: 0.6,
     lie: { speed: 1.0, spin: 1.0, launch: 0, sdir: 0.5 },
     color: [0.33, 0.6, 0.24], stripe: 0.05,
   },
   [SURF.FAIRWAY]: {
-    e: 1.0, crater: 0.8, mu: 0.35, muS: 0.4, a0: 0.9, kv: 0.6, spinKeep: 1, maxBack: 0.6,
+    e: 1.0, crater: 1.0, mu: 0.35, muS: 0.4, a0: 1.1, kv: 0.7, spinKeep: 1, maxBack: 0.6,
     lie: { speed: 1.0, spin: 1.0, launch: 0, sdir: 0.6 },
     color: [0.36, 0.62, 0.22], stripe: 0.08,
   },
@@ -77,12 +78,12 @@ export const SURFACES = {
     color: [0.34, 0.64, 0.25], stripe: 0.04,
   },
   [SURF.GREEN]: {
-    e: 0.9, crater: 1.25, mu: 0.5, muS: 0.4, a0: 0.45, kv: 0.06, spinKeep: 1, maxBack: 1.8,
+    e: 0.9, crater: 1.25, mu: 0.5, muS: 0.4, a0: 0.45, kv: 0.075, spinKeep: 1, maxBack: 1.8,
     lie: { speed: 1.0, spin: 1.0, launch: 0, sdir: 0.5 },
     color: [0.38, 0.7, 0.28], stripe: 0.05,
   },
   [SURF.BUNKER]: {
-    e: 0.15, crater: 2.5, mu: 0.8, muS: 0.9, a0: 6.0, kv: 2.0, spinKeep: 0.5, maxBack: 0,
+    e: 0.12, crater: 2.0, mu: 0.8, muS: 0.9, a0: 7.0, kv: 3.0, spinKeep: 0.5, maxBack: 0, plough: 0.6,
     lie: { speed: 0.78, spin: 0.6, launch: 2, sdir: 2.0 },
     color: [0.86, 0.79, 0.6], stripe: 0,
   },

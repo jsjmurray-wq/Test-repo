@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Golf">
+<meta name="theme-color" content="#07131d">
+<meta name="format-detection" content="telephone=no">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307131d'/%3E%3Cellipse cx='34' cy='50' rx='24' ry='7' fill='%234caf50'/%3E%3Crect x='35' y='10' width='3' height='40' fill='%23fff'/%3E%3Cpath d='M38 11 L54 17 L38 23Z' fill='%23e8392f'/%3E%3Ccircle cx='20' cy='46' r='7' fill='%23fff'/%3E%3C/svg%3E">
+<title>Hollow Pines Golf</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="src/main.js"></script>
+</head>
+<body data-layout="portrait">
+<canvas id="gl" aria-label="Golf course"></canvas>
+
+<!-- ============================== HUD ============================== -->
+<div id="hud" data-phase="address" data-putt="0" data-read="0" data-map="0" hidden>
+
+  <header id="topbar" class="glass" aria-label="Hole and score">
+    <div class="tb-hole">
+      <span class="tb-k">Hole</span><span class="tb-hole-n" data-f="hole">1</span>
+    </div>
+    <div class="tb-info">
+      <div class="tb-line"><b data-f="par">Par 4</b><i class="dot"></i><span data-f="yards">383 yd</span></div>
+      <div class="tb-sub">SI <span data-f="si">7</span></div>
+    </div>
+    <div class="tb-stat">
+      <span class="tb-k">Strokes</span><span class="tb-v" data-f="strokes">0</span>
+    </div>
+    <div class="tb-stat">
+      <span class="tb-k">Total</span><span class="tb-v topar" data-f="toPar" data-sign="0">E</span>
+    </div>
+    <button id="pause-btn" type="button" data-act="pause" aria-label="Pause"><i></i><i></i></button>
+  </header>
+
+  <section id="infocard" class="glass" aria-label="Shot information">
+    <div class="ic-main">
+      <div class="ic-dist"><span class="ic-num" data-f="dist">158</span><span class="ic-unit" data-f="distUnit">yd</span></div>
+      <div class="ic-k">To pin</div>
+    </div>
+    <div class="ic-side">
+      <div class="ic-plays" data-f="playsWrap"><span class="ic-k">Plays</span> <b data-f="plays">164 yd</b></div>
+      <span class="lie-chip" data-f="lie" data-surf="fairway">Fairway</span>
+      <div class="wind" aria-label="Wind">
+        <svg class="wind-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L18.5 13 L13.6 11.6 L13.6 22 L10.4 22 L10.4 11.6 L5.5 13 Z"/></svg>
+        <span data-f="wind">8 mph</span>
+      </div>
+    </div>
+  </section>
+
+  <nav id="tools" aria-label="Tools">
+    <button class="tool glass" type="button" data-act="read" aria-label="Read the green">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Read</span>
+    </button>
+    <button class="tool glass" type="button" data-act="map" aria-label="Hole map">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></svg><span>Map</span>
+    </button>
+    <button class="tool glass" type="button" data-act="flyover" aria-label="Hole flyover">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c4-1 6-9 10-9s4 6 8 5"/><path d="M17 4l4 1-1 4"/></svg><span>Flyover</span>
+    </button>
+  </nav>
+
+  <div id="club" class="glass" aria-label="Club">
+    <button class="club-arrow" type="button" data-act="club-prev" aria-label="Previous club"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div class="club-body">
+      <div class="club-name" data-f="clubName">7 Iron</div>
+      <div class="club-sub"><span data-f="clubCarry">Carry 165</span><i class="dot"></i><span data-f="clubTotal">Total 172</span></div>
+    </div>
+    <button class="club-arrow" type="button" data-act="club-next" aria-label="Next club"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+
+  <div id="putt-range" class="glass" aria-label="Putt range">
+    <button type="button" data-act="putt-range-" aria-label="Shorter putt range">&minus;</button>
+    <div class="pr-body"><span class="pr-k">Range</span><b data-f="puttRange">30 ft</b></div>
+    <button type="button" data-act="putt-range+" aria-label="Longer putt range">+</button>
+  </div>
+
+  <!-- Swing pad: purely visual (pointer-events: none); input.js owns the gesture on the canvas. -->
+  <div id="pad" data-state="idle" aria-hidden="true">
+    <svg class="arc" viewBox="0 0 240 240">
+      <defs>
+        <linearGradient id="arc-grad" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" stop-color="#7cf0a8"/><stop offset="0.6" stop-color="#ffffff"/><stop offset="1" stop-color="#ffe27a"/>
+        </linearGradient>
+      </defs>
+      <path class="arc-track" pathLength="110"/>
+      <path class="arc-zone" pathLength="110"/>
+      <g class="arc-ticks"></g>
+      <path class="arc-fill" pathLength="110"/>
+      <path class="arc-over" pathLength="110"/>
+    </svg>
+    <div class="pad-readout">
+      <div class="pad-num" data-f="carryNum">0</div>
+      <div class="pad-unit" data-f="carryUnit">yd carry</div>
+      <div class="pad-pct" data-f="powerPct">0%</div>
+    </div>
+    <div class="pad-hint" data-f="hint">Drag down, then swipe up</div>
+  </div>
+
+  <div id="read-hint" class="pill glass">Drag to look around the green</div>
+  <div id="toast" aria-live="polite"></div>
+  <div id="banner" aria-live="polite"><div class="banner-t"></div><div class="banner-s"></div></div>
+
+  <section id="intro" class="glass" aria-live="polite">
+    <div class="in-hole"><span class="tb-k">Hole</span><span data-f="introHole">1</span></div>
+    <div class="in-body">
+      <div class="in-name" data-f="introName">First Light</div>
+      <div class="in-meta"><b data-f="introPar">Par 4</b><i class="dot"></i><span data-f="introYards">383 yd</span><i class="dot"></i><span data-f="introSi">SI 5</span></div>
+    </div>
+    <div class="in-skip">Tap to skip</div>
+  </section>
+</div>
+
+<!-- ============================== MENU ============================== -->
+<section id="menu" class="overlay" aria-label="Main menu" hidden>
+  <div class="menu-bg" aria-hidden="true"></div>
+  <div class="menu-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="2"/>
+        <path d="M30 12v34" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <path d="M31.5 13l15 6-15 6z" fill="#e8392f"/>
+        <ellipse cx="32" cy="47" rx="16" ry="4.5" fill="#4caf50"/>
+      </svg>
+      <div class="brand-k">Golf Club</div>
+      <h1 class="brand-t" data-f="courseName">Hollow Pines</h1>
+      <div class="brand-s" data-f="courseSub">9 holes · Par 36</div>
+    </div>
+    <div class="menu-actions">
+      <button class="btn primary" type="button" data-act="new-round">New round</button>
+      <button class="btn" type="button" data-act="resume">Resume round</button>
+      <div class="btn-row">
+        <button class="btn ghost" type="button" data-act="settings">Settings</button>
+        <button class="btn ghost" type="button" data-act="howto">How to play</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== PAUSE ============================== -->
+<section id="pause" class="overlay sheet-wrap" aria-label="Paused" hidden>
+  <div class="sheet glass-strong">
+    <div class="sheet-k">Paused</div>
+    <div class="sheet-t" data-f="pauseTitle">Hole 1 · Par 4</div>
+    <button class="btn primary" type="button" data-act="unpause">Resume</button>
+    <button class="btn" type="button" data-act="settings">Settings</button>
+    <button class="btn" type="button" data-act="howto">How to play</button>
+    <div class="btn-row">
+      <button class="btn ghost" type="button" data-act="restart">Restart round</button>
+      <button class="btn ghost danger" type="button" data-act="quit">Quit to menu</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== SETTINGS ============================== -->
+<section id="settings" class="overlay sheet-wrap" aria-label="Settings" hidden>
+  <div class="sheet glass-strong">
+    <div class="sheet-head"><div class="sheet-t">Settings</div><button class="x-btn" type="button" data-act="close" aria-label="Close">&times;</button></div>
+    <div class="set-list">
+      <div class="set-row"><span>Units</span><div class="seg" data-setting="units"><button type="button" data-v="yd">Yards</button><button type="button" data-v="m">Metres</button></div></div>
+      <div class="set-row"><span>Wind</span><div class="seg" data-setting="wind"><button type="button" data-v="off">Off</button><button type="button" data-v="light">Light</button><button type="button" data-v="breezy">Breezy</button></div></div>
+      <div class="set-row"><span>Difficulty</span><div class="seg" data-setting="difficulty"><button type="button" data-v="easy">Easy</button><button type="button" data-v="normal">Normal</button><button type="button" data-v="pro">Pro</button></div></div>
+      <div class="set-row"><span>Golfer</span><div class="seg" data-setting="handed"><button type="button" data-v="R">Right</button><button type="button" data-v="L">Left</button></div></div>
+      <div class="set-row"><span>Sound</span><div class="seg" data-setting="sound"><button type="button" data-v="on">On</button><button type="button" data-v="off">Off</button></div></div>
+      <div class="set-row"><span>Graphics</span><div class="seg" data-setting="quality"><button type="button" data-v="auto">Auto</button><button type="button" data-v="low">Low</button></div></div>
+    </div>
+    <p class="set-note">Wind and difficulty apply from the next hole.</p>
+    <button class="btn primary" type="button" data-act="close">Done</button>
+  </div>
+</section>
+
+<!-- ============================== HOW TO PLAY ============================== -->
+<section id="howto" class="overlay sheet-wrap" aria-label="How to play" hidden>
+  <div class="sheet glass-strong howto">
+    <div class="sheet-head"><div class="sheet-t">How to play</div><button class="x-btn" type="button" data-act="close" aria-label="Close">&times;</button></div>
+    <div class="howto-body">
+      <div class="ht"><b>Aim</b><span>Drag left or right on the upper screen. Tap <em>Map</em> and tap a spot to aim straight at it.</span></div>
+      <div class="ht"><b>Swing</b><span>On the lower pad, drag <em>down</em> to take the club back (the arc shows power), then swipe <em>up</em> fast through your start point. A straight swipe flies straight; a curved one draws or fades. Past the arc's end is an overswing: more power, less control.</span></div>
+      <div class="ht"><b>Tempo</b><span>Smooth and committed. Rushing the downswing opens the face; decelerating loses distance.</span></div>
+      <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
+      <div class="ht"><b>Clubs</b><span>The caddie picks a club for every lie. Use &#9664; &#9654; to change it.</span></div>
+      <div class="ht"><b>Rules</b><span>Out of bounds: stroke and distance. Water: drop (+1) or replay (+1). Pick up at double par.</span></div>
+    </div>
+    <button class="btn primary" type="button" data-act="close">Got it</button>
+  </div>
+</section>
+
+<!-- ============================== SCORECARD ============================== -->
+<section id="scorecard" class="overlay sheet-wrap" aria-label="Scorecard" hidden>
+  <div class="sheet glass-strong card">
+    <div class="card-head">
+      <div>
+        <div class="sheet-k" data-f="cardKicker">Hollow Pines</div>
+        <div class="sheet-t" data-f="cardTitle">Hole 1 · Par</div>
+      </div>
+      <div class="card-total"><span class="tb-k">Total</span><b data-f="cardTotal">E</b></div>
+    </div>
+    <div class="card-scroll"><table class="sc" aria-label="Scores"></table></div>
+    <div class="card-legend"><span><i class="lg circ"></i>Birdie or better</span><span><i class="lg sq"></i>Bogey or worse</span></div>
+    <div class="card-stats">
+      <div><span class="tb-k">Fairways</span><b data-f="statFir">0/0</b></div>
+      <div><span class="tb-k">Greens</span><b data-f="statGir">0/0</b></div>
+      <div><span class="tb-k">Putts</span><b data-f="statPutts">0</b></div>
+    </div>
+    <button class="btn primary" type="button" data-act="next-hole">Next hole</button>
+    <div class="btn-row final-only">
+      <button class="btn primary" type="button" data-act="new-round">Play again</button>
+      <button class="btn ghost" type="button" data-act="quit">Menu</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== DECISION ============================== -->
+<section id="decision" class="overlay sheet-wrap" aria-label="Decision" hidden>
+  <div class="sheet glass-strong">
+    <div class="sheet-k" data-f="decKicker">Penalty</div>
+    <div class="sheet-t" data-f="decTitle">In the water</div>
+    <p class="sheet-p" data-f="decText">Take relief with a one-stroke penalty.</p>
+    <div class="dec-opts"></div>
+  </div>
+</section>
+
+<!-- ============================== LOADING / NO GL ============================== -->
+<section id="loading" class="overlay" aria-live="polite" hidden>
+  <div class="load-inner"><div class="spinner"></div><div class="load-t" data-f="loadText">Loading</div></div>
+</section>
+
+<section id="nogl" class="overlay" hidden>
+  <div class="sheet glass-strong">
+    <div class="sheet-t">3D graphics unavailable</div>
+    <p class="sheet-p">This game needs WebGL. Turn off Low Power Mode or try Safari or Chrome on a recent device, then reload.</p>
+    <button class="btn primary" type="button" onclick="location.reload()">Reload</button>
+  </div>
+</section>
+</body>
+</html>

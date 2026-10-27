@@ -1,0 +1,18 @@
+{
+  "name": "hollow-pines-golf",
+  "version": "1.0.0",
+  "description": "Realistic 3D golf for iPhone Safari (vanilla JS, custom WebGL, no dependencies).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "e2e": "node tests/e2e.spec.mjs",
+    "build": "node scripts/build-single.mjs",
+    "serve": "http-server -p 8081 -c-1 .",
+    "lint": "eslint src tests scripts",
+    "calibrate": "node scripts/calibrate.mjs",
+    "course": "node scripts/course-report.mjs",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "license": "MIT"
+}
