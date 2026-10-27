@@ -2,7 +2,10 @@
    Layouts are keyed by body[data-layout="portrait"|"landscape"|"square"] (set by ui.applyLayout()).
    Safe areas come from env(safe-area-inset-*) via the --sat/--sar/--sab/--sal tokens (input.js
    reads the same tokens to place the swing pad). ui.js mirrors the pad rect into --pad-x/y/w/h on
-   #hud so the club picker, toast and arc sit relative to it. */
+   #hud so the club picker, toast and arc sit relative to it.
+   Portrait/square keep the middle of the screen clear for the view (the address camera puts the
+   target and the cup there): the club picker and putt range sit at the bottom of the swing pad,
+   below the arc, and the idle hint sits inside the arc (above the ball, in the readout's place). */
 
 :root {
   --sat: env(safe-area-inset-top, 0px);
@@ -206,7 +209,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 /* ---------------- club picker ---------------- */
 #club {
   left: 50%;
-  top: calc(var(--pad-y) - 66px);
+  bottom: calc(var(--sab) + 12px);
   transform: translateX(-50%);
   height: 56px;
   min-width: 232px;
@@ -224,7 +227,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 /* ---------------- putt range ---------------- */
 #putt-range {
   left: 50%;
-  top: calc(var(--pad-y) - 66px - 52px);
+  bottom: calc(var(--sab) + 12px + 56px + 8px);
   transform: translateX(-50%);
   height: 42px;
   display: none; align-items: center;
@@ -245,7 +248,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 #pad .arc {
   position: absolute;
   width: var(--arc, 260px); height: var(--arc, 260px);
-  left: 50%; top: 46%;
+  left: 50%; top: 40%;
   transform: translate(-50%, -50%);
   overflow: visible;
 }
@@ -259,7 +262,7 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 #pad[data-state="idle"] .arc { opacity: 0.55; }
 #pad .arc { transition: opacity 0.2s; }
 .pad-readout {
-  position: absolute; left: 50%; top: calc(46% - var(--arc, 260px) * 0.2); transform: translate(-50%, -50%);
+  position: absolute; left: 50%; top: calc(40% - var(--arc, 260px) * 0.2); transform: translate(-50%, -50%);
   text-align: center; line-height: 1;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
   transition: opacity 0.15s;
@@ -271,10 +274,10 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 #pad[data-over="1"] .pad-pct { background: var(--red); }
 #pad[data-over="1"] .pad-num { color: #ffd0cc; }
 .pad-hint {
-  position: absolute; left: 50%; bottom: max(10px, calc(var(--pad-h) * 0.06));
-  transform: translateX(-50%);
-  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
-  padding: 7px 14px; border-radius: 999px;
+  position: absolute; left: 50%; top: calc(40% - var(--arc, 260px) * 0.2); /* where the readout shows mid-swing, above the ball */
+  transform: translate(-50%, -50%);
+  font-size: 12.5px; font-weight: 700; letter-spacing: 0.01em;
+  padding: 6px 12px; border-radius: 999px;
   background: rgba(8, 16, 26, 0.5);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   white-space: nowrap;
@@ -541,6 +544,7 @@ body[data-layout="landscape"] #putt-range { left: calc(var(--sal) + 10px); top: 
 body[data-layout="landscape"] #toast { left: calc(var(--sal) + 10px); transform: none; top: auto; bottom: calc(var(--sab) + 80px); align-items: flex-start; max-width: 56vw; }
 body[data-layout="landscape"] #hud[data-phase="address"] #toast { bottom: calc(var(--sab) + 130px); }
 body[data-layout="landscape"] #pad .arc { top: 44%; }
+body[data-layout="landscape"] .pad-hint { top: auto; bottom: max(10px, calc(var(--pad-h) * 0.06)); transform: translateX(-50%); font-size: 13px; padding: 7px 14px; }
 body[data-layout="landscape"] .pad-readout { top: calc(44% - var(--arc, 260px) * 0.2); }
 body[data-layout="landscape"] .pad-num { font-size: 40px; }
 body[data-layout="landscape"] #banner { top: 30%; }

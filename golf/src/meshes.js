@@ -689,9 +689,16 @@ export function trailRibbon(data, count, eye, out, { width = 0.07, pxPerRad = 90
 
 // Aim line: a flat ribbon draped on the ground from the ball along aim.yaw for aim.carry metres,
 // followed by a landing ring. Returns the strip vertex count; the ring is a separate strip appended
-// after a degenerate join so a single draw call renders both.
+// after a degenerate join so a single draw call renders both. Optional aim.ring (m) sets the ring
+// radius (default max(1.6, 3.5% of carry); a putt uses a small one) and aim.width (m) the minimum
+// half-width of the line (default 0.06), aim.lift (m) its height above the turf (default 0.06) and
+// aim.dash (m) the dash period (default 2.4, the shader's).
 export function aimRibbon(terrain, aim, eye, out, { pxPerRad = 900, minPx = 2.5 } = {}) {
-  const carry = Math.max(1, aim.carry || 0);
+  const carry = Math.max(aim.ring != null ? 0.3 : 1, aim.carry || 0);
+  const minW = aim.width || 0.06;
+  const lift = aim.lift != null ? aim.lift : 0.06;
+  const fade = Math.min(2.5, carry * 0.3); // the line fades in from the ball over this many metres
+  const uScale = aim.dash ? 2.4 / aim.dash : 1;
   const dx = Math.cos(aim.yaw);
   const dy = Math.sin(aim.yaw);
   const steps = Math.min(160, Math.max(8, Math.ceil(carry / 1.5)));
@@ -701,23 +708,23 @@ export function aimRibbon(terrain, aim, eye, out, { pxPerRad = 900, minPx = 2.5 
   };
   const halfW = (x, y, z) => {
     const d = Math.hypot(x - eye.x, y - eye.y, z - eye.z);
-    return Math.max(0.06, (minPx / pxPerRad) * d * 0.5);
+    return Math.max(minW, (minPx / pxPerRad) * d * 0.5);
   };
-  const H = (x, y) => terrain.heightAt(x, y) + 0.06;
+  const H = (x, y) => terrain.heightAt(x, y) + lift;
   for (let k = 0; k <= steps; k++) {
     const t = (k / steps) * carry;
     const x = aim.x + dx * t;
     const y = aim.y + dy * t;
     const z = H(x, y);
     const w = halfW(x, y, z);
-    const a = Math.min(1, t / 2.5) * (k === steps ? 0.9 : 1);
-    put(x + dy * w, y - dx * w, z, t, -1, a);
-    put(x - dy * w, y + dx * w, z, t, 1, a);
+    const a = Math.min(1, t / fade) * (k === steps ? 0.9 : 1);
+    put(x + dy * w, y - dx * w, z, t * uScale, -1, a);
+    put(x - dy * w, y + dx * w, z, t * uScale, 1, a);
   }
   // Landing ring (u < 0 marks ring vertices so the shader draws it solid instead of dashed).
   const cx = aim.x + dx * carry;
   const cy = aim.y + dy * carry;
-  const R = Math.max(1.6, carry * 0.035);
+  const R = aim.ring != null ? aim.ring : Math.max(1.6, carry * 0.035);
   const cz = H(cx, cy);
   const rw = halfW(cx, cy, cz) * 1.2;
   const segs = 36;

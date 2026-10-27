@@ -111,8 +111,10 @@ void main() {
   float far = 0.016 + 0.05 * ridge(u, 1.0, 0.31) * ridge(u, 2.0, 0.77);
   float near = 0.006 + 0.022 * ridge(u, 2.0, 0.13) + 0.004 * texture2D(uNoise, vec2(u * 24.0, 0.5)).g;
   vec3 hz = fogCol(d);
-  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.5);
-  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.3);
+  // Both ridges sit kilometres away, so they carry most of the haze: the fogged skirt terrain in
+  // front of them is already close to hz, and dark ridges would read as a wall on the horizon.
+  vec3 farCol = mix(vec3(0.06, 0.1, 0.13), hz, 0.72);
+  vec3 nearCol = mix(vec3(0.025, 0.05, 0.025), hz, 0.6);
   c = mix(c, farCol, smoothstep(far + 0.0015, far - 0.0015, e));
   c = mix(c, nearCol, smoothstep(near + 0.001, near - 0.001, e));
 

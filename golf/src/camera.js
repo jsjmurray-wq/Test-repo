@@ -1,8 +1,11 @@
 // Camera rig (pure maths, no DOM). Produces {eye, target, up, fovY, near, far} for the renderer.
 //
 // Modes
-//   address  behind the golfer: eye = ball - aimDir*3.2 + z*1.7, looking down the aim line
-//   putt     low behind the ball, looking along the putt line toward the hole
+//   address  behind the golfer, ADDRESS_H above the ball, looking down the aim line; distance
+//            and pitch from addressFraming(aspect) put the ball low on the screen (in the swing
+//            arc) and the horizon in the upper half on every aspect
+//   putt     low behind the ball (further back and higher for long putts), looking along the
+//            putt line with the ball low on the screen
 //   read     orbit above the green (orbit(dyaw) from a drag); target between ball and cup
 //   flight   TV sequence: (1) tracking shot from behind the golfer that tilts up with the ball,
 //            (2) a lagging chase cam, (3) a cut to a landing camera set up beside and beyond
@@ -30,6 +33,31 @@ export function fovForAspect(aspect) {
   const a = aspect > 0 ? aspect : 1;
   const f = 2 * Math.atan(Math.tan(HFOV / 2) / a);
   return clamp(f, 40 * DEG, 75 * DEG);
+}
+
+// Address framing. The HUD puts the swing pad (and its power arc) in the lower part of the
+// screen, so the camera sits behind the ball at ADDRESS_H above it and is pitched down so that
+// the ball projects low on the screen (NDC y = yBall: inside the arc) while the horizon lands at
+// NDC y = yHorizon. Solving for those two screen positions makes the shot look the same on any
+// aspect: in landscape (vertical FOV 40 deg) the eye ends up ~5 m back, in portrait (75 deg)
+// ~2.4 m back. Returns {back, h, pitch} (m, m, rad below horizontal).
+export const ADDRESS_H = 1.6;
+export function addressFraming(aspect) {
+  const T = Math.tan(fovForAspect(aspect) / 2);
+  const wide = aspect >= 1;
+  const yBall = wide ? -0.7 : -0.6;
+  const yHorizon = wide ? 0.12 : 0.22;
+  const pitch = Math.atan(yHorizon * T);
+  const toBall = pitch + Math.atan(-yBall * T);
+  return { back: ADDRESS_H / Math.tan(toBall), h: ADDRESS_H, pitch };
+}
+
+// Eye and target `back` m behind `ball` along dir, `h` m above it, looking down at `pitch`.
+function behindBall(ball, dir, back, h, pitch) {
+  const eye = { x: ball.x - dir.x * back, y: ball.y - dir.y * back, z: ball.z + h };
+  const L = 40;
+  const c = Math.cos(pitch) * L;
+  return { eye, target: { x: eye.x + dir.x * c, y: eye.y + dir.y * c, z: eye.z - Math.sin(pitch) * L } };
 }
 
 const groundZ = (terrain, x, y) => (terrain && terrain.heightAt ? terrain.heightAt(x, y) : 0);
@@ -128,13 +156,14 @@ export class CameraRig {
     let clear = 1;
     switch (this.mode) {
       case 'putt': {
+        // Low behind the ball; further back and higher for longer putts so the cup stays on
+        // screen. Pitched so the ball sits low (inside the swing arc) on any aspect.
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
-        const back = clamp(1.6 + d * 0.12, 1.6, 4.5);
-        eye = { x: ball.x - dir.x * back, y: ball.y - dir.y * back, z: ball.z + 0.75 + d * 0.025 };
-        const look = clamp(d, 2, 20);
-        const tx = ball.x + dir.x * look;
-        const ty = ball.y + dir.y * look;
-        target = { x: tx, y: ty, z: groundZ(T, tx, ty) };
+        const back = clamp(1.3 + d * 0.12, 1.3, 4.5);
+        const h = clamp(0.85 + d * 0.05, 0.85, 2.2);
+        const yBall = (c.aspect || 1) >= 1 ? -0.6 : -0.55;
+        const pitch = Math.atan2(h, back) - Math.atan(-yBall * Math.tan(fovForAspect(c.aspect || 1) / 2));
+        ({ eye, target } = behindBall(ball, dir, back, h, pitch));
         clear = 0.3;
         lambda = 6;
         break;
@@ -192,11 +221,9 @@ export class CameraRig {
       case 'flight':
         return this._flightGoal(dt);
       default: {
-        // address
-        eye = { x: ball.x - dir.x * 3.2, y: ball.y - dir.y * 3.2, z: ball.z + 1.7 };
-        const tx = ball.x + dir.x * 45;
-        const ty = ball.y + dir.y * 45;
-        target = { x: tx, y: ty, z: Math.max(groundZ(T, tx, ty), ball.z - 4) + 1.2 };
+        // address: behind the ball, framed for the aspect (see addressFraming)
+        const f = addressFraming(c.aspect || 1);
+        ({ eye, target } = behindBall(ball, dir, f.back, f.h, f.pitch));
         lambda = 6;
       }
     }

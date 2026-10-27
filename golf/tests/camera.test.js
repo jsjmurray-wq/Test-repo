@@ -1,7 +1,7 @@
 // CameraRig tests on the synthetic stub hole: terrain clearance in every mode, framing, FOV.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CameraRig, fovForAspect, FLYOVER_T } from '../src/camera.js';
+import { CameraRig, fovForAspect, FLYOVER_T, addressFraming } from '../src/camera.js';
 import { stubTerrain, fakeShot, samplePath } from './visual/render-preview.js';
 
 const T = stubTerrain();
@@ -26,15 +26,25 @@ test('fovY from a 55 degree horizontal FOV, clamped 40..75', () => {
   assert.ok(f > 40 * DEG && f < 75 * DEG);
 });
 
-test('address: eye = ball - aimDir*3.2 + z*1.7', () => {
-  const rig = new CameraRig();
-  rig.setMode('address', { ball: tee, aimYaw: yaw, cup: T.cup, terrain: T, aspect: 0.46 });
-  const cam = rig.update(0.016, {});
-  const ex = tee.x - Math.cos(yaw) * 3.2;
-  const ey = tee.y - Math.sin(yaw) * 3.2;
-  assert.ok(Math.hypot(cam.eye.x - ex, cam.eye.y - ey) < 1e-6);
-  assert.ok(Math.abs(cam.eye.z - Math.max(tee.z + 1.7, T.heightAt(ex, ey) + 1)) < 1e-6);
-  assert.ok(cam.near > 0 && cam.far > 1000);
+test('address: behind the ball, framed so the ball sits low on screen in portrait and landscape', () => {
+  for (const aspect of [393 / 852, 852 / 393, 0.9]) {
+    const rig = new CameraRig();
+    rig.setMode('address', { ball: tee, aimYaw: yaw, cup: T.cup, terrain: T, aspect });
+    const cam = rig.update(0.016, {});
+    const f = addressFraming(aspect);
+    const ex = tee.x - Math.cos(yaw) * f.back;
+    const ey = tee.y - Math.sin(yaw) * f.back;
+    assert.ok(Math.hypot(cam.eye.x - ex, cam.eye.y - ey) < 1e-6);
+    assert.ok(Math.abs(cam.eye.z - Math.max(tee.z + f.h, T.heightAt(ex, ey) + 1)) < 1e-6);
+    assert.ok(cam.near > 0 && cam.far > 1000);
+    // The ball projects inside the lower part of the view (the swing pad), never off screen.
+    const fwd = { x: cam.target.x - cam.eye.x, y: cam.target.y - cam.eye.y, z: cam.target.z - cam.eye.z };
+    const toBall = { x: tee.x - cam.eye.x, y: tee.y - cam.eye.y, z: tee.z - cam.eye.z };
+    const ang = (v) => Math.atan2(v.z, Math.hypot(v.x, v.y));
+    const ndcY = Math.tan(ang(toBall) - ang(fwd)) / Math.tan(cam.fovY / 2);
+    assert.ok(ndcY < -0.5 && ndcY > -0.8, `ball NDC y ${ndcY.toFixed(2)} at aspect ${aspect.toFixed(2)}`);
+    assert.ok(f.back > 1.5 && f.back < 7, `eye ${f.back.toFixed(2)} m behind the ball`);
+  }
 });
 
 test('eye stays >= 1 m above terrain in every mode (>= 0.3 m putting)', () => {
