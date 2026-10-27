@@ -1,0 +1,437 @@
+# Golf — architecture and module contracts
+
+A realistic 3D golf game for iPhone Safari (and any modern browser). It is built with vanilla JS
+ES modules and a custom WebGL renderer, with no dependencies and no external assets. It lives
+entirely in `golf/` and imports nothing from the pool game in the repository root.
+
+The game has 9 hand-designed holes (par 36) and is solo stroke play. You swing by swiping.
+
+**Module style rule** (needed by `golf/scripts/build-single.mjs`, which inlines every module into
+one HTML file, each wrapped in its own function scope):
+- Only top-of-file `import { a, b as c } from './x.js';` lines (single or multi-line braces).
+- Only `export function|async function|const|let|class` declarations.
+- No default exports, no `export { }` lists, no re-exports, no dynamic `import()`, no `import * as`,
+  and no top-level `await`.
+- Relative imports only (`./x.js`), and every module lives directly in `golf/src/`.
+- Pure modules never touch the DOM, `window` or `document`. They are unit-tested with `node --test`.
+
+Units are SI internally (m, s, kg, rad/s). The world axes are **+x east, +y north, +z up**.
+Each hole is authored in its own local frame, with the tee near the origin.
+
+**Yaw** is in radians: 0 = +x, counter-clockwise positive. Use `yawDir(yaw)` from `vec3.js`.
+For a horizontal direction `dir`, the golfer's **right** is `dir × ẑ`. When facing +y, right is +x.
+
+Distances are displayed in **yards** by default, with a metres setting. Putts show in feet (or
+metres). Wind shows in mph (or km/h).
+
+## File ownership (parallel build)
+
+| Group | Files |
+|---|---|
+| Shared (already written) | `src/constants.js`, `src/vec3.js`, `src/rng.js`. Change only with care: add, don't rename |
+| Physics | `src/clubs.js`, `src/aero.js`, `src/physics.js`, `scripts/calibrate.mjs`, `tests/clubs.test.js`, `tests/aero.test.js`, `tests/physics.test.js`, `tests/putting.test.js`. May tune numeric values in `SURFACES` in `constants.js` |
+| Course | `src/noise.js`, `src/spline.js`, `src/terrain.js`, `src/course.js`, `scripts/course-report.mjs`, `tests/terrain.test.js`, `tests/course.test.js` |
+| Render | `src/mat4.js`, `src/gl.js`, `src/shaders.js`, `src/meshes.js`, `src/bake.js`, `src/render.js`, `src/camera.js`, `tests/camera.test.js`, `tests/meshes.test.js`, `tests/visual/render-preview.html` and `.js` |
+| Shell/UI | `index.html`, `style.css`, `manifest.webmanifest`, `package.json`, `eslint.config.js`, `scripts/build-single.mjs`, `scripts/make-icons.mjs`, `icons/*`, `src/ui.js`, `src/input.js`, `src/audio.js`, `README.md` |
+| Game | `src/lie.js`, `src/swing.js`, `src/caddie.js`, `src/rules.js`, `src/scoring.js`, `src/game.js`, `src/bot.js`, `tests/swing.test.js`, `tests/rules.test.js`, `tests/game.test.js`, `tests/bot.test.js` |
+| Integration | `src/main.js`, `tests/e2e.spec.mjs`, `dist/*`, plus fixes anywhere |
+
+## Pure modules
+
+| Module | Responsibility and key exports |
+|---|---|
+| `constants.js` | `BALL_*`, `G`, `RHO`, `SPIN_TAU`, wind constants, `CUP_R`, `FLAGSTICK_*`, `CLUB_LENGTH`, `DT_AIR`, `DT_GROUND`, `MAX_SHOT_T`, `RECORD_HZ`, `SURF`, `SURF_NAMES`, `SURFACES`, unit helpers (`mToYd`, `ydToM`, `mToFt`, `rpmToRad`, `radToRpm`, `fmtDist(m, units, {short})`, `fmtWind`) |
+| `rng.js` | `mulberry32(seed)` returns a function with `.state()`; also `gaussian(rng)` and `randInt` |
+| `vec3.js` | `{x,y,z}` helpers: `v3`, `add`, `sub`, `scale`, `dot`, `cross`, `len`, `norm`, `dist`, `dist2d`; out-param `set`, `addTo`, `crossTo`; `clamp`, `lerp`, `smoothstep`, `damp`, `normalizeAngle`, `yawDir`, `yawOf`, `DEG` |
+| `mat4.js` | `perspective`, `lookAt`, `multiply`, `invert`, `transformPoint`, `project(viewProj, p, w, h)`, `unproject`. Matrices are column-major `Float32Array(16)` |
+| `noise.js` | `hash2(ix,iy,seed)`, `valueNoise2(x,y,seed)`, `fbm2(x,y,{oct,lac,gain,seed})`. Deterministic |
+| `spline.js` | Centripetal Catmull–Rom. `buildPath(points)` returns `{length, pointAt(s), tangentAt(s), project(x,y) -> {s, lat, dist}}`. `lat` is + to the right of travel. Uses a dense 1 m polyline plus a bucket grid |
+| `clubs.js` | `CLUBS` (array, longest first), `clubById(id)`, `stockLaunch(club)`, `PUTTER_ID = 'P'` |
+| `aero.js` | `dragCoeff(S)`, `liftCoeff(S)`, `windAt(wind10, zAgl)` (log profile), `flightAccel(state, wind, out)` |
+| `course.js` | `COURSE = {name, holes: [HoleDef × 9]}` (pure data), `holePar(i)`, `coursePar()` |
+| `terrain.js` | `buildHole(def, {pinIndex, seed}) -> HoleTerrain` (see below) |
+| `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`. Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
+| `lie.js` | `lieAt(terrain, pos, aimYaw) -> Lie`, `applyLie(launchParams, lie, club)` |
+| `swing.js` | `interpretSwing(samples, opts) -> SwingResult`, `swingToLaunch(club, lie, swing, aimYaw, rng, opts) -> Launch` |
+| `caddie.js` | `clubTable(terrain, pos, lie, wind)`, `suggestClub(...)`, `playsLike(...)`, `puttRange(dist)` |
+| `rules.js` | `resolveShot(ctx, shot) -> Resolution`, `waterRelief(...)`, `scoreName(strokes, par)`, `maxStrokes(par) = 2*par` |
+| `scoring.js` | `newCard(course)`, `recordHole(card, i, {strokes, putts, penalties, fir, gir})`, `totals(card)` |
+| `game.js` | `Game` state machine, plus `serialize()` and `static restore()` |
+| `bot.js` | `planShot(game) -> {clubId, yaw, swing}`, a simulated "decent player" used by `?autoplay` and the playability tests |
+| `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
+| `meshes.js` | Geometry builders that return typed arrays |
+| `bake.js` | `bakeTerrainColor(terrain)` and `bakeClouds(seed)` |
+
+DOM and GL modules: `gl.js`, `shaders.js`, `render.js`, `input.js`, `ui.js`, `audio.js`, `main.js`.
+
+---
+
+## 1. Clubs (`clubs.js`)
+
+The table is calibrated to a **good amateur (about 5 handicap)**: driver carry about 240 yd,
+total about 260 yd. Each entry has these fields:
+
+```
+{id, name, short, kind:'wood'|'hybrid'|'iron'|'wedge'|'putter', loft, spinLoft,
+ ballSpeed (m/s, full swing), launch (deg), spinRpm, targetCarryYd}
+```
+
+| id | Club | Loft ° | Ball m/s | Launch ° | Spin rpm | Target carry yd |
+|---|---|---|---|---|---|---|
+| D | Driver | 10.5 | 67.1 | 12.0 | 2800 | 244 |
+| 3W | 3 Wood | 15 | 63.0 | 10.5 | 3800 | 228 |
+| 5W | 5 Wood | 18 | 59.9 | 11.5 | 4400 | 216 |
+| 4H | 4 Hybrid | 22 | 56.8 | 12.5 | 4700 | 203 |
+| 5i | 5 Iron | 26 | 53.6 | 13.0 | 5300 | 190 |
+| 6i | 6 Iron | 30 | 51.0 | 14.5 | 6100 | 178 |
+| 7i | 7 Iron | 34 | 48.3 | 16.5 | 7000 | 165 |
+| 8i | 8 Iron | 38 | 45.6 | 18.5 | 7800 | 152 |
+| 9i | 9 Iron | 42 | 42.9 | 21 | 8500 | 138 |
+| PW | Pitching W | 46 | 39.8 | 24 | 9000 | 123 |
+| GW | Gap W | 50 | 36.7 | 27 | 9400 | 108 |
+| SW | Sand W | 56 | 33.1 | 31 | 9800 | 91 |
+| LW | Lob W | 60 | 29.1 | 34 | 9600 | 74 |
+| P | Putter | 3 | – | 0 (starts rolling) | 0 | – |
+
+`spinLoft` runs from about 13° for the driver to about 50° for the LW and is used for the D-plane
+curve. `scripts/calibrate.mjs` re-solves `ballSpeed` by bisection so that the simulated carry
+matches `targetCarryYd`, then prints the table.
+
+## 2. Ball physics (`aero.js`, `physics.js`)
+
+### Flight
+
+The state is `p`, `v` and `ω` (rad/s), all 3D. The air-relative velocity is `u = v − W(z_agl)`.
+
+```
+S   = R·|ω| / |u|                (clamp S to [0, 0.6])
+C_D = 0.24 + 0.18·S
+C_L = 0.54 · S^0.4
+a   = −g ẑ − (ρA/2m)·C_D·|u|·u + (ρA/2m)·C_L·|u|²·(ω̂ × û)
+ω  *= exp(−dt/SPIN_TAU)
+```
+
+- **Wind** uses a log profile, `W(z) = W10 · ln(max(z_agl, 0.5)/z0) / ln(10/z0)`. The wind object
+  is `{x, y}` in m/s at 10 m.
+- **Integration** is RK4 at `DT_AIR`. On a sign change of `z − R − h(x,y)`, bisect up to 8 times
+  for the time of impact, then bounce.
+
+### Launch vector (`swingToLaunch` builds it; physics consumes it)
+
+```
+Launch = {pos:{x,y,z}, vel:{x,y,z}, spin:{x,y,z} (rad/s), mode:'air'|'roll',
+          meta:{club, ballSpeed, launchDeg, spinRpm, tiltDeg, startDirDeg}}
+```
+
+- `dir` is the horizontal unit vector at `aimYaw + startDir`; `right = dir × ẑ`.
+- `v0 = ballSpeed·(cos L·dir + sin L·ẑ)`.
+- `ω = spinRad·(cos(tilt)·right − sin(tilt)·ẑ)`.
+  - A positive tilt makes the ball curve right (fade or slice for a right-hander).
+  - With zero tilt, `ω̂ × v̂ = +ẑ`, i.e. pure backspin lift.
+- D-plane: `tan(tilt) = (face − path)/spinLoft` (degrees over degrees), clamped to ±45°.
+  `startDir = k·face + (1−k)·path`, with k = 0.85 for woods and 0.75 for irons.
+- Putts use `mode:'roll'`: the ball starts on the ground in pure roll.
+
+### Bounce (Penner crater model, 3D, scaled per surface)
+
+1. Get the normal `n`. Crater tilt `θc = 15.4°·(|v|/18.6)·(θ_in/44.4°)·surf.crater`, clamped
+   to ≤ 28°. Rotate `n` toward `−v̂_t` by θc to get `n_eff`.
+2. Restitution: `e = (vn ≤ 20 ? 0.510 − 0.0375·vn + 0.000903·vn² : 0.12)·surf.e`.
+   Normal impulse per unit mass: `Jn = (1+e)·vn`.
+3. Slip `s = v_t + ω × (−R n_eff)`. Tangential impulse:
+   `Jt = −min(surf.mu·Jn, (2/7)|s|)·ŝ`.
+4. Apply `v += Jn·n_eff + Jt` and `ω += (5/(2R))·((−n_eff) × Jt)`. Multiply ω by
+   `surf.spinKeep` first.
+5. Cap the reverse horizontal speed at `surf.maxBack`.
+6. Switch to the ground phase when the outgoing normal speed is below 0.5 m/s.
+
+### Ground phase (`DT_GROUND`)
+
+The ball is constrained to the surface.
+
+- **Skid** while the contact slip exceeds 0.01 m/s: `μS·g` opposes the slip, and ω gets the
+  matching torque. This gives check and spin-back.
+- **Roll:** `a = (5/7)·g_t − (a0 + kv·|v|)·v̂`, where `g_t` is gravity projected onto the tangent
+  plane.
+  - Stimp closed form: `D = v0/kv − (a0/kv²)·ln(1 + kv·v0/a0)`. With v0 = 1.83 m/s on the green,
+    that gives about 10.5 ft.
+- **Rest** when `|v| < 0.01` and `(5/7)·g·|∇h| < a0·1.05`.
+- Going over a crest makes the ball airborne again.
+- Surface `WATER` under the ball centre gives outcome `'water'`.
+
+### Cup (`cupCheck`, every ground step)
+
+- Swept segment-versus-circle test. The capture speed is `v_cap(b) = 2√(CUP_R²−b²)/√(2R/g)`,
+  which is about 1.64 m/s through the centre.
+- If `v ≤ v_cap`, the ball is holed.
+- Otherwise it deflects by `sign(b)·min(35°, 40°·(|b|/CUP_R)·(v_cap/v))` and its speed is
+  multiplied by `(1−0.25·v_cap/v)`. Emit `lipout` when `|b| > 0.4·CUP_R`.
+- On the fly, a ball landing within `CUP_R−R` with horizontal speed under 3 m/s is holed.
+- A ball at rest within `CUP_R` drops.
+
+### Trees
+
+`terrain.trees` entries look like `{x, y, z, trunkR, trunkH, canopy:{cz, rx, rz}, kind}`.
+Use `terrain.treesNear(x, y, r)` to find them.
+
+- **Trunk:** a hard cylinder, e = 0.4.
+- **Canopy ellipsoid:** on each traversal, roll `p_hit = 1 − exp(−pathLen/3)` with the shot rng.
+  On a hit, multiply v by 0.25–0.45, randomise the direction in a 60° cone (biased down), multiply
+  spin by 0.3, and emit a `tree` event.
+
+### `simulateShot` (instant, headless, deterministic)
+
+```js
+simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, record = true}) -> {
+  path: Float32Array,  // [t,x,y,z]* at RECORD_HZ, for playback, trail and camera
+  events: [{type:'launch'|'land'|'bounce'|'tree'|'lipout'|'cup'|'water'|'rest'|'pin', t, x,y,z, surface, v}],
+  final: {x,y,z, surface, outcome:'rest'|'holed'|'water'|'ob'},
+  carry, total, apex, landing:{x,y,z}|null, waterEntry:{x,y}|null, lastDry:{x,y}|null, t
+}
+```
+
+- The outcome is `'ob'` when the ball rests on `SURF.OOB` or `terrain.isOOB(x,y)` is true.
+- `carry` is the horizontal distance from launch to the first landing. `total` is the horizontal
+  distance from launch to the final position.
+
+## 3. Course (`course.js`, `terrain.js`)
+
+### HoleDef (authoring format, private to the Course group)
+
+Everything is placed by **(s, off)**: `s` is the arc length along the centreline spline from the
+tee, and `off` is the lateral offset (+ = right looking down the hole). Holes may be green-relative
+too.
+
+```js
+{ n:1, par:4, name:'First Light', si:7,
+  path:[[0,0],[4,120],[14,230],[-6,330],[-10,350]],   // last point = green centre
+  elev:[[0,2],[150,0],[260,-1],[350,1]],
+  tee:{s:0,w:8,l:14,raise:0.4},
+  fairway:{from:150,to:335,width:[[150,26],[230,30],[300,22],[335,18]],wobble:2},
+  rough:{semi:2.5},
+  green:{s:350,off:0,rx:15,ry:12,rot:15,fringe:1.2,slope:[200,1.8],
+         tiers:[{angle:90,at:3,h:0.45,w:1.5}],bumps:[[4,-3,5,0.15]],pins:[[-4,3],[3,-4],[0,0]]},
+  bunkers:[{s:228,off:19,shape:[[0,0,9,5,30],[5,2,6,4,0]],depth:0.7},{g:[12,-6],shape:[[0,0,6,3.5,-20]],depth:0.9}],
+  water:[{kind:'red'|'yellow',level:-1.2,shape:{poly:[[s,off]...]}}],
+  trees:[{from:20,to:330,off:-38,gap:9,jitter:4,mix:0.7},{s:260,off:30,cluster:6,spread:10}],
+  mounds:[[210,-24,12,1.5]],
+  ob:{left:52,right:null},
+  bounds:{margin:70} }
+```
+
+### The nine holes (par 36, about 3300 yd)
+
+| # | Par | m (yd) | Character |
+|---|---|---|---|
+| 1 | 4 | 350 (383) | Gentle dogleg right, fairway bunker right at 215–235 m, OB left, two greenside bunkers |
+| 2 | 3 | 145 (159) | Tee 8 m above the green, pond (red) short and left, bunker back right |
+| 3 | 5 | 470 (514) | Double dogleg, creek (red) crossing at 295–305 m, climbs 6 m to a two-tier green |
+| 4 | 4 | 375 (410) | Uphill 7 m, tree-lined, OB left the whole way, pot bunker short left of the green |
+| 5 | 4 | 300 (328) | Risk/reward dogleg left around a lake (a 215 m carry cuts the corner), water left of the green |
+| 6 | 3 | 175 (191) | Elevated green (+4 m) with a false front, bunkers left and right |
+| 7 | 4 | 395 (432) | Tee shot drops 10 m into a valley, uphill approach to a plateau green, cross bunkers at 300 m |
+| 8 | 5 | 445 (487) | Reachable in two, water (yellow) along the right of the second half, green tucked right |
+| 9 | 4 | 365 (399) | Uphill finishing hole, pond left of the landing area, two-tier green |
+
+### HoleTerrain (the public contract, used by physics, game, renderer and camera)
+
+```js
+{
+  n, par, name, si, lengthM,                // lengthM = path length tee -> green centre
+  bounds:{minX,minY,maxX,maxY},
+  tee:{x,y,z}, cup:{x,y,z}, greenCenter:{x,y,z},
+  green:{cx,cy,rx,ry,rot},                  // ellipse, for camera/UI ("on or near the green")
+  path,                                     // spline from spline.js (pointAt, tangentAt, project)
+  heightAt(x,y), gradAt(x,y,out?) -> {x,y}, normalAt(x,y) -> {x,y,z},
+  surfaceAt(x,y) -> SURF id,                // anything outside bounds -> SURF.OOB
+  isOOB(x,y), waterAt(x,y) -> {kind:'red'|'yellow', level}|null,
+  waters:[{kind, level, poly:[{x,y}...]}],  // for rendering flat water planes and for relief
+  trees:[...], treesNear(x,y,r) -> [...],
+  stakes:[{x,y,z}],                         // OOB stakes for rendering
+  raycast(origin, dir, maxT) -> {x,y,z,t}|null,
+  aimPoint(from:{x,y}) -> {x,y},            // sensible default target: next dogleg corner within reach, else cup
+  grid:{nx, ny, minX, minY, step, heights:Float32Array (nx*ny, row-major y then x)},  // 1 m height grid for meshing
+  sgrid:{nx, ny, minX, minY, step, data:Uint8Array},                                  // 0.5 m surface grid
+}
+```
+
+`heightAt` is exact (analytic) on greens and bilinear elsewhere. It must be continuous.
+Pins are at least 4 m inside the fringe, with slope ≤ 2.5% within 2 m of the cup.
+Green slopes are ≤ 5%.
+
+## 4. Swing, lie, game
+
+### Lie (`lie.js`)
+
+```
+Lie = {surface, slopeAlong, slopeAcross (fractions), label:'Fairway' | 'Rough · Uphill' | ...,
+       factors:{speed, spin, launch, sdir}}
+```
+
+- Uphill or downhill: `launch += 0.6·slopeAngleAlong`. Uphill also scales speed by
+  `(1 − 0.4·max(0, slope))`.
+- Sidehill (ball above the feet, for a right-hander) pulls the ball left:
+  `startDir −= 0.5·slopeAcrossDeg`, clamped to ±4°.
+- Bunker with a wood: speed × 0.5. Greenside wedge explosion within 40 m of the green: speed × 0.6,
+  spin × 0.5, launch +6°.
+- Woods from rough: speed × 0.85.
+
+### Swing gestures (`input.js` records; `swing.js` interprets)
+
+`samples` is an array of `{t (ms), x, y (CSS px)}` for one pointer, from pointerdown to pointerup.
+
+```js
+interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty:'easy'|'normal'|'pro', handed:'R'|'L'}) ->
+  {ok, reason?:'cancel'|'tooSlow'|'short', power, overswing, startDir, faceToPath, face, path,
+   tempo:'smooth'|'rushed'|'decel', label}
+```
+
+**Full swing**
+
+- Touchdown at y0 defines the impact line.
+- Dragging down sets `power = clamp(depth / (0.32·padRefH), 0, 1.1)`; anything above 1 is
+  overswing, which doubles dispersion.
+- A strike fires when the finger crosses y0 going up at 400 px/s or more. Releasing during the
+  backswing, or returning slowly, cancels.
+- The chord angle α from the backswing bottom to the end gives `startDir`. The curvature κ
+  (heading of the last 40% minus the first 60%) gives `faceToPath`.
+- Tempo: the ideal downswing time is `0.10 + 0.15·power` s. Under 0.5× is "rushed" (σ_face
+  +1.5°). Over 2× is "decel" (speed × 0.92).
+- Difficulty gains:
+
+  | Difficulty | G_s | G_c | dzA | dzK |
+  |---|---|---|---|---|
+  | Easy | 0.15 | 0.05 | 4° | 8° |
+  | Normal | 0.25 | 0.08 | 2° | 4° |
+  | Pro | 0.35 | 0.12 | 0 | 0 |
+
+  `startDir` is clamped to ±10° and `faceToPath` to ±8°. Left-handed play flips the sign of κ.
+- Random contact: σ_dir = 0.6° (× 2 on overswing, plus the lie's `sdir`), σ_speed = 1.5%.
+- Speed factor: `0.15 + 0.85·power`. Spin scales with the speed ratio, the lie's spin factor and
+  the partial-wedge factor `(0.7+0.3·power)`.
+
+**Putt**
+
+- Drag down: `power = depth/(0.30·padRefH)`, which maps to a flat-roll distance
+  `D = power·puttRange`.
+- `puttRange` comes from {3, 6, 9, 12, 18, 24, 30} m: the first value that is at least 1.25× the
+  distance to the cup.
+- Release, or a flick up, strokes the putt. Lateral drift over the last 150 ms × 0.08 gives the
+  direction error (clamped to ±3°).
+- The putt speed comes from `puttSpeedForDistance(D, SURFACES[GREEN])`.
+
+### Rules (`rules.js`)
+
+Simplified Rules of Golf.
+
+- Each swing adds a stroke. A cancelled swing doesn't count.
+- **OB:** stroke and distance. Add 1 and replay from `prevSpot`.
+- **Water (red):** drop within 2 club lengths of `waterEntry`, at the nearest dry, non-hazard
+  point no nearer the hole.
+- **Water (yellow):** drop back on the line from the hole through `waterEntry`, 2 m or more
+  behind it, on dry ground.
+- The relief dialog offers "Drop (+1)" (the default) or "Replay (+1)".
+- **Pick-up:** at `2·par` strokes, the hole is recorded as 2·par.
+- `scoreName`: Albatross, Eagle, Birdie, Par, Bogey, Double Bogey, Triple Bogey, or `+n`.
+  A hole-in-one is "Hole in one!".
+- Statistics: FIR, GIR and putts.
+
+### Game (`game.js`)
+
+```
+phases: 'intro' -> 'address' -> 'flight' -> ('address' | 'decision' | 'holed')
+        'holed' -> 'scorecard' -> next hole 'intro' ... -> 'roundOver'
+```
+
+```js
+export class Game {
+  constructor({course = COURSE, seed, settings:{wind:'off'|'light'|'breezy', difficulty, units, handed},
+               buildHole = buildHole})
+  phase; state; terrain; def; shot /* {result, playT, launch} during flight */
+  on(evt, fn)            // 'phase','hole','shotStart','shotEvent','shotEnd','decision','holed','roundOver','message'
+  loadHole(i, terrain?) ; skipIntro()
+  setAim(yaw) ; aimYaw ; setClub(id) ; club ; suggestClub() ; lie ; wind ; distanceToCup()
+  ballPos()              // current ball {x,y,z} (during flight: interpolated from shot.path at playT)
+  swing(swingResult)     // -> {ok, shot}; runs simulateShot instantly; phase 'flight'
+  update(dt)             // advances the playback clock; emits shotEvent as playback passes each event t
+  decide(option)         // 'drop'|'replay'
+  nextHole() ; serialize() ; static restore(json, opts)
+  debugPlace(x, y)       // tests only
+}
+```
+
+- Wind is seeded per hole: Light is 0–4 m/s, Breezy is 3–8 m/s.
+- Autosave happens on `shotEnd` and `nextHole` (from `main.js`).
+
+## 5. Rendering and camera
+
+### Renderer (`render.js`)
+
+```js
+export class Renderer {
+  constructor(canvas, {quality:'auto'|'low', test:false})
+  ok                                        // false -> main shows #nogl
+  setHole(terrain)                          // upload meshes/textures, keep CPU copies for context restore
+  resize(cssW, cssH, dpr)                   // caps dpr at 2, adaptive renderScale
+  project(x,y,z) -> {sx, sy, z, visible}    // CSS px
+  pickTerrain(sx, sy) -> {x,y,z}|null
+  draw(scene)
+  stats() -> {drawCalls, tris, renderScale, ms}
+  debugPixel(sx, sy) -> [r,g,b,a]           // tests: reads back right after draw
+}
+scene = { time, cam:{eye,target,up,fovY,near,far}, ball:{x,y,z,visible}, trail:{data:Float32Array([x,y,z]*), count}|null,
+          aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir? }
+```
+
+- GLSL 100 (works on WebGL1 and WebGL2), `highp` fragments, camera-relative positions, and
+  25 draw calls or fewer.
+- Contents: sky gradient with baked clouds and horizon hills; a chunked terrain with a baked
+  colour texture and mowing stripes; fog; a skirt ring to the horizon; water planes with a
+  fresnel and sun glint; instanced trees; OOB stakes; tee markers; the pin with a waving flag;
+  the cup; the ball (icosphere close up, a minimum-size billboard far away) with a blob shadow;
+  the shot trail; the aim line; and the green-read grid and slope tint.
+- Context loss is handled by restoring from the CPU copies.
+
+### Camera (`camera.js`, pure)
+
+```js
+export class CameraRig {
+  constructor()
+  mode                   // 'address'|'putt'|'read'|'flight'|'holed'|'map'|'flyover'
+  setMode(mode, ctx)     // ctx: {ball, aimYaw, cup, terrain, shot, aspect}
+  update(dt, ctx) -> {eye, target, up, fovY, near, far}
+  orbit(dyaw)            // read-mode drag
+}
+```
+
+- The eye is always ≥ 1 m above the terrain (≥ 0.3 m for putts).
+- `fovY` comes from a 55° horizontal FOV, clamped to 40–75°.
+- Address: eye = ball − aimDir·3.2 + ẑ·1.7. Flight: TV-style shot, then a chase cam, then a
+  landing cam (`shot.landing` is known in advance). Flyover: 5 s along the spline. Putt: low
+  behind the ball. Read: orbit above the green.
+
+## 6. HUD, input, audio, main
+
+- **Top bar:** hole, par, yards, strokes, total versus par, and a pause button (`#pause-btn`;
+  the pause sheet's resume button is `[data-act="unpause"]`).
+- **Info card:** distance to the pin, "plays like", the lie chip and a wind arrow (relative to
+  the camera yaw).
+- **Club picker:** ◀ club ▶ with carry and total; it auto-picks on every new lie.
+- **Power arc** around the swing pad. Shot toast: "7 Iron · Carry 158 yd · Total 164 yd".
+- **Scorecard overlay** (`#scorecard`, with a `[data-act="next-hole"]` button).
+- **Menus:** main menu (`[data-act="new-round"]`, `[data-act="resume"]`, settings, how to play),
+  pause sheet, settings, and a `#nogl` message.
+- **Input regions:**
+  - Aim zone (the upper part of the canvas): horizontal drag turns the yaw.
+  - Swing pad (the lower about 40%, above the safe area): drag down, then flick up.
+  - Read mode: drag orbits. Map: tap a point to aim at it.
+  - The canvas uses `touch-action: none`.
+- **Audio** (synthesised): whoosh, impact (driver, iron, putter), landing (green, fairway, sand,
+  water splash, tree), cup rattle, applause for a birdie or better, ambient wind. The iOS unlock
+  pattern is copied from the pool `src/audio.js`.
+- **`main.js`:**
+  - Boot, rAF loop, resize.
+  - Save and resume (`golf.save.v1` with an in-memory fallback), wake lock,
+    `visibilitychange`/`pagehide`, and `globalThis.__golf = app`.
+  - URL parameters: `?debug=1`, `?autoplay=1`, `?fast=N`, `?nogl=1`, `?hole=N`, `?test=1`,
+    `?quality=low`.
