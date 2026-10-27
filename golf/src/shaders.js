@@ -392,7 +392,9 @@ void main() {
   } else {
     float wl = length(uWind);
     vec2 wd = wl > 0.05 ? uWind / wl : vec2(0.8, 0.6);
-    float stiff = 0.15 + 0.85 * smoothstep(0.3, 7.0, wl);   // limp in calm air, flying in a breeze
+    // Drooping in calm air, flying in a breeze. Never fully limp: a limp cloth folds into the
+    // pole's plane and vanishes edge-on, and the flag is the player's target from 200 m out.
+    float stiff = 0.55 + 0.45 * smoothstep(0.3, 7.0, wl);
     vec3 along = normalize(vec3(wd * stiff, -(1.0 - stiff) * 1.4));
     vec3 side = vec3(-wd.y, wd.x, 0.0);
     float L = 0.52 * uFlagS;

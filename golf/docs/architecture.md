@@ -535,6 +535,10 @@ scene = { time, cam:{eye,target,up,fovY,near,far}, ball:{x,y,z,visible}, trail:{
   the cup; the ball (icosphere close up, a minimum-size billboard far away) with a blob shadow;
   the shot trail; the aim line; and the green-read grid and slope tint.
 - Context loss is handled by restoring from the CPU copies.
+- `scene.aim` may carry `ring` (landing-ring radius, m), `width` (minimum half-width), `lift`
+  (height above the turf) and `dash` (dash period, m); main.js uses them for the putt line. The
+  flag droops in calm air but never folds flat (it is the target from 200 m), and the horizon
+  ridges carry most of the haze so they blend with the fogged skirt instead of reading as a wall.
 
 ### Camera (`camera.js`, pure)
 
@@ -546,13 +550,19 @@ export class CameraRig {
   update(dt, ctx) -> {eye, target, up, fovY, near, far}
   orbit(dyaw)            // read-mode drag
 }
+// also: fovForAspect(aspect), addressFraming(aspect) -> {back, h, pitch}, ADDRESS_H, FLYOVER_T
 ```
 
 - The eye is always ≥ 1 m above the terrain (≥ 0.3 m for putts).
 - `fovY` comes from a 55° horizontal FOV, clamped to 40–75°.
-- Address: eye = ball − aimDir·3.2 + ẑ·1.7. Flight: TV-style shot, then a chase cam, then a
-  landing cam (`shot.landing` is known in advance). Flyover: 5 s along the spline. Putt: low
-  behind the ball. Read: orbit above the green.
+- Address (as built): the eye is `ADDRESS_H` = 1.6 m above the ball and behind it along the aim;
+  `addressFraming(aspect) -> {back, h, pitch}` solves the distance and downward pitch so that the
+  ball projects at NDC y = −0.6 (portrait/square) or −0.7 (landscape), inside the swing arc, and
+  the horizon at NDC y = 0.22 / 0.12. That is ~2.4 m back in portrait (vertical FOV 75°) and ~5 m
+  in landscape (40°), where a fixed 3.2 m put the ball below the bottom edge. Flight: TV-style
+  shot, then a chase cam, then a landing cam (`shot.landing` is known in advance). Flyover: 5 s
+  along the spline. Putt: low behind the ball (1.3–4.5 m back, 0.85–2.2 m up with the putt
+  length), pitched so the ball sits at NDC y ≈ −0.55. Read: orbit above the green.
 
 ## 6. HUD, input, audio, main
 
@@ -579,6 +589,59 @@ export class CameraRig {
     `visibilitychange`/`pagehide`, and `globalThis.__golf = app`.
   - URL parameters: `?debug=1`, `?autoplay=1`, `?fast=N`, `?nogl=1`, `?hole=N`, `?test=1`,
     `?quality=low`.
+
+### main.js (Integration, as built)
+
+`main.js` has no exports; the header comment is the reference. It owns one `app` object
+(`globalThis.__golf`): `{ui, renderer, input, audio, rig, game, view, paused, params, debug, ...}`.
+
+- **Boot:** UI first (settings), then `Renderer(canvas, {quality: ?quality || setting, test:
+  ?test})`. `!renderer.ok` shows `#nogl` and stops. `?nogl=1` uses a `NullRenderer` stub (same
+  API, draws nothing) so logic, HUD, input and saves still run. The menu backdrop is a slow drone
+  shot down hole 1, built behind the `#loading` spinner.
+- **Terrain cache:** `Game` gets a caching `buildHole` (last 3 by hole, pin and seed); the next
+  hole is prebuilt ~150 ms after the scorecard appears, so "Next hole" only uploads to the GPU.
+- **Loop:** dt clamped to 0.1 s; `game.update(dt·fast)`, camera `rig.update(dt·fast)`, scene,
+  `renderer.draw`. While paused one frame is drawn and then drawing stops. A frame that throws is
+  logged (first 3) and the loop keeps running.
+- **Phases → views:** intro = flyover camera + lower third, auto-advances after FLYOVER_T + 1.2 s or
+  a tap; address = `'address'` or `'putt'` camera by club (sub-views `read`, `map` — a Map tap
+  aims at `renderer.pickTerrain` and returns to the ball after 0.45 s — and `flyover`); flight =
+  TV sequence for full shots, the putt camera held at the strike point for putts; holed = cup
+  orbit + score banner + applause (par and better); scorecard; roundOver = final card with the
+  best round (`golf.best.v1`, completed nines only). Camera moves longer than 60 m after a
+  flight/holed/flyover are hard cuts.
+- **Input modes:** `full`/`putt` by club, `read`, `map`, `intro` (intro and flyover), `watch`
+  (flight fast-forward, holed → scorecard), `disabled` otherwise (menus, dialogs, pause).
+- **Swing:** `interpretSwing(samples, {padRefH: input.padRefH, kind, difficulty, handed, club})`;
+  a failed swing shows a hint ("Too slow · swipe up faster", "Swing cancelled") and is not a
+  stroke. The live arc readout is `game.carryForPower(power)` (carry, or flat roll for putts), and
+  the aim ring follows it. The power curve is warmed on every address so the first gauge move
+  does not hitch.
+- **Scene:** the pin is out for putts (address, flight, holed and scorecard after a holed putt);
+  the trail shows full shots in flight/holed/decision; putts get a thin short-dashed line with a
+  0.2 m ring (`aimRibbon` options `ring`, `width`, `lift`, `dash`) and a faint read grid.
+- **Toasts:** shot result `'7 Iron · Carry 158 yd · Total 164 yd · Push fade'` (the label comes
+  from the launch actually played, scatter included, plus `· Rushed`/`· Decel`); putts `'Putter ·
+  12 ft · 2 ft left'`; rule messages; "Lip out".
+- **Saves:** on every new hole, phase change to intro/address/decision/scorecard, shot end, relief
+  choice, pause, `visibilitychange`(hidden) and `pagehide`; cleared at round over. `?autoplay`
+  never saves.
+- **Settings:** apply at once (wind via `game.setSettings`, quality by rebuilding the hole).
+- **`?autoplay=1`:** `playBotShot` after 0.6 s of game time in address (run in a `setTimeout` so
+  the frame paints first), `botDecide` for relief, next hole 0.8 s after the scorecard;
+  `globalThis.__golfDone = {total, toPar, played, pickUps}` at the end.
+- **`?test=1`:** fixed seed 1 (or `?seed=N`), renderer `test` mode (pixel read-back), and
+  `app.debug = {placeNearCup(d), skyPixel(), padRect(), state()}`; `app.lastSwing` keeps the last
+  swing's samples and result.
+- **HUD layout (as built):** in portrait/square the club picker and putt range sit at the bottom
+  of the swing pad, below the arc, and the idle hint sits inside the arc where the live readout
+  appears, so the middle of the screen (target, cup) stays clear. Landscape is unchanged (club
+  bottom left, pad on the right). The arc centre is at 40% of the pad height (44% landscape).
+
+`tests/e2e.spec.mjs` (Playwright, Chromium with SwiftShader WebGL, or `?nogl=1` without WebGL)
+drives the real UI with CDP touch events carrying explicit timestamps (SwiftShader frames take up
+to a second, and the swing interpreter reads speeds from `event.timeStamp`).
 
 ### Input API (`input.js`, Shell/UI group, as built)
 

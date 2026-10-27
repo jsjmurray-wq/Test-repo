@@ -49,8 +49,13 @@ npm run icons     # regenerate icons/icon-180.png and icon-512.png (needs Playwr
 ```
 
 ES modules need HTTP, so open `http://localhost:8081/` rather than `index.html` from disk; the
-single-file build in `dist/golf.html` works from anywhere. URL options: `?hole=N`, `?autoplay=1`,
-`?fast=N`, `?quality=low`, `?debug=1`, `?nogl=1`, `?test=1`.
+single-file build in `dist/golf.html` works from anywhere. URL options: `?hole=N` (start a round
+at hole N), `?autoplay=1` (the bot plays the round), `?fast=N` (playback speed), `?seed=N`,
+`?quality=low`, `?debug=1` (fps overlay), `?nogl=1` (logic without WebGL), `?test=1` (e2e hooks).
+
+`npm run e2e` drives the real UI with touch events on iPhone portrait/landscape and foldable
+viewports, on both `index.html` and `dist/golf.html` (`--shots` saves screenshots to
+`screenshots/`, `--soak` adds a full autoplay round).
 
 ## Hosting
 

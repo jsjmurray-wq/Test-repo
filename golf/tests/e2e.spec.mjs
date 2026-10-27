@@ -242,7 +242,7 @@ async function smoke(browser, base, path, vp, gl) {
   await page.waitForTimeout(250);
   await shot(page, tag, 'holed');
   check(await waitFor(page, () => !document.getElementById('scorecard').hidden, 8000), 'scorecard shows after the hole');
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(900);
   await shot(page, tag, 'scorecard');
   const card1 = (await state(page)).card[0];
   check(card1 >= 2, `hole 1 recorded on the card (${card1})`);
@@ -255,7 +255,7 @@ async function smoke(browser, base, path, vp, gl) {
 
   // Pause sheet opens and closes.
   await page.locator('#pause-btn').tap();
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(700); // let the sheet's fade-in finish before the screenshot
   check(await page.isVisible('#pause'), 'pause sheet opens');
   await shot(page, tag, 'pause');
   await page.locator('#pause [data-act="unpause"]').tap();
