@@ -53,11 +53,18 @@ test('full-power carries: ranges, strictly decreasing, within 3% of target', () 
   }
 });
 
-test('driver apex 25-38 m; landing angle steepens from driver to lob wedge', () => {
+test('trajectory shapes: driver apex 25-33 m, descent steepens from driver (~40) to wedges (~49)', () => {
   const d = shot('D');
-  assert.ok(d.apex >= 25 && d.apex <= 38, `apex ${d.apex}`);
-  const angles = ['D', '7i', 'PW', 'LW'].map((id) => landAngle(shot(id)));
-  for (let i = 1; i < angles.length; i++) assert.ok(angles[i] > angles[i - 1], `angles ${angles}`);
+  assert.ok(d.apex >= 25 && d.apex <= 33, `apex ${d.apex}`);
+  const angles = ['D', '5i', '7i', 'PW', 'LW'].map((id) => landAngle(shot(id)));
+  for (let i = 1; i < angles.length; i++) assert.ok(angles[i] > angles[i - 1] - 0.5, `angles ${angles}`);
+  // TrackMan-like descent angles (a 5 handicap's 7-iron lands at 46-50 deg, the driver 37-41).
+  assert.ok(angles[0] >= 36 && angles[0] <= 42, `driver ${angles[0]}`);
+  assert.ok(angles[2] >= 45 && angles[2] <= 50, `7-iron ${angles[2]}`);
+  assert.ok(angles[3] >= 47 && angles[3] <= 53, `PW ${angles[3]}`);
+  // Long irons no longer run 15+ yd on a green.
+  const g5 = shot('5i', flat(SURF.GREEN));
+  assert.ok(yd(g5.total - g5.carry) < 9, `5-iron releases ${yd(g5.total - g5.carry)} yd on a green`);
 });
 
 test('a zero-spin driver carries at least 15% less', () => {
@@ -138,10 +145,15 @@ test('green: 7i rolls -2..+8 yd; full SW checks (<=1 yd forward or spins back <=
 });
 
 test('rough rolls less than fairway; bunker stops within 1.5 m', () => {
-  for (const id of ['D', '7i', 'PW']) {
+  for (const id of ['D', '7i']) {
     const f = shot(id);
     const r = shot(id, flat(SURF.ROUGH));
     assert.ok(r.total - r.carry < f.total - f.carry, id);
+  }
+  // A full wedge checks up on either (the rough's grass kills the backspin, so it does not draw back).
+  for (const s of [SURF.FAIRWAY, SURF.ROUGH]) {
+    const w = shot('PW', flat(s));
+    assert.ok(Math.abs(w.total - w.carry) < 1.5, `PW on ${s}: ${w.total - w.carry}`);
   }
   for (const id of ['D', '7i', 'SW']) {
     const b = shot(id, flat(SURF.BUNKER));
@@ -234,6 +246,34 @@ test('trunk: a low runner hitting a trunk rebounds', () => {
   assert.ok(Math.abs(hit.nx + 1) < 1e-9);
   assert.equal(treeHit(tree, { x: 9, y: 0, z: 3.5 }, { x: 9.5, y: 0, z: 3.5 }), null);
   assert.equal(treeHit(tree, { x: 9, y: 0, z: 7 }, { x: 9.5, y: 0, z: 7 }).kind, 'canopy');
+});
+
+test('trunk top: a ball dropping onto it glances off and falls without hanging', () => {
+  const tree = { x: 0, y: 0, trunkR: 0.3, trunkH: 4, canopy: { cz: 7, rx: 3, rz: 3 }, kind: 'oak' };
+  const t = makeTerrain({ trees: [tree] });
+  for (const off of [0, 0.1, 0.25]) {
+    // Falling almost straight down from 6 m onto the trunk top (a canopy deflection does this).
+    const r = simulateShot(t, makeLaunch({ pos: { x: off, y: 0, z: 6 }, ballSpeed: 3, launchDeg: -85 }), { pin: false });
+    assert.ok(r.events.some((e) => e.type === 'tree'), 'hit the trunk');
+    const P = r.path;
+    let still = 0;
+    for (let i = 4; i < P.length; i += 4) {
+      if (P[i + 3] > 0.1 && Math.abs(P[i + 3] - P[i - 1]) < 1e-4) still += P[i] - P[i - 4];
+    }
+    assert.ok(still < 0.05, `motionless in the air for ${still.toFixed(2)} s`);
+    assert.ok(Math.hypot(r.final.x, r.final.y) > 0.3 + BALL_R, 'ends outside the trunk');
+    assert.ok(r.t < 10, `shot lasts ${r.t} s`);
+  }
+});
+
+test('rest: a slow ball on a slope just inside the hold limit stops instead of creeping to MAX_SHOT_T', () => {
+  for (const [surf, slope] of [[SURF.ROUGH, 0.393], [SURF.ROUGH, 0.402], [SURF.FAIRWAY, 0.166], [SURF.GREEN, 0.066], [SURF.BUNKER, 1.1]]) {
+    const t = planeTerrain({ surface: surf, sx: slope });
+    for (const v0 of [0.05, 0.3]) {
+      const r = simulateShot(t, makeLaunch({ pos: { x: 0, y: 0, z: 0 }, aimYaw: 0, ballSpeed: v0, mode: 'roll' }), { record: false });
+      assert.ok(r.t < 30, `surface ${surf} at ${slope * 100}% from ${v0} m/s: t = ${r.t.toFixed(1)} s, moved ${r.total.toFixed(2)} m`);
+    }
+  }
 });
 
 test('flagstick: a ball flying into the pin bounces off it', () => {

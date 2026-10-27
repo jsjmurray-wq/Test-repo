@@ -26,8 +26,9 @@ load. It lives entirely in `golf/` and shares no code with the pool game in the 
 
 Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out of bounds is stroke
 and distance. From water you choose **Drop (+1)** near where the ball went in (red: within two club
-lengths, no nearer the hole; yellow: back on the line from the hole) or **Replay (+1)** from the
-previous spot. You pick up at double par. The scorecard tracks fairways hit, greens in regulation
+lengths, no nearer the hole, on ground that holds the ball, or back on the line to level ground when
+the bank is steep all round; yellow: back on the line from the hole) or **Replay (+1)** from the
+previous spot. The dialog marks where the ball went in and both spots. You pick up at double par. The scorecard tracks fairways hit, greens in regulation
 and putts; birdies or better are circled, bogeys or worse are boxed.
 
 Settings (persisted on the device): units (yards or metres), wind (off, light, breezy),

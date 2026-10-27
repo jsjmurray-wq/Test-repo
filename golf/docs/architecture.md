@@ -78,19 +78,19 @@ total about 260 yd. Each entry has these fields:
 
 | id | Club | Loft ° | Ball m/s | Launch ° | Spin rpm | Target carry yd |
 |---|---|---|---|---|---|---|
-| D | Driver | 10.5 | 67.1 | 12.0 | 2800 | 244 |
-| 3W | 3 Wood | 15 | 63.0 | 10.5 | 3800 | 228 |
-| 5W | 5 Wood | 18 | 59.9 | 11.5 | 4400 | 216 |
-| 4H | 4 Hybrid | 22 | 56.8 | 12.5 | 4700 | 203 |
-| 5i | 5 Iron | 26 | 53.6 | 13.0 | 5300 | 190 |
-| 6i | 6 Iron | 30 | 51.0 | 14.5 | 6100 | 178 |
-| 7i | 7 Iron | 34 | 48.3 | 16.5 | 7000 | 165 |
-| 8i | 8 Iron | 38 | 45.6 | 18.5 | 7800 | 152 |
-| 9i | 9 Iron | 42 | 42.9 | 21 | 8500 | 138 |
-| PW | Pitching W | 46 | 39.8 | 24 | 9000 | 123 |
-| GW | Gap W | 50 | 36.7 | 27 | 9400 | 108 |
-| SW | Sand W | 56 | 33.1 | 31 | 9800 | 91 |
-| LW | Lob W | 60 | 29.1 | 34 | 9600 | 74 |
+| D | Driver | 10.5 | 68.6 | 12.0 | 2800 | 244 |
+| 3W | 3 Wood | 15 | 66.0 | 10.5 | 3800 | 228 |
+| 5W | 5 Wood | 18 | 63.6 | 11.5 | 4400 | 216 |
+| 4H | 4 Hybrid | 22 | 60.7 | 12.5 | 4700 | 203 |
+| 5i | 5 Iron | 26 | 58.1 | 13.0 | 5300 | 190 |
+| 6i | 6 Iron | 30 | 55.7 | 14.5 | 6100 | 178 |
+| 7i | 7 Iron | 34 | 53.0 | 16.5 | 7000 | 165 |
+| 8i | 8 Iron | 38 | 50.1 | 18.5 | 7800 | 152 |
+| 9i | 9 Iron | 42 | 46.7 | 21 | 8500 | 138 |
+| PW | Pitching W | 46 | 42.9 | 24 | 9000 | 123 |
+| GW | Gap W | 50 | 39.0 | 27 | 9400 | 108 |
+| SW | Sand W | 56 | 34.7 | 31 | 9800 | 91 |
+| LW | Lob W | 60 | 30.2 | 34 | 9600 | 74 |
 | P | Putter | 3 | – | 0 (starts rolling) | 0 | – |
 
 `spinLoft` runs from about 13° for the driver to about 50° for the LW and is used for the D-plane
@@ -105,12 +105,14 @@ The state is `p`, `v` and `ω` (rad/s), all 3D. The air-relative velocity is `u 
 
 ```
 S   = R·|ω| / |u|                (clamp S to [0, 0.6])
-C_D = 0.24 + 0.18·S
-C_L = 0.54 · S^0.4
+C_D = 0.186 + 0.545·S − 0.42·S² + 0.063·(50/|u| − 1)    (|u| floored at 15 m/s)
+C_L = 1.15·S^0.766 / (1 + 1.55·S)
 a   = −g ẑ − (ρA/2m)·C_D·|u|·u + (ρA/2m)·C_L·|u|²·(ω̂ × û)
 ω  *= exp(−dt/SPIN_TAU)
 ```
 
+- The C_D/C_L fit reproduces TrackMan's Tour and LPGA carry, apex and descent angle from their
+  launch numbers (irons and wedges within ~2°, the driver ~3° steep); `dragCoeff(S, u?)`.
 - **Wind** uses a log profile, `W(z) = W10 · ln(max(z_agl, 0.5)/z0) / ln(10/z0)`. The wind object
   is `{x, y}` in m/s at 10 m.
 - **Integration** is RK4 at `DT_AIR`. On a sign change of `z − R − h(x,y)`, bisect up to 8 times
@@ -155,7 +157,9 @@ The ball is constrained to the surface.
   plane.
   - Stimp closed form: `D = v0/kv − (a0/kv²)·ln(1 + kv·v0/a0)`. With v0 = 1.83 m/s on the green,
     that gives about 10.2 ft.
-- **Rest** when `|v| < 0.01` and `(5/7)·g·|∇h| < a0·1.05`.
+- **Rest** when `|v| < 0.01` and `(5/7)·g·sin θ < a0·1.05` (the same downhill pull the roll
+  applies, so no slope both refuses rest and gives no net drive). A ball that creeps less than
+  1.5 cm in 0.5 s at under 3 cm/s without speeding up also rests (no 45 s creeping).
 - Going over a crest makes the ball airborne again.
 - Surface `WATER` under the ball centre gives outcome `'water'`.
 
@@ -174,7 +178,8 @@ The ball is constrained to the surface.
 `terrain.trees` entries look like `{x, y, z, trunkR, trunkH, canopy:{cz, rx, rz}, kind}`.
 Use `terrain.treesNear(x, y, r)` to find them.
 
-- **Trunk:** a hard cylinder, e = 0.4.
+- **Trunk:** a hard cylinder, e = 0.4. A ball falling onto its top (where the limbs fork) glances
+  off outward with a small hop; a ball already overlapping it is pushed out radially (no hanging).
 - **Canopy ellipsoid:** on each traversal, roll `p_hit = 1 − exp(−pathLen/3)` with the shot rng.
   On a hit, multiply v by 0.25–0.45, randomise the direction in a 60° cone (biased down), multiply
   spin by 0.3, and emit a `tree` event.
@@ -259,7 +264,7 @@ too.
 | 5 | 4 | 300 (328) | Risk/reward dogleg left around a lake (a 215 m carry cuts the corner), water left of the green |
 | 6 | 3 | 175 (191) | Elevated green (+4 m) with a false front, bunkers left and right |
 | 7 | 4 | 395 (432) | Tee shot drops 10 m into a valley, uphill approach to a plateau green, cross bunkers at 300 m |
-| 8 | 5 | 445 (487) | Reachable in two, water (yellow) along the right of the second half, green tucked right |
+| 8 | 5 | 445 (487) | Reachable in two, water (red: it runs alongside, so yellow relief would be unusable) along the right of the second half, green tucked right |
 | 9 | 4 | 365 (399) | Uphill finishing hole, pond left of the landing area, two-tier green |
 
 ### HoleTerrain (the public contract, used by physics, game, renderer and camera)
@@ -318,7 +323,8 @@ Lie = {surface, slopeAlong, slopeAcross (fractions), label:'Fairway' | 'Rough ·
   `startDir −= 0.5·slopeAcrossDeg`, clamped to ±4°.
 - Bunker with a wood: speed × 0.5. Greenside wedge explosion within 40 m of the green: speed × 0.6,
   spin × 0.5, launch +6°.
-- Woods from rough: speed × 0.85.
+- Rough: the spin cut grows with loft (the full `×0.55` from the 8-iron up, about ×0.8 for
+  woods); woods from rough total speed × 0.85 (slope terms apply).
 
 ### Swing gestures (`input.js` records; `swing.js` interprets)
 
@@ -339,8 +345,10 @@ interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty:'easy'|'normal'
   backswing, or returning slowly, cancels.
 - The chord angle α from the backswing bottom to the end gives `startDir`. The curvature κ
   (heading of the last 40% minus the first 60%) gives `faceToPath`.
-- Tempo: the ideal downswing time is `0.10 + 0.15·power` s. Under 0.5× is "rushed" (σ_face
-  +1.5°). Over 2× is "decel" (speed × 0.92).
+- Tempo: the ideal downswing time is `0.10 + 0.15·power` s, timed from when the finger starts
+  up out of the bottom. Under `RUSHED_FRAC` = 0.18× is "rushed" (about 2400 px/s at full power;
+  ordinary 1000–2200 px/s flicks are smooth): σ_face + 0.3° to 0.6° (`RUSHED_FACE`), growing with
+  `tempoErr` (0–1, how far under). Over 2× is "decel" (speed × 0.92).
 - Difficulty gains:
 
   | Difficulty | G_s | G_c | dzA | dzK |
@@ -351,8 +359,10 @@ interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty:'easy'|'normal'
 
   `startDir` is clamped to ±10° and `faceToPath` to ±8°. Left-handed play flips the sign of κ.
 - Random contact: σ_dir = 0.6° (× 2 on overswing, plus the lie's `sdir`), σ_speed = 1.5%.
-- Speed factor: `0.15 + 0.85·power`. Spin scales with the speed ratio, the lie's spin factor and
-  the partial-wedge factor `(0.7+0.3·power)`.
+- Speed factor: `0.15 + 0.85·power`. Spin scales with the speed ratio and the lie's spin factor.
+  Partial swings (`partialSwing(club, power)`): wedges launch up to `PARTIAL_LAUNCH.wedge` = 8°
+  higher as power drops (irons 2°) and their spin goes with `√speed × (1 − 0.2·(1 − power))`, so
+  25–55 yd LW/SW pitches land at 40–47° and release 0–5 yd.
 
 **Putt**
 
@@ -360,8 +370,10 @@ interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty:'easy'|'normal'
   `D = power·puttRange`.
 - `puttRange` comes from {3, 6, 9, 12, 18, 24, 30} m: the first value that is at least 1.25× the
   distance to the cup.
-- Release, or a flick up, strokes the putt. Lateral drift over the last 150 ms × 0.08 gives the
-  direction error (clamped to ±3°).
+- Release, or a flick on through the start line, strokes the putt. Sliding back to within 25% of
+  the depth of the line (and no more than 12 px past it), at any speed, or more than 60 px
+  sideways, cancels; presses under 20 px (`PUTT_MIN_DEPTH_PX`) are slips ('short'). Lateral drift
+  over the last 150 ms × 0.08 gives the direction error (clamped to ±3°).
 - The putt speed comes from `puttSpeedForDistance(D, SURFACES[GREEN])`.
 
 ### Rules (`rules.js`)
@@ -370,8 +382,9 @@ Simplified Rules of Golf.
 
 - Each swing adds a stroke. A cancelled swing doesn't count.
 - **OB:** stroke and distance. Add 1 and replay from `prevSpot`.
-- **Water (red):** drop within 2 club lengths of `waterEntry`, at the nearest dry, non-hazard
-  point no nearer the hole.
+- **Water (red):** drop within 2 club lengths of `waterEntry`, on dry, non-hazard ground no
+  nearer the hole that holds the ball (Rule 14.2e), preferring gentle ground; when the relief area
+  is all steep bank, back on the line on level ground instead.
 - **Water (yellow):** drop back on the line from the hole through `waterEntry`, 2 m or more
   behind it, on dry ground.
 - The relief dialog offers "Drop (+1)" (the default) or "Replay (+1)".
@@ -431,24 +444,27 @@ with the real club, so the launch's start direction equals `startDir` plus scatt
   allowed), so a pause at the top of the backswing does not count as downswing time. The strike
   speed is the mean upward speed over the 50 ms before the crossing. A fast flick lifted within
   50 ms (extrapolated) of the line still strikes.
-- Putts: release anywhere, or a flick (≥ 400 px/s), strokes; coming back within 25% of the depth
-  slowly cancels. Drift gain 0.08°/px is for Normal and scales with `G_s` (Easy ×0.6, Pro ×1.4)
-  with a `dzA`-px dead zone (4/2/0 px).
+- Putts: see above (release or flick through strokes; back to the line or far sideways cancels).
+  Drift gain 0.08°/px is for Normal and scales with `G_s` (Easy ×0.6, Pro ×1.4) with a `dzA`-px
+  dead zone (4/2/0 px). The downswing start is extrapolated back from the first samples that leave
+  the bottom, so a motionless pause (no touch events) does not count as downswing time.
 - `swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange})`; `rng = null` gives the intended
   shot with no scatter (caddie and bot). Scatter: σ_dir = 0.6°·(2 if overswing) + lie.sdir on the
-  start direction; σ_face = 0.4°·(2 if overswing) + 1.5° if rushed on the face (it moves the curve
+  start direction; σ_face = 0.4°·(2 if overswing) + 0.3–0.6° if rushed on the face (it moves the curve
   fully and the start direction by k); σ_speed = 1.5%·(2 if overswing). Putts: σ_speed 1%, σ_dir 0.3°.
   `launch.meta` adds `power`, `faceDeg`, `pathDeg`, `faceToPathDeg` (putts: `puttDistance`, `puttRange`).
-- Exports `DIFFICULTY`, `STRIKE_SPEED`, `PUTT_RANGES = [3, 6, 9, 12, 18, 24, 30]`, `swingLabel`.
+- Exports `DIFFICULTY`, `STRIKE_SPEED`, `PUTT_RANGES = [3, 6, 9, 12, 18, 24, 30]`, `swingLabel`,
+  `partialSwing`, `PARTIAL_LAUNCH`, `RUSHED_FRAC`, `PUTT_MIN_DEPTH_PX`.
 
 **Caddie** — `clubTable(terrain, pos, lie, wind, {aimYaw})` → rows `{id, name, short, kind, carry,
-total, carry0, total0, apex, landAngle}` (stock full swing with the lie, flat fairway at the ball's
-height; `carry0`/`total0` without wind; no putter row). `suggestClub(terrain, pos, lie, wind, {table,
-par, teeShot, aimYaw})` → club id: putter on the green and fringe; otherwise (approaches and par-3
-tee shots) the shortest club whose carry reaches the plays-like distance (SW from sand when it
-reaches); par-4/5 tee shots and lay-ups go by total, longest first, skipping clubs that run > 20 m
-past the cup or whose predicted rest (stock shot on the real hole with wind) is water, OB or sand;
-no driver off the deck. `playsLike(terrain, pos, target, wind, table)` = distance × (no-wind/wind
+total, totalG, carry0, total0, apex, landAngle}` (stock full swing with the lie, flat fairway at the
+ball's height; `totalG` over a flat green; `carry0`/`total0` without wind; no putter row).
+`suggestClub(terrain, pos, lie, wind, {table, par, teeShot, aimYaw})` → club id: putter on the green
+and fringe; clubs that a shorter club out-carries are never offered (woods from the rough); otherwise
+(approaches and par-3 tee shots) the shortest club whose `expectedFinish` (carry + 0.85 × its green
+release) reaches 97% of the plays-like distance (SW from sand when it reaches); par-4/5 tee shots and
+lay-ups go by total, longest first, skipping clubs that run > 20 m past the cup or whose predicted
+rest (stock shot on the real hole with wind) is water, OB or sand; no driver off the deck. `playsLike(terrain, pos, target, wind, table)` = distance × (no-wind/wind
 carry ratio of the nearest club) + Δz / tan(descent angle). `puttRange(dist)`. Also
 `powerCurve(...)`/`curveAt(curve, power)` (carry against power, for the power-arc readout),
 `predictShot(...)`, `isSafeRest(res)`.
@@ -456,10 +472,14 @@ carry ratio of the nearest club) + Δz / tan(descent angle). `puttRange(dist)`. 
 **Rules** — `resolveShot(ctx, shot)` with `ctx = {terrain, par, strokes (before this shot),
 prevSpot, fromTee, fromSurface}` → `{outcome, strokes (after, penalties included), penalty, ball,
 reTee, decision: null | {kind:'water', waterKind, options:['drop','replay'], drop, replay,
-replayTee, entry}, holed, pickUp, putt, fir, gir, message}`. `waterRelief(terrain, entry, kind,
-{cup})`. Red relief: the nearest point within 2.28 m of the entry, no nearer the hole, not water,
-bunker or OOB, preferring points with no water within 0.6 m (falls back to back-on-the-line if
-nothing qualifies). Yellow relief: back on the line from the hole through the entry, ≥ 2 m behind
+replayTee, entry, relief:'lateral'|'line'}, holed, pickUp, putt, fir, gir, message}`.
+`waterRelief(terrain, entry, kind, {cup})`. Red relief: within 2.28 m of the entry, no nearer the
+hole, not water, bunker or OOB, on ground that holds a ball (`holdsBall`: (5/7)·g·sin θ < 0.85·a0)
+and where a ball released at zero speed stays within 0.3 m; the lowest cost r + 8·slope wins,
+spots with water within 0.6 m or slope > 10% only when nothing better exists. When the whole
+relief area is steeper than 10%, the other red option (Rule 17.1d(2)) is used if it finds level
+ground: back on the line from the hole through the entry, never across the water, up to
+6 m + 60 m × (bank slope − 10%) (≤ 30 m) back. Last resort: back on the line as far as it takes. Yellow relief: back on the line from the hole through the entry, ≥ 2 m behind
 it — the first such spot that is dry, ≥ 2 m clear of the water and on ground ≤ 8% (else the first
 dry one). FIR is judged on the first stroke of a par 4/5 (fairway, fringe, green or holed); GIR when
 the ball rests on the green (or is holed) in ≤ par − 2 strokes, penalties included; a putt is a
@@ -505,7 +525,8 @@ replay. Candidates are simulated on the real hole with the wind and scored by ex
 hole out from the rest point (penalties weighted a little extra), the best few re-scored with
 seeded misses. Putts are read by simulating and correcting aim and pace until the putt drops in
 the middle. The swing it returns carries its own seeded execution error (`BOT_SKILL`); it averages
-about 1–3 over par for nine holes.
+about 1–3 over par for nine holes (measured: +2.5 on average over 24 seeded rounds with light wind,
+about 1.8 putts per hole).
 
 ## 5. Rendering and camera
 

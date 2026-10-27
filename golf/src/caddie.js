@@ -2,9 +2,10 @@
 // distance and the putt range. Pure module; every number comes from simulateShot, so the advice
 // always matches the physics the shot will actually get.
 //
-//   clubTable(terrain, pos, lie, wind, {aimYaw}) -> [{id, name, short, kind, carry, total, carry0,
-//                                                   total0, apex, landAngle}]   (m, deg; no putter)
+//   clubTable(terrain, pos, lie, wind, {aimYaw}) -> [{id, name, short, kind, carry, total, totalG,
+//                                                   carry0, total0, apex, landAngle}]   (m, deg; no putter)
 //   suggestClub(terrain, pos, lie, wind, {table, par, teeShot, aimYaw}) -> club id
+//   expectedFinish(row) -> carry + RELEASE_K x release on a green (m): what an approach is chosen by
 //   playsLike(terrain, pos, target, wind, table) -> metres
 //   puttRange(dist) -> metres
 //   powerCurve(terrain, pos, lie, wind, clubId, aimYaw) -> [{power, carry, total}]
@@ -12,7 +13,7 @@
 //
 // Distances in the table are a stock full swing (power 1, straight, no contact scatter) with the
 // lie's factors, simulated over flat fairway at the ball's height: carry/total with the wind
-// blowing along aimYaw, carry0/total0 without wind.
+// blowing along aimYaw, carry0/total0 without wind; totalG is the total over a flat green.
 
 import { SURF, BALL_R } from './constants.js';
 import { CLUBS, PUTTER_ID } from './clubs.js';
@@ -23,6 +24,10 @@ import { DEG } from './vec3.js';
 const STOCK = { ok: true, kind: 'full', power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' };
 const ZERO_WIND = { x: 0, y: 0 };
 const OVERRUN = 20; // m: a lay-up club may not run more than this past the cup
+// Approaches aim to finish at the pin: carry plus most of the stock release on a green (some
+// approaches land short of it, on slower grass).
+export const RELEASE_K = 0.85;
+const REACH = 0.97; // a club "gets there" when its expected finish is within 3% of plays-like
 const CADDIE_SEED = 7; // fixed seed for the caddie's look-ahead shots (canopy luck)
 
 const yawTo = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
@@ -32,6 +37,7 @@ export function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const aimYaw = opts.aimYaw ?? (lie && lie.aimYaw !== undefined ? lie.aimYaw : terrain.cup ? yawTo(pos, terrain.cup) : 0);
   const z = terrain.heightAt(pos.x, pos.y);
   const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z });
+  const greenPlane = planeTerrain({ surface: SURF.GREEN, z0: z });
   const start = { x: pos.x, y: pos.y, z: z + BALL_R };
   const windy = hasWind(wind);
   const rows = [];
@@ -40,6 +46,8 @@ export function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
     const launch = swingToLaunch(c, lie, STOCK, aimYaw, null, { pos: start });
     const r = simulateShot(plane, launch, { wind, record: false, pin: false });
     const r0 = windy ? simulateShot(plane, launch, { record: false, pin: false }) : r;
+    // The same shot landing on a green, which lets a low-spin ball (a flier) run much further.
+    const rg = simulateShot(greenPlane, launch, { wind, record: false, pin: false });
     const land = r.events.find((e) => e.type === 'land');
     rows.push({
       id: c.id,
@@ -48,6 +56,7 @@ export function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
       kind: c.kind,
       carry: r.carry,
       total: r.total,
+      totalG: rg.total,
       carry0: r0.carry,
       total0: r0.total,
       apex: r.apex,
@@ -123,6 +132,11 @@ export function isSafeRest(res) {
   return f.surface !== SURF.BUNKER && f.surface !== SURF.WATER && f.surface !== SURF.OOB;
 }
 
+// Where a stock shot is expected to stop, along the line (m).
+export function expectedFinish(row) {
+  return row.carry + RELEASE_K * Math.max(0, (row.totalG ?? row.total) - row.carry);
+}
+
 export function suggestClub(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const surf = lie ? lie.surface : terrain.surfaceAt(pos.x, pos.y);
   if (surf === SURF.GREEN || surf === SURF.FRINGE) return PUTTER_ID;
@@ -131,14 +145,16 @@ export function suggestClub(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const aimYaw = opts.aimYaw ?? (lie && lie.aimYaw !== undefined ? lie.aimYaw : yawTo(pos, cup));
   const par = opts.par ?? terrain.par ?? 4;
   const teeShot = opts.teeShot ?? surf === SURF.TEE;
-  // The driver is a tee club.
-  const usable = table.filter((r) => r.id !== 'D' || surf === SURF.TEE);
+  // The driver is a tee club, and a club is no use when a shorter one carries at least as far
+  // (woods from the rough).
+  const usable = table.filter((r, i) => (r.id !== 'D' || surf === SURF.TEE) && !table.slice(i + 1).some((q) => q.carry >= r.carry));
   const dist = Math.hypot(cup.x - pos.x, cup.y - pos.y);
 
   if (!(teeShot && par >= 4)) {
-    // Approach (and par-3 tee shots): the shortest club that carries the plays-like distance.
+    // Approach (and par-3 tee shots): the shortest club whose stock shot finishes (carry plus
+    // most of its release) at the plays-like distance; the power gauge handles the difference.
     const pl = playsLike(terrain, pos, cup, wind, table);
-    const reach = usable.filter((r) => r.carry >= 0.98 * pl);
+    const reach = usable.filter((r) => expectedFinish(r) >= REACH * pl);
     if (reach.length) {
       if (surf === SURF.BUNKER && reach.some((r) => r.id === 'SW')) return 'SW';
       return reach[reach.length - 1].id;

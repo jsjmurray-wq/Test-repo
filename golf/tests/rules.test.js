@@ -1,7 +1,8 @@
 // Rules (penalties, relief, pick-up, names, statistics) and the scorecard.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveShot, waterRelief, scoreName, maxStrokes, isDropOk, RELIEF_R } from '../src/rules.js';
+import { resolveShot, waterRelief, scoreName, maxStrokes, isDropOk, holdsBall, RELIEF_R } from '../src/rules.js';
+import { simulateShot } from '../src/physics.js';
 import { newCard, recordHole, totals } from '../src/scoring.js';
 import { COURSE, coursePar } from '../src/course.js';
 import { buildHole } from '../src/terrain.js';
@@ -9,7 +10,10 @@ import { SURF, BALL_R, CLUB_LENGTH } from '../src/constants.js';
 
 const hole1 = buildHole(COURSE.holes[0], { pinIndex: 0, seed: 1 });
 const hole2 = buildHole(COURSE.holes[1], { pinIndex: 0, seed: 1 });
+const hole3 = buildHole(COURSE.holes[2], { pinIndex: 0, seed: 1 });
 const hole8 = buildHole(COURSE.holes[7], { pinIndex: 0, seed: 1 });
+// Hole 8's water is red on the course; a yellow copy exercises back-on-the-line relief.
+const hole8y = buildHole({ ...COURSE.holes[7], water: COURSE.holes[7].water.map((w) => ({ ...w, kind: 'yellow' })) }, { pinIndex: 0, seed: 1 });
 
 const centroid = (poly) => ({ x: poly.reduce((a, p) => a + p.x, 0) / poly.length, y: poly.reduce((a, p) => a + p.y, 0) / poly.length });
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -74,7 +78,7 @@ test('red water: drop within two club lengths of the entry, dry, not nearer the 
     const entry = edge(hole2, from, c);
     const drop = waterRelief(hole2, entry, 'red');
     assert.ok(drop, 'relief found');
-    assert.ok(d2(drop, entry) <= RELIEF_R + 1e-9, `${d2(drop, entry)} m from the entry`);
+    assertRedDrop(hole2, entry, drop);
     assert.ok(isDropOk(hole2, drop.x, drop.y));
     assert.notEqual(hole2.surfaceAt(drop.x, drop.y), SURF.WATER);
     assert.ok(d2(drop, hole2.cup) >= d2(entry, hole2.cup) - 1e-9, 'not nearer the hole');
@@ -92,22 +96,59 @@ test('red water: drop within two club lengths of the entry, dry, not nearer the 
   assert.deepEqual(r.decision.replay, prev);
   assert.equal(r.decision.replayTee, true);
   assert.deepEqual(r.ball, r.decision.drop);
-  assert.ok(d2(r.ball, entry) <= RELIEF_R + 1e-9);
+  assertRedDrop(hole2, entry, r.ball);
+  assert.equal(r.decision.relief, d2(r.ball, entry) <= RELIEF_R + 1e-6 ? 'lateral' : 'line');
+});
+
+// A red drop is within two club lengths of the entry, or (when that is all steep bank) back on
+// the line from the hole through the entry, never more than 30 m; either way the ball stays put.
+function assertRedDrop(t, entry, drop) {
+  const de = d2(drop, entry);
+  if (de > RELIEF_R + 1e-9) {
+    const ux = (entry.x - t.cup.x) / d2(entry, t.cup);
+    const uy = (entry.y - t.cup.y) / d2(entry, t.cup);
+    const across = (drop.x - entry.x) * uy - (drop.y - entry.y) * ux;
+    assert.ok(Math.abs(across) < 1e-6 && de <= 30 + 1e-9, `${de} m from the entry, ${across} m off the line`);
+  }
+  assert.ok(holdsBall(t, drop.x, drop.y), 'the drop holds a ball');
+  const r = simulateShot(t, { pos: drop, vel: { x: 0, y: 0, z: 0 }, spin: { x: 0, y: 0, z: 0 }, mode: 'roll' }, { record: false, maxT: 5 });
+  assert.equal(r.final.outcome, 'rest');
+  assert.ok(r.total < 0.31, `released at the drop it rolls ${r.total} m`);
+}
+
+test('red water: drops on the steep pond and creek banks stay put (holes 2, 3, 8)', () => {
+  assert.equal(hole8.waters[0].kind, 'red', 'water alongside the hole is red');
+  for (const t of [hole2, hole3, hole8]) {
+    for (const w of t.waters) {
+      const c = centroid(w.poly);
+      for (let i = 0; i < w.poly.length; i += 2) {
+        const p = w.poly[i];
+        // From well outside the polygon vertex toward the centroid: the edge crossing.
+        const out = { x: p.x + (p.x - c.x) * 0.5, y: p.y + (p.y - c.y) * 0.5 };
+        if (t.surfaceAt(out.x, out.y) === SURF.WATER || t.surfaceAt(c.x, c.y) !== SURF.WATER) continue;
+        const entry = edge(t, out, c);
+        const drop = waterRelief(t, entry, 'red');
+        assert.ok(drop && isDropOk(t, drop.x, drop.y));
+        assert.ok(d2(drop, t.cup) >= d2(entry, t.cup) - 1e-9, 'not nearer the hole');
+        assertRedDrop(t, entry, drop);
+      }
+    }
+  }
 });
 
 test('yellow water: back on the line from the hole through the entry, 2 m or more behind it', () => {
-  const water = hole8.waters[0];
+  const water = hole8y.waters[0];
   assert.equal(water.kind, 'yellow');
   const c = centroid(water.poly);
-  assert.equal(hole8.surfaceAt(c.x, c.y), SURF.WATER);
-  const s = hole8.path.project(c.x, c.y).s;
-  const fair = hole8.path.pointAt(s);
-  for (const from of [fair, hole8.path.pointAt(s - 60), hole8.tee]) {
-    const entry = edge(hole8, from, c);
-    const drop = waterRelief(hole8, entry, 'yellow');
+  assert.equal(hole8y.surfaceAt(c.x, c.y), SURF.WATER);
+  const s = hole8y.path.project(c.x, c.y).s;
+  const fair = hole8y.path.pointAt(s);
+  for (const from of [fair, hole8y.path.pointAt(s - 60), hole8y.tee]) {
+    const entry = edge(hole8y, from, c);
+    const drop = waterRelief(hole8y, entry, 'yellow');
     assert.ok(drop);
-    const ux = entry.x - hole8.cup.x;
-    const uy = entry.y - hole8.cup.y;
+    const ux = entry.x - hole8y.cup.x;
+    const uy = entry.y - hole8y.cup.y;
     const l = Math.hypot(ux, uy);
     const vx = drop.x - entry.x;
     const vy = drop.y - entry.y;
@@ -115,11 +156,11 @@ test('yellow water: back on the line from the hole through the entry, 2 m or mor
     const across = (vx * uy - vy * ux) / l;
     assert.ok(Math.abs(across) < 1e-6, `on the line (${across})`);
     assert.ok(along >= 2 - 1e-9, `behind the entry by ${along} m`);
-    assert.ok(isDropOk(hole8, drop.x, drop.y));
-    assert.ok(d2(drop, hole8.cup) > d2(entry, hole8.cup));
+    assert.ok(isDropOk(hole8y, drop.x, drop.y));
+    assert.ok(d2(drop, hole8y.cup) > d2(entry, hole8y.cup));
   }
-  const entry = edge(hole8, fair, c);
-  const r = resolveShot(ctxFor(hole8, { strokes: 1, fromTee: false, fromSurface: SURF.FAIRWAY, prevSpot: { ...fair, z: 0 } }), shotAt('water', c, SURF.WATER, { waterEntry: entry }));
+  const entry = edge(hole8y, fair, c);
+  const r = resolveShot(ctxFor(hole8y, { strokes: 1, fromTee: false, fromSurface: SURF.FAIRWAY, prevSpot: { ...fair, z: 0 } }), shotAt('water', c, SURF.WATER, { waterEntry: entry }));
   assert.equal(r.decision.waterKind, 'yellow');
   assert.equal(r.strokes, 3);
   assert.equal(r.decision.replayTee, false);

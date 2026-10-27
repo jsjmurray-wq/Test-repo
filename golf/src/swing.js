@@ -10,7 +10,7 @@
 // PUTT_POWER_FRAC x padRefH, capped at MAX_POWER).
 //
 // SwingResult = {ok, reason?:'cancel'|'tooSlow'|'short', kind, power, overswing, startDir,
-//                faceToPath, face, path, tempo:'smooth'|'rushed'|'decel', label}
+//                faceToPath, face, path, tempo:'smooth'|'rushed'|'decel', tempoErr, label}
 //   startDir, faceToPath, face, path are degrees, + = RIGHT of the aim line (screen right is
 //   the golfer's right: the camera looks down the aim line). faceToPath > 0 curves the ball
 //   right (a fade or slice for a right-hander).
@@ -26,13 +26,19 @@
 //      the bend of the upswing (heading of the last 40% of its length minus that of the first
 //      60%) sets the face-to-path, i.e. the curve. Gains and dead zones depend on difficulty;
 //      left-handed play flips the sign of the bend.
-//   4. Tempo: the downswing (bottom to strike) ideally takes 0.10 + 0.15 x power s. Under half of
-//      that is 'rushed' (extra face scatter); over twice is 'decel' (ball speed x 0.92).
+//   4. Tempo: the downswing (from the moment the finger starts up out of the bottom to the strike)
+//      ideally takes 0.10 + 0.15 x power s, and any brisk flick (up to ~2400 px/s at full power)
+//      is fine. Under RUSHED_FRAC of the ideal is 'rushed': extra face scatter growing from half
+//      to all of RUSHED_FACE the quicker it is (tempoErr 0..1). Over twice the ideal is 'decel'
+//      (ball speed x 0.92). A still pause at the bottom fires no touch events, so the move's start
+//      is extrapolated back from the first samples that leave the bottom.
 //
 // Putt gesture: drag down to set the pace (power = depth / (0.30 padRefH) maps to a flat-roll
-// distance power x puttRange), then release or flick up. Coming back slowly to the start line
-// cancels. The sideways drift of the last 150 ms (x 0.08 deg/px on Normal, scaled like G_s on
-// Easy/Pro and with a dzA px dead zone, clamped to +-3 deg) pushes or pulls the putt.
+// distance power x puttRange), then release, or flick up through the start line. Sliding back to
+// within 25% of the depth of the start line (and no further), or sliding far sideways, cancels at
+// any speed: that is how a player changes their mind. Presses under PUTT_MIN_DEPTH_PX are slips.
+// The sideways drift of the last 150 ms (x 0.08 deg/px on Normal, scaled like G_s on Easy/Pro and
+// with a dzA px dead zone, clamped to +-3 deg) pushes or pulls the putt.
 
 import { BALL_R, SURF, SURFACES } from './constants.js';
 import { clamp, DEG } from './vec3.js';
@@ -61,13 +67,18 @@ const BOTTOM_TOL_PX = 3; // jitter allowed while the finger rests at the bottom
 const PUTT_DRIFT_MS = 150;
 const PUTT_DRIFT_GAIN = 0.08; // deg per px of sideways drift
 const PUTT_MAX_DIR = 3; // deg
-const PUTT_CANCEL_FRAC = 0.25; // a putt brought back within 25% of its depth, slowly, cancels
+const PUTT_CANCEL_FRAC = 0.25; // a putt brought back within 25% of its depth of the line cancels
+const PUTT_THROUGH_PX = 12; // ...unless it flicks this far through the line (a flick stroke)
+const PUTT_SIDE_CANCEL_PX = 60; // a putt dragged this far sideways is abandoned, not struck
+export const PUTT_MIN_DEPTH_PX = 20; // shallower putt presses are slips, not strokes
+export const RUSHED_FRAC = 0.18; // downswing under this fraction of the ideal is rushed
+export const DECEL_FRAC = 2; // ...over this multiple is decelerating
 
 // Random contact (deg, fraction): the scatter of a good amateur's strike. Overswing doubles it.
 export const SIGMA_DIR = 0.6; // start direction, plus the lie's sdir
 export const SIGMA_FACE = 0.4; // face (curve) scatter of a normal swing
 export const SIGMA_SPEED = 0.015;
-export const RUSHED_FACE = 1.5; // extra face sigma for a rushed tempo
+export const RUSHED_FACE = 0.6; // extra face sigma (max) for a rushed tempo
 export const DECEL_SPEED = 0.92;
 export const PUTT_SIGMA_SPEED = 0.01;
 export const PUTT_SIGMA_DIR = 0.3;
@@ -142,6 +153,7 @@ function failed(kind, reason, power) {
     face: 0,
     path: 0,
     tempo: 'smooth',
+    tempoErr: 0,
     label: labels[reason],
   };
 }
@@ -158,7 +170,7 @@ export function interpretSwing(samples, opts = {}) {
   const depth = maxY - y0;
   const frac = kind === 'putt' ? PUTT_POWER_FRAC : FULL_POWER_FRAC;
   const power = clamp(depth / (frac * H), 0, MAX_POWER);
-  if (depth < MIN_DEPTH_PX) return failed(kind, 'short', power);
+  if (depth < (kind === 'putt' ? PUTT_MIN_DEPTH_PX : MIN_DEPTH_PX)) return failed(kind, 'short', power);
   return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, power, diff, opts);
 }
 
@@ -206,10 +218,11 @@ function interpretFull(S, y0, power, diff, opts) {
   }
   if (vStrike < STRIKE_SPEED) return failed('full', 'tooSlow', power);
 
-  // Tempo of the downswing.
-  const T = Math.max(0, tc - bottom.t) / 1000;
+  // Tempo of the downswing, from when the finger starts up out of the bottom.
+  const T = Math.max(0, tc - moveStart(S, b, tc, y0)) / 1000;
   const ideal = 0.1 + 0.15 * power;
-  const tempo = T < 0.5 * ideal ? 'rushed' : T > 2 * ideal ? 'decel' : 'smooth';
+  const tempoErr = T < RUSHED_FRAC * ideal ? 1 - T / (RUSHED_FRAC * ideal) : 0;
+  const tempo = tempoErr > 0 ? 'rushed' : T > DECEL_FRAC * ideal ? 'decel' : 'smooth';
 
   // Direction: chord from the bottom of the backswing to the release point.
   const end = S[n - 1];
@@ -256,6 +269,7 @@ function interpretFull(S, y0, power, diff, opts) {
     face: path + faceToPath,
     path,
     tempo,
+    tempoErr,
     label,
     alpha,
     kappa,
@@ -263,18 +277,31 @@ function interpretFull(S, y0, power, diff, opts) {
   };
 }
 
+// Time (ms) the finger started up out of the bottom sample b, the strike being at (tc, y0). The
+// first sample clearly above the bottom is traced back at the mean speed of the rest of the
+// upswing, so a motionless pause (no events) or a coarse first sample does not count.
+function moveStart(S, b, tc, y0) {
+  const n = S.length;
+  let u = b + 1;
+  while (u < n && S[b].y - S[u].y <= BOTTOM_TOL_PX) u++;
+  if (u >= n) return S[b].t;
+  const q = S[u];
+  const rest = q.y - y0;
+  const dtRest = tc - q.t;
+  const v = rest > 1 && dtRest > 1 ? rest / dtRest : (S[b].y - q.y) / Math.max(1, q.t - S[b].t);
+  return Math.max(S[b].t, q.t - (S[b].y - q.y) / Math.max(v, 1e-3));
+}
+
 function interpretPutt(S, y0, depth, power, diff, opts) {
   const n = S.length;
   const end = S[n - 1];
-  // A slow return to (near) the start line is a change of mind; a release anywhere else, or a
-  // flick up, strokes the putt.
+  // Sliding back to (near) the start line, at any speed, or far off sideways is a change of mind;
+  // a release anywhere else, or a flick on through the line, strokes the putt.
   let iMax = 0;
   for (let i = 1; i < n; i++) if (S[i].y > S[iMax].y) iMax = i;
   const back = end.y - y0;
-  if (back <= PUTT_CANCEL_FRAC * depth) {
-    const v = upSpeed(S, S[iMax].t, end.t, end.y);
-    if (v < STRIKE_SPEED) return failed('putt', 'cancel', power);
-  }
+  if (back <= PUTT_CANCEL_FRAC * depth && back >= -PUTT_THROUGH_PX) return failed('putt', 'cancel', power);
+  if (Math.abs(end.x - S[iMax].x) > PUTT_SIDE_CANCEL_PX) return failed('putt', 'cancel', power);
   // Sideways drift over the last 150 ms pushes (right) or pulls (left) the putt. Easier settings
   // damp it and ignore a few px of wobble (same ratio as the full-swing gains).
   const from = sampleAt(S, end.t - PUTT_DRIFT_MS);
@@ -294,8 +321,23 @@ function interpretPutt(S, y0, depth, power, diff, opts) {
     face: startDir,
     path: startDir,
     tempo: 'smooth',
+    tempoErr: 0,
     label,
   };
+}
+
+// Launch and spin of a shorter, softer swing. A pitch is played with the face open and little
+// shaft lean, so it launches higher than the full shot (up to PARTIAL_LAUNCH deg more for wedges,
+// a little for irons), and its spin falls more slowly than its ball speed (a 40 yd sand-wedge
+// pitch still has ~6000 rpm): it lands at 40-50 deg and stops within a few yards.
+export const PARTIAL_LAUNCH = { wedge: 8, iron: 2 };
+export function partialSwing(club, power, speedFactor = 0.15 + 0.85 * power) {
+  const short = 1 - Math.min(1, Math.max(0, power));
+  const sf = Math.max(0, speedFactor);
+  if (club.kind === 'wedge') {
+    return { launchDeg: club.launch + PARTIAL_LAUNCH.wedge * short, spinRpm: club.spinRpm * Math.pow(sf, 0.5) * (1 - 0.2 * short) };
+  }
+  return { launchDeg: club.launch + (club.kind === 'iron' ? PARTIAL_LAUNCH.iron * short : 0), spinRpm: club.spinRpm * sf };
 }
 
 // Builds the Launch for a swing. rng (a mulberry32 function) adds the random contact; pass null for
@@ -330,7 +372,7 @@ export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const disp = over ? 2 : 1;
   const k = dPlane(c, 1, 0).startDirDeg; // start = path + k x (face - path)
   const sDir = SIGMA_DIR * disp + (lie ? lie.factors.sdir : 0);
-  const sFace = SIGMA_FACE * disp + (swing.tempo === 'rushed' ? RUSHED_FACE : 0);
+  const sFace = SIGMA_FACE * disp + (swing.tempo === 'rushed' ? RUSHED_FACE * (0.5 + 0.5 * clamp(swing.tempoErr ?? 1, 0, 1)) : 0);
   const sSpeed = SIGMA_SPEED * disp;
   const nDir = g();
   const nFace = g();
@@ -341,13 +383,7 @@ export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const faceToPath = (swing.faceToPath || 0) + faceErr;
   const startDir = (swing.startDir || 0) + nDir * sDir + k * faceErr;
   const speedFactor = (0.15 + 0.85 * power) * Math.max(0.5, 1 + nSpeed * sSpeed) * (swing.tempo === 'decel' ? DECEL_SPEED : 1);
-  // Partial wedges are hit with a shorter, softer swing: less spin than the speed alone implies.
-  const partial = c.kind === 'wedge' ? 0.7 + 0.3 * Math.min(1, power) : 1;
-  const p = applyLie(
-    { ballSpeed: c.ballSpeed * speedFactor, launchDeg: c.launch, spinRpm: c.spinRpm * speedFactor * partial, startDirDeg: startDir },
-    lie,
-    c,
-  );
+  const p = applyLie({ ballSpeed: c.ballSpeed * speedFactor, ...partialSwing(c, power, speedFactor), startDirDeg: startDir }, lie, c);
   const pathDeg = p.startDirDeg - k * faceToPath;
   const faceDeg = pathDeg + faceToPath;
   const d = dPlane(c, faceDeg, pathDeg);

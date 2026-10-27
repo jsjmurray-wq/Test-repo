@@ -103,13 +103,17 @@ test('slope maths on a plane: launch +0.6 x angle, uphill speed loss, sidehill d
 
 test('applyLie: lie factors, woods from rough and sand, greenside explosion, putter untouched', () => {
   const rough = lieAt(planeTerrain({ surface: SURF.ROUGH }), { x: 0, y: 0 }, 0);
-  const iron = applyLie(params, rough, clubById('7i'));
+  const iron = applyLie(params, rough, clubById('8i'));
   const R = SURFACES[SURF.ROUGH].lie;
   assert.ok(close(iron.ballSpeed, 50 * R.speed));
-  assert.ok(close(iron.spinRpm, 6000 * R.spin));
+  assert.ok(close(iron.spinRpm, 6000 * R.spin), 'full flier spin cut from 8-iron up');
   assert.ok(close(iron.launchDeg, 15 + R.launch));
   const wood = applyLie(params, rough, clubById('3W'));
-  assert.ok(close(wood.ballSpeed, 50 * R.speed * 0.85), 'woods from rough lose 15% more');
+  assert.ok(close(wood.ballSpeed, 50 * 0.85), 'woods from rough: ball speed x 0.85 in all');
+  assert.ok(close(wood.spinRpm, 6000 * (1 - (1 - R.spin) * 0.45)), 'woods keep most of their (low) spin');
+  // The spin cut grows with loft: 3W keeps the most, then 4H, 5i, 7i.
+  const spins = ['3W', '4H', '5i', '7i', '8i'].map((id) => applyLie(params, rough, clubById(id)).spinRpm);
+  for (let i = 1; i < spins.length; i++) assert.ok(spins[i] <= spins[i - 1] + 1e-9, spins.join(' '));
 
   const sandTerrain = planeTerrain({ surface: SURF.BUNKER });
   const sand = lieAt(sandTerrain, { x: 0, y: 0 }, 0); // no green: a fairway bunker

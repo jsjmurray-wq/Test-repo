@@ -612,13 +612,14 @@ function onDecision(d) {
   const g = app.game;
   if (AUTOPLAY) return; // the bot decides in tickBot
   const yellow = d.waterKind === 'yellow';
+  const lateral = d.relief === 'lateral';
   app.ui
     .showDecision({
       kicker: 'Penalty · 1 stroke',
       title: yellow ? 'In the water' : 'In the penalty area',
       text: 'Take a drop, or replay from where you last played.',
       options: [
-        { id: 'drop', label: 'Drop', detail: yellow ? '+1 · back on the line from the hole' : '+1 · within two club lengths of where it crossed' },
+        { id: 'drop', label: 'Drop', detail: lateral ? '+1 · within two club lengths of where it crossed' : '+1 · back on the line from the hole, on level ground' },
         { id: 'replay', label: d.replayTee ? 'Re-tee' : 'Replay', detail: d.replayTee ? '+1 · play again from the tee' : '+1 · from where you last played' },
       ],
     })

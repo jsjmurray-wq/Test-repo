@@ -25,13 +25,18 @@
 //   clamped to +-4 deg.
 // * Bunker: woods can't be swept off sand (speed x 0.5). A greenside wedge plays an explosion
 //   shot: the club enters the sand behind the ball, so speed x 0.6, spin x 0.5 and launch +6 deg
-//   replace the generic bunker factors. Woods from rough lose another 15% (grass between club and
-//   ball, and the shallow face can't get under it).
+//   replace the generic bunker factors.
+// * Rough: grass between the face and the ball cuts the spin (a "flier"), most for the lofted
+//   clubs whose spin comes from a clean strike: the full rough spin factor for 8-iron and up,
+//   rising to about x0.8 for woods, which have little spin to lose. Woods sweep the ball but the
+//   shallow face can't get under it: their ball speed totals x0.85 in rough (slope terms apply).
 
 import { SURF, SURF_NAMES, SURFACES } from './constants.js';
 import { clamp, DEG } from './vec3.js';
 
 export const EXPLOSION_RANGE = 40; // m from the green edge for a greenside explosion shot
+export const WOOD_ROUGH_SPEED = 0.85; // total ball-speed factor of a wood from the rough
+const ROUGH_SPIN_LOFT = [10, 35]; // deg: the rough's spin cut scales from 45% to 100% over these lofts
 const LABEL_SLOPE = 0.05; // 5% before a slope is worth naming in the lie chip
 
 // Distance (m) from (x, y) to the edge of the green ellipse {cx, cy, rx, ry, rot}, 0 inside.
@@ -114,8 +119,12 @@ export function applyLie(params, lie, club) {
     } else if (kind === 'wood') {
       speed *= 0.5;
     }
-  } else if (lie.surface === SURF.ROUGH && kind === 'wood') {
-    speed *= 0.85;
+  } else if (lie.surface === SURF.ROUGH) {
+    const base = SURFACES[SURF.ROUGH].lie;
+    const loft = club ? club.loft : 34;
+    const cut = clamp((loft - ROUGH_SPIN_LOFT[0]) / (ROUGH_SPIN_LOFT[1] - ROUGH_SPIN_LOFT[0]), 0.45, 1);
+    spin = (spin / base.spin) * (1 - (1 - base.spin) * cut);
+    if (kind === 'wood') speed *= WOOD_ROUGH_SPEED / base.speed;
   }
   out.ballSpeed = (params.ballSpeed || 0) * speed;
   out.spinRpm = (params.spinRpm || 0) * spin;

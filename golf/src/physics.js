@@ -44,6 +44,9 @@ const T_FALL = Math.sqrt((2 * R) / G); // time to fall one ball radius into the 
 const CUP_DEPTH = 0.1016;
 const SLIP_EPS = 0.01; // m/s contact slip below which the ball rolls
 const REST_V = 0.01; // m/s
+const STALL_V = 0.03; // m/s: below this a ball may be creeping, see the stall test
+const STALL_T = 0.5; // s
+const STALL_D = 0.015; // m moved over STALL_T below which a creeping ball counts as stopped
 const LAND_VN = 0.5; // m/s outgoing normal speed below which a bounce becomes ground contact
 const CREST_EPS = 2e-5; // m the free-fall path must clear the ground by to take off from a crest
 const TRUNK_E = 0.4;
@@ -337,9 +340,12 @@ export function cupCheck(p0, p1, v, cup) {
 
 // Geometry of the ball centre moving p0 -> p1 against one tree. tree = {x, y, z, trunkR, trunkH,
 // canopy:{cz, rx, rz}}; z is the ground at the trunk and canopy.cz is the ABSOLUTE world z of the
-// canopy centre (the HoleTerrain convention, also used by the renderer). Returns null, {kind:'trunk', tau, nx, ny} (tau = segment fraction at contact,
-// n = outward horizontal normal) or {kind:'canopy', len} (p1 inside the canopy; len = chord length
-// of the line through the ellipsoid along the direction of travel).
+// canopy centre (the HoleTerrain convention, also used by the renderer). Returns null,
+// {kind:'trunk', tau, nx, ny, rr, inside} (tau = segment fraction at contact, n = outward
+// horizontal normal, rr = trunk radius + R; inside: p0 already overlapped the trunk),
+// {kind:'cap', tau, nx, ny, rr, top} (the ball dropped onto the top of the trunk, where the
+// branches fork) or {kind:'canopy', len} (p1 inside the canopy; len = chord length of the line
+// through the ellipsoid along the direction of travel).
 export function treeHit(tree, p0, p1) {
   const base = tree.z || 0;
   // Trunk: swept circle of radius trunkR + R in the horizontal plane.
@@ -351,6 +357,21 @@ export function treeHit(tree, p0, p1) {
   const a = dx * dx + dy * dy;
   const c0 = fx * fx + fy * fy - rr * rr;
   if (rr > R) {
+    const top = base + (tree.trunkH || 0);
+    // Cap: the segment falls through the top of the trunk inside its radius.
+    if (p0.z > top && p1.z <= top) {
+      const tt = (p0.z - top) / (p0.z - p1.z);
+      const hx = fx + dx * tt;
+      const hy = fy + dy * tt;
+      if (hx * hx + hy * hy <= rr * rr) {
+        const hl = Math.hypot(hx, hy);
+        const ml = Math.sqrt(a);
+        // Outward from the axis; dead centre: the way the ball was travelling.
+        const nx = hl > 1e-6 ? hx / hl : ml > 1e-9 ? dx / ml : 1;
+        const ny = hl > 1e-6 ? hy / hl : ml > 1e-9 ? dy / ml : 0;
+        return { kind: 'cap', tau: tt, nx, ny, rr, top };
+      }
+    }
     let tau = -1;
     if (c0 <= 0) tau = 0;
     else if (a > 0) {
@@ -363,11 +384,11 @@ export function treeHit(tree, p0, p1) {
     }
     if (tau >= 0) {
       const z = p0.z + (p1.z - p0.z) * tau;
-      if (z >= base - R && z <= base + (tree.trunkH || 0)) {
+      if (z >= base - R && z <= top) {
         const hx = fx + dx * tau;
         const hy = fy + dy * tau;
         const hl = Math.hypot(hx, hy) || 1;
-        return { kind: 'trunk', tau, nx: hx / hl, ny: hy / hl };
+        return { kind: 'trunk', tau, nx: hx / hl, ny: hy / hl, rr, inside: c0 <= 0 };
       }
     }
   }
@@ -627,15 +648,51 @@ export function simulateShot(terrain, launch, opts = {}) {
         canopyInside.delete(tr);
         continue;
       }
+      if (hit.kind === 'cap') {
+        // Dropped onto the top of the trunk, where the limbs fork: it glances off outward with a
+        // small hop, losing most of its speed (no ball may perch on the trunk).
+        const sp = speed();
+        p.x = tr.x + hit.nx * (hit.rr + 1e-3);
+        p.y = tr.y + hit.ny * (hit.rr + 1e-3);
+        p.z = hit.top + R;
+        const out = 0.3 * sp;
+        v.x = 0.3 * v.x + out * hit.nx;
+        v.y = 0.3 * v.y + out * hit.ny;
+        v.z = Math.max(0, -v.z) * 0.15;
+        w.x *= 0.5;
+        w.y *= 0.5;
+        w.z *= 0.5;
+        emit('tree', gs);
+        changed = true;
+        continue;
+      }
       if (hit.kind === 'trunk') {
-        // Hard cylinder: move to the contact point and reflect the radial velocity.
-        p.x = p0.x + (p.x - p0.x) * hit.tau + hit.nx * 1e-3;
-        p.y = p0.y + (p.y - p0.y) * hit.tau + hit.ny * 1e-3;
-        p.z = p0.z + (p.z - p0.z) * hit.tau;
-        const vn = v.x * hit.nx + v.y * hit.ny;
+        let nx = hit.nx;
+        let ny = hit.ny;
+        if (hit.inside) {
+          // Already overlapping the trunk at the start of the step: push it out radially and keep
+          // this step's motion (resetting to p0 would pin it there while gravity builds up).
+          const ox = p.x - tr.x;
+          const oy = p.y - tr.y;
+          const ol = Math.hypot(ox, oy);
+          if (ol > 1e-6) {
+            nx = ox / ol;
+            ny = oy / ol;
+          }
+          if (ol < hit.rr) {
+            p.x = tr.x + nx * (hit.rr + 1e-3);
+            p.y = tr.y + ny * (hit.rr + 1e-3);
+          }
+        } else {
+          // Hard cylinder: move to the contact point and reflect the radial velocity.
+          p.x = p0.x + (p.x - p0.x) * hit.tau + nx * 1e-3;
+          p.y = p0.y + (p.y - p0.y) * hit.tau + ny * 1e-3;
+          p.z = p0.z + (p.z - p0.z) * hit.tau;
+        }
+        const vn = v.x * nx + v.y * ny;
         if (vn < 0) {
-          v.x -= (1 + TRUNK_E) * vn * hit.nx;
-          v.y -= (1 + TRUNK_E) * vn * hit.ny;
+          v.x -= (1 + TRUNK_E) * vn * nx;
+          v.y -= (1 + TRUNK_E) * vn * ny;
           v.x *= 0.8;
           v.y *= 0.8;
           w.x *= 0.5;
@@ -756,6 +813,10 @@ export function simulateShot(terrain, launch, opts = {}) {
   };
 
   const grad = { x: 0, y: 0 };
+  let stallT = -1;
+  let stallX = 0;
+  let stallY = 0;
+  let stallV = 0;
 
   while (!outcome) {
     if (t >= maxT) {
@@ -767,6 +828,7 @@ export function simulateShot(terrain, launch, opts = {}) {
     p0.z = p.z;
     if (mode === 'air') {
       const gz0 = gz;
+      stallT = -1;
       save();
       flightStep(s, DT_AIR, wind, gz0);
       t += DT_AIR;
@@ -810,12 +872,31 @@ export function simulateShot(terrain, launch, opts = {}) {
     const skidding = rollStep(s, n, surf, DT_GROUND);
     const sp = speed();
     if (!skidding && sp < REST_V) {
+      // Static hold: the same downhill pull rollStep applies, (5/7) g sin(theta), against a0.
       const gr = terrain.gradAt(p.x, p.y, grad) || grad;
-      if ((5 / 7) * G * Math.hypot(gr.x, gr.y) < surf.a0 * 1.05) {
+      const tn = Math.hypot(gr.x, gr.y);
+      if ((5 / 7) * G * (tn / Math.sqrt(1 + tn * tn)) < surf.a0 * 1.05) {
         finishRest();
         break;
       }
     }
+    // Stall: where the pull only just beats the drag the ball can creep at a few mm/s for ever.
+    // A ball that has moved less than STALL_D over STALL_T without speeding up has, to the eye,
+    // stopped (one just starting to roll down a slope is speeding up and carries on).
+    if (!skidding && sp < STALL_V) {
+      if (stallT < 0) {
+        stallT = t;
+        stallX = p.x;
+        stallY = p.y;
+        stallV = sp;
+      } else if (t - stallT >= STALL_T) {
+        if (Math.hypot(p.x - stallX, p.y - stallY) < STALL_D && sp <= stallV * 1.05 + 1e-4) {
+          finishRest();
+          break;
+        }
+        stallT = -1;
+      }
+    } else stallT = -1;
     p.x += v.x * DT_GROUND;
     p.y += v.y * DT_GROUND;
     p.z += v.z * DT_GROUND;

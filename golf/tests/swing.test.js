@@ -2,7 +2,7 @@
 // traces shaped like the ones input.js records: [{t ms, x, y}] from pointerdown to pointerup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpretSwing, swingToLaunch, DIFFICULTY, STRIKE_SPEED, PUTT_RANGES } from '../src/swing.js';
+import { interpretSwing, swingToLaunch, DIFFICULTY, STRIKE_SPEED, PUTT_RANGES, PARTIAL_LAUNCH } from '../src/swing.js';
 import { FULL_POWER_FRAC, PUTT_POWER_FRAC, MAX_POWER } from '../src/input.js';
 import { clubById, dPlane } from '../src/clubs.js';
 import { simulateShot, planeTerrain, puttSpeedForDistance } from '../src/physics.js';
@@ -145,9 +145,23 @@ test('tempo: rushed, smooth and decelerating downswings', () => {
   const depth = FULL_POWER_FRAC * H;
   const smooth = full(trace({ depth, follow: 40, downMs: 300 }));
   assert.equal(smooth.tempo, 'smooth');
-  const rushed = full(trace({ depth, follow: 40, downMs: 60 }));
+  const rushed = full(trace({ depth, follow: 40, downMs: 35 }));
   assert.equal(rushed.tempo, 'rushed');
   assert.ok(rushed.label.includes('Rushed'));
+  assert.ok(rushed.tempoErr > 0 && rushed.tempoErr <= 1);
+  // Ordinary phone flicks (1000-2200 px/s through the whole upswing) are smooth, with or without
+  // a motionless pause at the bottom (which fires no touch events).
+  for (const speed of [1000, 1600, 2200]) {
+    for (const holdMs of [0, 60, 200]) {
+      const L = depth + 60;
+      const sw = full(trace({ depth, follow: 60, holdMs, downMs: (L / speed) * 1000 }));
+      assert.equal(sw.tempo, 'smooth', `${speed} px/s after a ${holdMs} ms pause: ${sw.downswingS} s`);
+    }
+  }
+  // A pause does not change the measured downswing.
+  const a = full(trace({ depth, follow: 60, downMs: 100 }));
+  const p = full(trace({ depth, follow: 60, downMs: 100, holdMs: 60 }));
+  assert.ok(Math.abs(a.downswingS - p.downswingS) < 0.012, `${a.downswingS} vs ${p.downswingS}`);
   // Creeping up 60 px at 100 px/s, then flicking through the line at 1000 px/s: a valid strike
   // after a 0.64 s downswing (over twice the ideal).
   const S = trace({ depth, release: 'bottom' });
@@ -200,10 +214,17 @@ test('putt: depth maps to power, release strokes it, drift pushes or pulls, slow
   assert.equal(pushed.label, 'Pushed putt');
   for (const p of drift) if (p.t > tEnd - 150) p.x -= (80 * (p.t - (tEnd - 150))) / 150;
   assert.equal(putt(drift).startDir, -3, 'clamped to 3 deg');
-  // Dragged back to the start slowly: cancelled. Tiny press: short.
-  const back = trace({ depth, downMs: 1500, follow: 0 });
-  assert.equal(putt(back).reason, 'cancel');
+  // Dragged back to the start, slowly or quickly: cancelled. Tiny press or a slip: short.
+  assert.equal(putt(trace({ depth, downMs: 1500, follow: 0 })).reason, 'cancel');
+  assert.equal(putt(trace({ depth, downMs: 120, follow: 0 })).reason, 'cancel', 'a quick undo cancels');
+  assert.equal(putt(trace({ depth, downMs: 120, follow: 5 })).reason, 'cancel', 'stopping just past the line cancels');
   assert.equal(putt([{ t: 0, x: 0, y: 0 }, { t: 50, x: 0, y: 4 }]).reason, 'short');
+  assert.equal(putt(trace({ depth: 12, release: 'bottom', holdMs: 100 })).reason, 'short', 'a 12 px slip');
+  // Dragged far sideways off the line, then lifted: abandoned.
+  const side = trace({ depth, release: 'bottom', holdMs: 50 });
+  const sb = side[side.length - 1];
+  for (let k = 1; k <= 12; k++) side.push({ t: sb.t + k * 10, x: sb.x + 150 * (k / 12), y: sb.y });
+  assert.equal(putt(side).reason, 'cancel');
 });
 
 test('swingToLaunch putt: power x range is the flat roll-out', () => {
@@ -241,11 +262,34 @@ test('swingToLaunch full: speed factor, sign conventions and D-plane', () => {
   const straight = simulateShot(flat, swingToLaunch(c, null, sw(), Math.PI / 2, null), { record: false });
   const curved = simulateShot(flat, fade, { record: false });
   assert.ok(curved.landing.x > straight.landing.x + 3, `fade lands ${curved.landing.x} m right`);
-  // Partial wedges spin less than the speed alone implies.
+  // Partial wedges launch higher and keep more spin than the speed alone implies (pitches).
   const pw = clubById('PW');
   const p6 = swingToLaunch(pw, null, sw({ power: 0.6 }), 0, null);
   const speedRatio = 0.15 + 0.85 * 0.6;
-  assert.ok(Math.abs(p6.meta.spinRpm - pw.spinRpm * speedRatio * (0.7 + 0.3 * 0.6)) < 1e-6);
+  assert.ok(Math.abs(p6.meta.spinRpm - pw.spinRpm * Math.sqrt(speedRatio) * (1 - 0.2 * 0.4)) < 1e-6);
+  assert.ok(Math.abs(p6.meta.launchDeg - (pw.launch + PARTIAL_LAUNCH.wedge * 0.4)) < 1e-9);
+  assert.ok(p6.meta.spinRpm > pw.spinRpm * speedRatio);
+});
+
+test('pitches: 20-50 yd lob and sand wedge pitches land steeply and stop within a few yards', () => {
+  const green = planeTerrain({ surface: SURF.GREEN });
+  const sim = (id, power) => simulateShot(green, swingToLaunch(id, null, { ok: true, kind: 'full', power, startDir: 0, faceToPath: 0, tempo: 'smooth' }, 0, null), { record: false });
+  for (const id of ['LW', 'SW']) {
+    for (const yd of [25, 40, 55]) {
+      let lo = 0.05;
+      let hi = 1;
+      for (let i = 0; i < 25; i++) {
+        const m = (lo + hi) / 2;
+        if (sim(id, m).carry < yd * 0.9144) lo = m;
+        else hi = m;
+      }
+      const r = sim(id, (lo + hi) / 2);
+      const land = r.events.find((e) => e.type === 'land');
+      const roll = (r.total - r.carry) / 0.9144;
+      assert.ok(land.angle >= 38, `${id} ${yd} yd lands at ${land.angle}`);
+      assert.ok(roll > -1 && roll < 5.5, `${id} ${yd} yd releases ${roll} yd`);
+    }
+  }
 });
 
 test('swingToLaunch random contact: seeded, and overswing doubles the scatter', () => {

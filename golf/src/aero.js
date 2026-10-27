@@ -1,13 +1,19 @@
 // Golf ball aerodynamics. Pure module: no DOM, no clock, no Math.random.
 //
-// Model (Smits & Smith style, SI units, z up). The force on the ball depends on the air-relative
-// velocity u = v - W(z_agl) and the spin parameter S = R|w|/|u|:
+// Model (SI units, z up). The force on the ball depends on the air-relative velocity
+// u = v - W(z_agl) and the spin parameter S = R|w|/|u|:
 //
-//   C_D = 0.24 + 0.18 S            drag rises with spin (more wake turbulence)
-//   C_L = 0.54 S^0.4               Magnus lift, steep at low S, flattening at high S
+//   C_D = 0.186 + 0.545 S - 0.42 S^2 + 0.063 (50/|u| - 1)   drag rises with spin (wake), and a
+//                                     little at low speed (the dimples' drag crisis is behind us
+//                                     at driver speed, still fading at wedge speed)
+//   C_L = 1.15 S^0.766 / (1 + 1.55 S)  Magnus lift: weak at driver spin (S ~ 0.09), saturating
+//                                     at wedge spin (S ~ 0.5)
 //   a   = -g z  - k C_D |u| u  +  k C_L |u|^2 (w_hat x u_hat),   k = rho A / (2 m)
 //
-// S is clamped to [0, 0.6]; beyond that the fits are extrapolations and real balls plateau.
+// The coefficients were fitted to TrackMan's PGA Tour and LPGA averages (ball speed, launch and
+// spin in; carry, apex and descent angle out): irons and wedges land within ~2 deg and ~2 yd of
+// apex, the driver about 3 deg steep. S is clamped to [0, 0.6] and |u| to >= 15 m/s in the drag
+// term; beyond those the fits are extrapolations.
 //
 // Wind follows a neutral-atmosphere log profile anchored at 10 m:
 //   W(z) = W10 ln(max(z, 0.5) / z0) / ln(10 / z0)
@@ -21,14 +27,23 @@ export const S_MAX = 0.6;
 
 const LOG_REF = Math.log(WIND_REF_Z / WIND_Z0);
 
-export function dragCoeff(S) {
-  const s = S < 0 ? 0 : S > S_MAX ? S_MAX : S;
-  return 0.24 + 0.18 * s;
+export const U_REF = 50; // m/s: the speed at which the drag's speed term is zero
+// Fit coefficients (see the header).
+export const CD = { a: 0.186, b: 0.545, b2: -0.42, e: 0.063 };
+export const CL = { c: 1.15, p: 0.766, q: 1.55 };
+
+const clampS = (S) => (S < 0 ? 0 : S > S_MAX ? S_MAX : S);
+
+// Drag coefficient at spin parameter S and air speed u (m/s; default U_REF = no speed term).
+export function dragCoeff(S, u = U_REF) {
+  const s = clampS(S);
+  const uu = u > 15 ? u : 15;
+  return CD.a + CD.b * s + CD.b2 * s * s + CD.e * (U_REF / uu - 1);
 }
 
 export function liftCoeff(S) {
-  const s = S < 0 ? 0 : S > S_MAX ? S_MAX : S;
-  return s > 0 ? 0.54 * Math.pow(s, 0.4) : 0;
+  const s = clampS(S);
+  return s > 0 ? (CL.c * Math.pow(s, CL.p)) / (1 + CL.q * s) : 0;
 }
 
 // Scale factor of the log wind profile at height zAgl above ground (1 at 10 m).
@@ -62,7 +77,7 @@ export function flightAccel(state, wind, out = { x: 0, y: 0, z: 0 }) {
   if (u < 1e-9) return out;
   const wm = Math.sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
   const S = (BALL_R * wm) / u;
-  const drag = AERO_K * dragCoeff(S) * u;
+  const drag = AERO_K * dragCoeff(S, u) * u;
   out.x -= drag * ux;
   out.y -= drag * uy;
   out.z -= drag * uz;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { Game, HOLED_HOLD, END_HOLD, windFor, pathAt } from '../src/game.js';
 import { COURSE } from '../src/course.js';
 import { buildHole } from '../src/terrain.js';
-import { clubTable, suggestClub, playsLike, puttRange } from '../src/caddie.js';
+import { clubTable, suggestClub, playsLike, puttRange, expectedFinish } from '../src/caddie.js';
 import { lieAt } from '../src/lie.js';
 import { SURF, BALL_R } from '../src/constants.js';
 import { planeTerrain } from '../src/physics.js';
@@ -215,7 +215,10 @@ test('water: decision phase, drop or replay, one penalty stroke either way', () 
   assert.ok(g3.decide('drop'));
   const b = g3.ballPos();
   assert.ok(Math.hypot(b.x - g3.state.hole.ball.x, b.y - g3.state.hole.ball.y) < 1e-12);
-  assert.ok(Math.hypot(b.x - d.entry.x, b.y - d.entry.y) <= 2.28 + 1e-9);
+  // Lateral relief within two club lengths, or back on the line to level ground when the whole
+  // relief area is steep bank.
+  const de = Math.hypot(b.x - d.entry.x, b.y - d.entry.y);
+  assert.ok(d.relief === 'lateral' ? de <= 2.28 + 1e-9 : de <= 30 + 1e-9, `${d.relief} drop ${de} m from the entry`);
   assert.notEqual(g3.lie.surface, SURF.WATER);
   assert.equal(g3.state.hole.onTee, false);
   assert.equal(g3.decide('drop'), false, 'only once');
@@ -323,17 +326,29 @@ test('caddie: club table, suggestions, plays-like and putt range', () => {
   assert.equal(suggestClub(t, tee, lie, { x: 0, y: 0 }, { table, par: 4, teeShot: true }), 'D');
   const onGreen = lieAt(t, t.cup, 0);
   assert.equal(suggestClub(t, t.cup, onGreen, { x: 0, y: 0 }), 'P');
-  // Approach: the shortest club that carries the plays-like distance.
-  const p = t.path.pointAt(t.lengthM - 130);
-  const al = lieAt(t, p, Math.atan2(t.cup.y - p.y, t.cup.x - p.x));
-  const at = clubTable(t, p, al, { x: 0, y: 0 });
-  const id = suggestClub(t, p, al, { x: 0, y: 0 }, { table: at, par: 4, teeShot: false });
-  const pl = playsLike(t, p, t.cup, { x: 0, y: 0 }, at);
-  const row = at.find((r) => r.id === id);
-  const i = at.indexOf(row);
-  assert.ok(row.carry >= 0.98 * pl && (i === at.length - 1 || at[i + 1].carry < 0.98 * pl), `${id} for ${pl}`);
+  // Approach: the shortest club whose stock shot finishes (carry + most of the green release) at the
+  // plays-like distance, so it neither comes up short nor runs a club past.
+  for (const back of [100, 130, 150, 175]) {
+    const p = t.path.pointAt(t.lengthM - back);
+    const al = lieAt(t, p, Math.atan2(t.cup.y - p.y, t.cup.x - p.x));
+    const at = clubTable(t, p, al, { x: 0, y: 0 });
+    const id = suggestClub(t, p, al, { x: 0, y: 0 }, { table: at, par: 4, teeShot: false });
+    const pl = playsLike(t, p, t.cup, { x: 0, y: 0 }, at);
+    const row = at.find((r) => r.id === id);
+    const i = at.indexOf(row);
+    assert.ok(expectedFinish(row) >= 0.97 * pl && (i === at.length - 1 || expectedFinish(at[i + 1]) < 0.97 * pl), `${id} for ${pl}`);
+    assert.ok(expectedFinish(row) < pl + 15, `${id} finishes ${expectedFinish(row) - pl} m past`);
+  }
+  // From the rough no wood is picked when a hybrid or iron carries further.
+  const rp = { x: 0, y: 0 };
+  const roughT = planeTerrain({ surface: SURF.ROUGH, cup: { x: 160, y: 0, z: 0 } });
+  roughT.par = 4;
+  const rl = lieAt(roughT, rp, 0);
+  const rt = clubTable(roughT, rp, rl, { x: 0, y: 0 });
+  for (let k = 1; k < rt.length; k++) if (rt[k].carry >= rt[k - 1].carry) assert.notEqual(suggestClub(roughT, rp, rl, { x: 0, y: 0 }, { table: rt, teeShot: false }), rt[k - 1].id);
   // Plays-like: uphill plays longer, downhill shorter.
   const flatT = planeTerrain({});
+  const at = clubTable(flatT, { x: 0, y: 0 }, lieAt(flatT, { x: 0, y: 0 }, 0), { x: 0, y: 0 });
   const up = playsLike(flatT, { x: 0, y: 0 }, { x: 150, y: 0, z: 10 }, { x: 0, y: 0 }, at);
   const down = playsLike(flatT, { x: 0, y: 0 }, { x: 150, y: 0, z: -10 }, { x: 0, y: 0 }, at);
   assert.ok(up > 155 && down < 145, `${up} ${down}`);

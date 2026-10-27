@@ -248,7 +248,8 @@ export const COURSE = {
       bounds: { margin: 72 },
     },
 
-    // 8. Reachable par 5: water (yellow) all down the right of the second half, green tucked right.
+    // 8. Reachable par 5: water (red, lateral relief) all down the right of the second half, green
+    // tucked right. It runs alongside the hole, so yellow back-on-the-line relief would be unusable.
     {
       n: 8, par: 5, name: 'Temptation', si: 4,
       path: [[0, 0], [6, -150], [0, -288], [-22, -388], [-56, -438]],
@@ -265,7 +266,7 @@ export const COURSE = {
         pins: [[3, 5], [-4, -4], [1, 0]],
       },
       water: [{
-        kind: 'yellow', level: -1.0, bank: 6,
+        kind: 'red', level: -1.0, bank: 6,
         poly: [[228, 26], [290, 21], [350, 22], [405, 21], [430, 25], [455, 33], [470, 52], [445, 62], [390, 58], [320, 55], [250, 52], [222, 40]],
       }],
       bunkers: [

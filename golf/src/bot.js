@@ -33,13 +33,13 @@ import { DEG, clamp } from './vec3.js';
 // Execution error of the bot (on top of the game's random contact).
 // Putting error grows with length: a long putt is harder to read as well as to start on line.
 export const BOT_SKILL = {
-  dirSigma: 2.0, // deg, start direction
-  curveSigma: 1.5, // deg, face-to-path
-  powerSigma: 0.035, // fraction of power on a full swing
-  partialSigma: 0.06, // extra fraction of power on a short-game swing (power -> 0)
-  puttDirSigma: 0.8, // deg, plus puttDirPerM per metre of putt
+  dirSigma: 3.5, // deg, start direction
+  curveSigma: 2, // deg, face-to-path
+  powerSigma: 0.05, // fraction of power on a full swing
+  partialSigma: 0.1, // extra fraction of power on a short-game swing (power -> 0)
+  puttDirSigma: 1.4, // deg, plus puttDirPerM per metre of putt
   puttDirPerM: 0.15,
-  puttPaceSigma: 0.06, // fraction of the flat-roll distance, plus puttPacePerM per metre
+  puttPaceSigma: 0.1, // fraction of the flat-roll distance, plus puttPacePerM per metre
   puttPacePerM: 0.004,
 };
 
