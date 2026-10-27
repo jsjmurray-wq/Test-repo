@@ -336,8 +336,8 @@ export function cupCheck(p0, p1, v, cup) {
 // Trees
 
 // Geometry of the ball centre moving p0 -> p1 against one tree. tree = {x, y, z, trunkR, trunkH,
-// canopy:{cz, rx, rz}}; z is the ground at the trunk and canopy.cz is the canopy centre height
-// ABOVE that base. Returns null, {kind:'trunk', tau, nx, ny} (tau = segment fraction at contact,
+// canopy:{cz, rx, rz}}; z is the ground at the trunk and canopy.cz is the ABSOLUTE world z of the
+// canopy centre (the HoleTerrain convention, also used by the renderer). Returns null, {kind:'trunk', tau, nx, ny} (tau = segment fraction at contact,
 // n = outward horizontal normal) or {kind:'canopy', len} (p1 inside the canopy; len = chord length
 // of the line through the ellipsoid along the direction of travel).
 export function treeHit(tree, p0, p1) {
@@ -375,7 +375,7 @@ export function treeHit(tree, p0, p1) {
   if (cp && cp.rx > 0 && cp.rz > 0) {
     const qx = (p1.x - tree.x) / cp.rx;
     const qy = (p1.y - tree.y) / cp.rx;
-    const qz = (p1.z - (base + cp.cz)) / cp.rz;
+    const qz = (p1.z - cp.cz) / cp.rz;
     const c = qx * qx + qy * qy + qz * qz - 1;
     if (c < 0) {
       const dz = p1.z - p0.z;

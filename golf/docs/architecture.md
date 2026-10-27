@@ -210,8 +210,8 @@ simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, re
 - `waterEntry` is where the path last crossed into `SURF.WATER` (bisected on `surfaceAt`);
   `lastDry` is the last sampled ball position over dry ground. Over water the contact height is
   `max(heightAt, waterAt().level)`.
-- Tree `canopy.cz` is the canopy centre height **above the tree base `z`**. `treesNear` is queried
-  with r = 12 m. A canopy hit keeps 25–45% of the speed, re-aims within a 30° half-angle cone
+- Tree `canopy.cz` is the **absolute** world z of the canopy centre (the HoleTerrain convention
+  below; the renderer uses it too). `treesNear` is queried with r = 12 m. A canopy hit keeps 25–45% of the speed, re-aims within a 30° half-angle cone
   plus a downward bias, and keeps 30% of the spin.
 - `SURFACES` entries may have an optional `plough` (sand: 0.6), the fraction of the outgoing
   tangential speed and spin lost on impact, because the Coulomb cap (2/7 slip) alone lets a ball

@@ -1,0 +1,342 @@
+// Autoplay bot: a simulated "decent player" (about a 5 handicap) used by ?autoplay and the
+// playability tests. Pure module.
+//
+//   planShot(game, {rng}) -> {clubId, yaw, swing, puttRange?, target, expected}
+//   playBotShot(game, opts) -> game.swing() result (applies the plan: club, aim, putt range)
+//
+// How it thinks: every candidate shot is simulated with the real physics on the real hole, with
+// the wind, and scored by the expected number of strokes still needed from where it comes to rest
+// (a strokes-gained style table by surface and distance). Candidates:
+//   approach  a few clubs that can reach, at the cup and at the green centre; power is solved on
+//             flat ground first, then corrected (power and aim) against the real terrain until
+//             the intended ball stops at the target
+//   advance   tee shots on par 4/5 and lay-ups: full swings with several clubs over a fan of aim
+//             lines around the hole's aim point
+//   putt      reads the break by simulating: aim and pace are corrected from where the previous
+//             trial passed the cup until the putt drops (or gets as close as it can)
+// The best few are re-scored with seeded random misses (the bot's execution error plus the game's
+// contact scatter), so risky lines next to water or OB lose to safer ones.
+//
+// The chosen swing carries the bot's own seeded execution error (direction, curve, power), so it
+// plays like a good amateur, not a robot: the game then adds its usual contact scatter.
+
+import { SURF } from './constants.js';
+import { clubById, PUTTER_ID } from './clubs.js';
+import { simulateShot, planeTerrain } from './physics.js';
+import { mulberry32, gaussian } from './rng.js';
+import { swingToLaunch, PUTT_RANGES } from './swing.js';
+import { MAX_POWER } from './input.js';
+import { DEG, clamp } from './vec3.js';
+
+// Execution error of the bot (on top of the game's random contact).
+// Putting error grows with length: a long putt is harder to read as well as to start on line.
+export const BOT_SKILL = {
+  dirSigma: 2.0, // deg, start direction
+  curveSigma: 1.5, // deg, face-to-path
+  powerSigma: 0.035, // fraction of power on a full swing
+  partialSigma: 0.06, // extra fraction of power on a short-game swing (power -> 0)
+  puttDirSigma: 0.8, // deg, plus puttDirPerM per metre of putt
+  puttDirPerM: 0.15,
+  puttPaceSigma: 0.06, // fraction of the flat-roll distance, plus puttPacePerM per metre
+  puttPacePerM: 0.004,
+};
+
+const NOISE_SAMPLES = 6;
+const PENALTY_FEAR = 0.3; // extra strokes a penalty "costs" in the bot's mind: it plays away from trouble
+const SHORTLIST = 4;
+const PUTT_PAST = 0.35; // m: putts are paced to die this far past the cup
+const LAYUP_FAN = [-8, -4, 0, 4, 8]; // deg around the aim point
+const ZERO_WIND = { x: 0, y: 0 };
+
+// Expected strokes to hole out, by surface and distance (m). Piecewise-linear tables tuned to a
+// low-handicap amateur; only their ordering matters to the bot.
+const PUTT_E = [[0, 1], [0.6, 1.01], [1, 1.06], [2, 1.25], [3, 1.42], [5, 1.62], [8, 1.8], [12, 1.93], [20, 2.08], [40, 2.35]];
+const FIELD_E = [[0, 2], [5, 2.15], [20, 2.4], [50, 2.65], [100, 2.85], [150, 3.05], [200, 3.3], [250, 3.6], [300, 3.85], [400, 4.3], [550, 5]];
+
+function interp(tab, d) {
+  if (d <= tab[0][0]) return tab[0][1];
+  for (let i = 1; i < tab.length; i++) {
+    if (d <= tab[i][0]) {
+      const f = (d - tab[i - 1][0]) / (tab[i][0] - tab[i - 1][0]);
+      return tab[i - 1][1] + (tab[i][1] - tab[i - 1][1]) * f;
+    }
+  }
+  const n = tab.length - 1;
+  return tab[n][1] + (d - tab[n][0]) * 0.004;
+}
+
+// Expected strokes from a resting ball (no penalty context).
+function expectedAt(t, x, y, surface) {
+  const d = Math.hypot(t.cup.x - x, t.cup.y - y);
+  let e;
+  if (surface === SURF.GREEN) e = interp(PUTT_E, d);
+  else if (surface === SURF.FRINGE) e = interp(PUTT_E, d) + 0.12;
+  else {
+    e = interp(FIELD_E, d);
+    if (surface === SURF.ROUGH || surface === SURF.OOB) e += 0.25;
+    else if (surface === SURF.BUNKER) e += 0.45;
+    // In among the trees: a punch out is likely.
+    if (surface !== SURF.FAIRWAY && surface !== SURF.TEE && t.treesNear) {
+      const near = t.treesNear(x, y, 4);
+      if (near.some((tr) => Math.hypot(tr.x - x, tr.y - y) < tr.canopy.rx + 1)) e += 0.35;
+    }
+  }
+  return e;
+}
+
+// Expected strokes after a simulated shot, from a start worth eStart.
+function scoreResult(t, res, eStart) {
+  const f = res.final;
+  if (f.outcome === 'holed') return 0;
+  if (f.outcome === 'ob') return 1 + PENALTY_FEAR + eStart; // stroke and distance
+  if (f.outcome === 'water') {
+    const p = res.waterEntry || f;
+    return 1 + PENALTY_FEAR + expectedAt(t, p.x, p.y, SURF.ROUGH) + 0.1;
+  }
+  return expectedAt(t, f.x, f.y, f.surface);
+}
+
+const fullSwing = (power, startDir = 0, faceToPath = 0) => ({ ok: true, kind: 'full', power, startDir, faceToPath, tempo: 'smooth', label: 'Bot' });
+const puttSwing = (power, startDir = 0) => ({ ok: true, kind: 'putt', power, startDir, faceToPath: 0, tempo: 'smooth', label: 'Bot' });
+
+function simulate(t, club, lie, swing, yaw, pos, wind, opts = {}) {
+  const launch = swingToLaunch(club, lie, swing, yaw, opts.rng || null, { pos, puttRange: opts.puttRange });
+  return simulateShot(t, launch, { wind, seed: opts.seed || 3, record: !!opts.record });
+}
+
+// Signed lateral (+ = right of the line) and along-line coordinates of p relative to the line from
+// `from` along yaw.
+function lineCoords(from, yaw, p) {
+  const dx = p.x - from.x;
+  const dy = p.y - from.y;
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return { along: dx * c + dy * s, lat: dx * s - dy * c };
+}
+
+// ------------------------------------------------------------------ full shots
+
+// Relative power error: touch is hardest on short-game swings.
+const powerSigma = (p) => BOT_SKILL.powerSigma + BOT_SKILL.partialSigma * Math.max(0, 1 - p);
+
+// Power for which the stock flat-ground total equals `want` (m), by bisection.
+function solvePowerFlat(flat, club, lie, yaw, pos, wind, want) {
+  let lo = 0.05;
+  let hi = 1;
+  const total = (p) => simulate(flat, club, lie, fullSwing(p), yaw, pos, wind).total;
+  if (total(hi) <= want) return 1;
+  for (let i = 0; i < 9; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (total(mid) < want) lo = mid;
+    else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+// Approach at a target point: solve power on flat ground, then correct power and aim on the real
+// hole so the intended ball stops at the target. Returns a candidate.
+function approach(ctx, club, target) {
+  const { t, pos, lie, wind, flat } = ctx;
+  const dist = Math.hypot(target.x - pos.x, target.y - pos.y);
+  let yaw = Math.atan2(target.y - pos.y, target.x - pos.x);
+  let want = dist + (target.z - pos.z) * 0.9; // a little extra for a raised target
+  let power = solvePowerFlat(flat, club, lie, yaw, pos, wind, want);
+  let res = null;
+  for (let it = 0; it < 3; it++) {
+    res = simulate(t, club, lie, fullSwing(power), yaw, pos, wind);
+    const f = res.final;
+    if (f.outcome === 'holed') break;
+    const c = lineCoords(pos, yaw, f);
+    const tc = lineCoords(pos, yaw, target);
+    const along = c.along - tc.along;
+    const lat = c.lat - tc.lat;
+    if (Math.abs(along) < 2 && Math.abs(lat) < 2) break;
+    // Rotate toward the target (a ball finishing right needs a yaw increase: CCW is left) and
+    // re-solve the power for the corrected distance.
+    if (f.outcome === 'rest') {
+      yaw += Math.atan2(lat, Math.max(5, c.along));
+      want = clamp(want - along, 0.3 * dist, 1.5 * dist + 10);
+      if (power >= 1 && along < 0) break; // already flat out
+      power = solvePowerFlat(flat, club, lie, yaw, pos, wind, want);
+    } else break;
+  }
+  return { clubId: club.id, yaw, power, intended: res };
+}
+
+function candidateClubs(ctx, pl) {
+  const { table, lie } = ctx;
+  const usable = table.filter((r) => r.id !== 'D' || lie.surface === SURF.TEE);
+  // Clubs that reach with a full or near-full swing, shortest first; short game: the wedges.
+  const reach = usable.filter((r) => r.carry >= 0.9 * pl).reverse();
+  const out = reach.slice(0, 2).map((r) => r.id);
+  if (pl < 60) for (const id of ['SW', 'LW', 'GW']) if (!out.includes(id)) out.push(id);
+  if (lie.surface === SURF.BUNKER && !out.includes('SW')) out.unshift('SW');
+  return out.slice(0, 3);
+}
+
+function planFull(game, rng) {
+  const t = game.terrain;
+  const st = game.state;
+  const pos = st.hole.ball;
+  const wind = game.wind || ZERO_WIND;
+  const z = t.heightAt(pos.x, pos.y);
+  const ctx = {
+    t,
+    pos,
+    lie: game.lie,
+    wind,
+    table: game.table,
+    flat: planeTerrain({ surface: SURF.FAIRWAY, z0: z }),
+  };
+  const eStart = expectedAt(t, pos.x, pos.y, ctx.lie.surface);
+  const cup = t.cup;
+  const dCup = Math.hypot(cup.x - pos.x, cup.y - pos.y);
+  const pl = dCup + (cup.z - z);
+  const usable = ctx.table.filter((r) => r.id !== 'D' || ctx.lie.surface === SURF.TEE);
+  const maxCarry = Math.max(...usable.map((r) => r.carry));
+  const teeLong = st.hole.onTee && t.par >= 4;
+  const cands = [];
+
+  if (!teeLong && maxCarry >= 0.85 * pl) {
+    const g = t.greenCenter;
+    const targets = [cup];
+    if (Math.hypot(g.x - cup.x, g.y - cup.y) > 4) targets.push(g);
+    for (const id of candidateClubs(ctx, pl)) {
+      const club = clubById(id);
+      for (const target of targets) cands.push(approach(ctx, club, target));
+    }
+  }
+  if (teeLong || maxCarry < 1.05 * pl) {
+    // Advance: full swings along a fan of lines around the course's aim point.
+    const ap = t.aimPoint(pos);
+    const yaw0 = Math.atan2(ap.y - pos.y, ap.x - pos.x);
+    const ids = usable.filter((r) => r.total <= dCup + 15).slice(0, 6).map((r) => r.id);
+    for (const id of ids) {
+      const club = clubById(id);
+      for (const off of LAYUP_FAN) {
+        const yaw = yaw0 + off * DEG;
+        cands.push({ clubId: id, yaw, power: 1, intended: simulate(t, club, ctx.lie, fullSwing(1), yaw, pos, wind) });
+      }
+    }
+  }
+  if (!cands.length) {
+    const yaw = Math.atan2(cup.y - pos.y, cup.x - pos.x);
+    cands.push({ clubId: 'SW', yaw, power: 0.5, intended: simulate(t, clubById('SW'), ctx.lie, fullSwing(0.5), yaw, pos, wind) });
+  }
+
+  // Shortlist on the intended result, then score the best with seeded misses.
+  for (const c of cands) c.e0 = scoreResult(t, c.intended, eStart);
+  cands.sort((a, b) => a.e0 - b.e0);
+  const short = cands.slice(0, SHORTLIST);
+  for (const c of short) {
+    const club = clubById(c.clubId);
+    const sr = mulberry32(0x5eed ^ Math.round(c.yaw * 1e4) ^ Math.round(c.power * 1e4));
+    let sum = c.e0;
+    for (let k = 0; k < NOISE_SAMPLES; k++) {
+      const sw = fullSwing(c.power * (1 + powerSigma(c.power) * gaussian(sr)), BOT_SKILL.dirSigma * gaussian(sr), BOT_SKILL.curveSigma * gaussian(sr));
+      sum += scoreResult(t, simulate(t, club, ctx.lie, sw, c.yaw, pos, wind, { rng: sr, seed: 11 + k }), eStart);
+    }
+    c.e = sum / (NOISE_SAMPLES + 1);
+  }
+  short.sort((a, b) => a.e - b.e);
+  const best = short[0];
+  const swing = fullSwing(
+    clamp(best.power * (1 + powerSigma(best.power) * gaussian(rng)), 0.05, MAX_POWER),
+    BOT_SKILL.dirSigma * gaussian(rng),
+    BOT_SKILL.curveSigma * gaussian(rng),
+  );
+  return { clubId: best.clubId, yaw: best.yaw, swing, target: best.intended.final, expected: best.e };
+}
+
+// ------------------------------------------------------------------ putts
+
+// Reads the putt by simulation: start at the cup with a pace that dies PUTT_PAST beyond it, then
+// correct aim from where the trial passed the hole and pace from where it stopped.
+function planPutt(game, rng) {
+  const t = game.terrain;
+  const pos = game.state.hole.ball;
+  const cup = t.cup;
+  const club = clubById(PUTTER_ID);
+  const lie = game.lie;
+  const D = Math.hypot(cup.x - pos.x, cup.y - pos.y);
+  const yawCup = Math.atan2(cup.y - pos.y, cup.x - pos.x);
+  let range = PUTT_RANGES[PUTT_RANGES.length - 1];
+  for (const r of PUTT_RANGES) {
+    if (r * 0.95 >= D + 2) {
+      range = r;
+      break;
+    }
+  }
+  let yaw = yawCup;
+  let Df = D + PUTT_PAST;
+  let best = null;
+  for (let it = 0; it < 8; it++) {
+    const power = clamp(Df / range, 0.01, MAX_POWER);
+    const res = simulate(t, club, lie, puttSwing(power), yaw, pos, ZERO_WIND, { puttRange: range, record: true });
+    // Closest approach of the trial to the cup, and on which side it passed.
+    const path = res.path;
+    let dMin = Infinity;
+    let side = 0;
+    for (let i = 0; i < path.length; i += 4) {
+      const dx = path[i + 1] - cup.x;
+      const dy = path[i + 2] - cup.y;
+      const d = Math.hypot(dx, dy);
+      if (d < dMin) {
+        dMin = d;
+        side = lineCoords(pos, yawCup, { x: path[i + 1], y: path[i + 2] }).lat;
+      }
+    }
+    const holed = res.final.outcome === 'holed';
+    // A holed trial slides to the cup centre: take its side from where it was captured instead,
+    // and keep refining until it drops in the middle (the most margin for error).
+    if (holed) side = lineCoords(pos, yawCup, res.events.find((e) => e.type === 'cup')).lat;
+    const fc = lineCoords(pos, yawCup, res.final);
+    const paceErr = holed ? 0 : fc.along - (D + PUTT_PAST);
+    const score = holed ? -1 + Math.abs(side) : dMin + 0.3 * Math.abs(paceErr);
+    if (!best || score < best.score) best = { yaw, Df, score, holed };
+    if (holed && Math.abs(side) < 0.01) break;
+    // Passed right of the cup -> turn left (CCW); stopped long -> softer.
+    yaw += Math.atan2(side, Math.max(0.5, D));
+    Df = clamp(Df - 0.8 * paceErr, 0.2, range * MAX_POWER);
+  }
+  const DfErr = best.Df * (1 + (BOT_SKILL.puttPaceSigma + BOT_SKILL.puttPacePerM * D) * gaussian(rng));
+  const power = clamp(DfErr / range, 0.01, MAX_POWER);
+  const swing = puttSwing(power, (BOT_SKILL.puttDirSigma + BOT_SKILL.puttDirPerM * D) * gaussian(rng));
+  return { clubId: PUTTER_ID, yaw: best.yaw, swing, puttRange: range, target: cup, expected: best.holed ? 1 : interp(PUTT_E, D) };
+}
+
+// ------------------------------------------------------------------ entry points
+
+function botRng(game) {
+  const st = game.state;
+  const b = st.hole.ball;
+  const h = (st.seed ^ Math.imul(st.holeIndex + 1, 0x85ebca6b) ^ Math.imul(st.hole.strokes + 7, 0xc2b2ae35) ^ Math.round(b.x * 1000) ^ Math.round(b.y * 977)) >>> 0;
+  return mulberry32(h);
+}
+
+export function planShot(game, opts = {}) {
+  const rng = opts.rng || botRng(game);
+  const s = game.lie.surface;
+  return s === SURF.GREEN || s === SURF.FRINGE ? planPutt(game, rng) : planFull(game, rng);
+}
+
+// Water relief choice: whichever spot the bot expects to score better from.
+export function botDecide(game) {
+  const d = game.state.decision;
+  if (!d) return null;
+  const t = game.terrain;
+  const e = (p) => expectedAt(t, p.x, p.y, t.surfaceAt(p.x, p.y));
+  const choice = e(d.replay) + 0.05 < e(d.drop) ? 'replay' : 'drop';
+  game.decide(choice);
+  return choice;
+}
+
+export function playBotShot(game, opts = {}) {
+  const plan = planShot(game, opts);
+  game.setClub(plan.clubId);
+  game.setAim(plan.yaw);
+  if (plan.puttRange) game.setPuttRange(plan.puttRange);
+  const r = game.swing(plan.swing);
+  return { ...r, plan };
+}
+
