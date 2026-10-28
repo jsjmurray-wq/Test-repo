@@ -17,10 +17,12 @@
 //
 //   ui.showMenu({canResume=false, courseName?, courseSub?, courses?, selected?, resumeSub?}) /
 //       ui.hideMenu()
-//       courses: [{id, name, tagline, theme, par, lengthM, holes?, best?: {strokes, toPar}|null}]
+//       courses: [{id, name, tagline, theme, par, lengthM, holes?, mixed?, best?: {strokes, toPar}|null}]
 //       builds the course picker (cards with a theme-gradient thumbnail, name, tagline, par and
 //       length, best round); selected: the highlighted id (its name and par fill the title). A
 //       card tap selects it and emits 'course' (id). resumeSub: small line under Resume round.
+//       A mixed entry (the random nine from every course: mixed true, lengthM null) is a wide card
+//       under the others with a four-theme thumbnail and "Par 36 · New holes every round".
 //   ui.selectedCourse                 id of the highlighted course card (or null)
 //   ui.showPause({title?}) / ui.hidePause()       ui.showSettings() ui.showHowTo()
 //   ui.setLoading(on, text='Loading')             ui.showNoGL()
@@ -68,7 +70,9 @@
 //   ui.showScorecard(card, {final=false, current, title?, kicker?, course?}) / ui.hideScorecard()
 //       The header's first line is the course name (course, else card.course), then the kicker.
 //       card: {holes:[{n?, par, lengthM? | yards?, strokes|null, putts?, fir?: bool|null,
-//              gir?: bool|null}]} or the holes array itself. current: 0-based hole to
+//              gir?: bool|null, from?: {name, theme, n}}]} or the holes array itself. Holes with
+//              from (a mixed round) get a Course row: a theme-coloured chip with the course's
+//              initial per hole. current: 0-based hole to
 //       highlight. final shows Play again ([data-act="new-round"]) + Menu ([data-act="quit"])
 //       instead of Next hole ([data-act="next-hole"]).
 //   ui.showDecision(opts) -> Promise<id>
@@ -395,7 +399,7 @@ export class UI {
     for (const c of this._courses) {
       const b = doc.createElement('button');
       b.type = 'button';
-      b.className = 'course-card';
+      b.className = c.mixed ? 'course-card cc-mixed' : 'course-card';
       b.dataset.course = c.id;
       b.dataset.theme = c.theme || 'parkland';
       b.setAttribute('role', 'radio');
@@ -418,7 +422,7 @@ export class UI {
       tag.textContent = c.tagline || '';
       const meta = doc.createElement('span');
       meta.className = 'cc-meta';
-      meta.textContent = `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
+      meta.textContent = c.lengthM == null ? `Par ${c.par} · New holes every round` : `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
       body.append(name, tag, meta);
       b.append(thumb, body);
       box.appendChild(b);
@@ -740,6 +744,7 @@ export class UI {
       putts: h.putts ?? null,
       fir: h.fir ?? null,
       gir: h.gir ?? null,
+      from: h.from || null,
     }));
     const units = this._hud.units || this._settings.units;
     const played = holes.filter((h) => h.strokes != null);
@@ -771,6 +776,18 @@ export class UI {
     };
     const lengthNum = (m) => (m == null ? '' : Math.round(units === 'm' ? m : mToYd(m)));
     row('r-hole', 'Hole', holes.map((h) => h.n), 'Out');
+    if (holes.some((h) => h.from)) {
+      // Mixed round: which course each hole comes from (initial on the course's theme colour).
+      row('r-from', 'Course', holes.map((h) => {
+        if (!h.from) return '';
+        const chip = doc.createElement('span');
+        chip.className = 'from-chip';
+        chip.dataset.theme = h.from.theme || 'parkland';
+        chip.textContent = (h.from.name || '?').charAt(0);
+        chip.title = `${h.from.name} ${h.from.n}`;
+        return chip;
+      }), '');
+    }
     row('r-yds', units === 'm' ? 'M' : 'Yds', holes.map((h) => lengthNum(h.lengthM)),
       holes.every((h) => h.lengthM != null) ? lengthNum(sum(holes, 'lengthM')) : '');
     row('r-par', 'Par', holes.map((h) => h.par), sum(holes, 'par'));

@@ -28,6 +28,11 @@
 // conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
 // stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
 //
+// Mixed rounds (courses.js mixedCourse): course.mixed is a nine drawn from all four courses. Each
+// hole is built and played with its own course (courseOf(i): theme, conditions, a windy course's
+// wind), state.mix stores the draw (serialized, so a resumed round plays the same holes), the card
+// numbers the holes 1-9 in playing order and holeInfo() adds the hole's own course and number.
+//
 // Special shots (section 8.4, shots.js): state.shotType ('normal' by default, serialized) is the
 // shot the next swing plays. setShot(id) only takes a shot that the club and lie allow
 // (shotsAvailable()); it goes back to 'normal' after every stroke, on every new spot, and when the
@@ -37,14 +42,14 @@
 // shot's (the caddie picks the club for a normal swing).
 //
 // Saves and best rounds (section 8.5): pure helpers for main.js, which owns the storage:
-//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines)
+//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines|mixed)
 //   saveCourseId(save) -> course id                  (the wrapper's or the game's; old saves: pines)
 //   bestMap(raw) -> {[courseId]: {strokes, toPar, date}}   (an old single record counts as pines)
 //   mergeBest(a, b) -> map: per course the newer record by date (stored vs in-memory copies)
 //   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only)
 
 import { COURSE } from './course.js';
-import { courseById, COURSES, DEFAULT_COURSE_ID } from './courses.js';
+import { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, MIXED_ID } from './courses.js';
 import { buildHole as defaultBuildHole } from './terrain.js';
 import { SURF, BALL_R, WINDY_EXTRA } from './constants.js';
 import { mulberry32, randInt } from './rng.js';
@@ -149,6 +154,7 @@ export class Game {
     this.state = {
       v: SAVE_VERSION,
       courseId: course.id || 'pines',
+      mix: course.mixed ? course.picks.map((p) => ({ courseId: p.courseId, hole: p.hole })) : null,
       seed: s,
       settings: { ...DEFAULT_SETTINGS, ...settings },
       pins: course.holes.map(() => randInt(pinRng, 3)),
@@ -193,12 +199,17 @@ export class Game {
 
   // ------------------------------------------------------------------ holes
 
+  // The course hole i belongs to: the round's course, or in a mixed round the hole's own course.
+  courseOf(i = this.state.holeIndex) {
+    return holeCourse(this.course, i);
+  }
+
   loadHole(i, terrain = null) {
     const st = this.state;
     st.holeIndex = i;
     this.def = this.course.holes[i];
-    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED, course: this.course });
-    st.wind = windFor(st.seed, i, st.settings.wind, this.course.conditions);
+    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED, course: this.courseOf(i) });
+    st.wind = windFor(st.seed, i, st.settings.wind, this.courseOf(i).conditions);
     st.hole = newHoleState(this.terrain);
     st.decision = null;
     this.shot = null;
@@ -213,14 +224,23 @@ export class Game {
     return this.terrain;
   }
 
+  // n is the hole's number in this round (1-9 in playing order; a mixed round renumbers them);
+  // holeCourseId / holeCourseName / holeN are the course the hole comes from and its number there.
   holeInfo() {
     const t = this.terrain;
+    const i = this.state.holeIndex;
+    const hc = this.courseOf(i);
+    const card = this.state.card.holes[i];
     return {
-      index: this.state.holeIndex,
+      index: i,
       courseId: this.state.courseId,
       courseName: this.course.name || '',
+      mixed: !!this.course.mixed,
+      holeCourseId: hc.id || 'pines',
+      holeCourseName: hc.name || '',
+      holeN: t.n,
       theme: t.theme || 'parkland',
-      n: t.n,
+      n: card ? card.n : t.n,
       par: t.par,
       name: t.name,
       si: t.si,
@@ -268,7 +288,7 @@ export class Game {
     const prevWind = st.settings.wind;
     st.settings = { ...st.settings, ...partial };
     if (st.settings.wind !== prevWind && this.terrain) {
-      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind, this.course.conditions);
+      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind, this.courseOf().conditions);
       this._table = null;
     }
     this._lie = null;
@@ -664,17 +684,18 @@ export class Game {
   static restore(json, opts = {}) {
     const data = typeof json === 'string' ? JSON.parse(json) : clone(json);
     if (!data || data.v !== SAVE_VERSION || !data.hole || !Array.isArray(data.pins)) throw new Error('Game.restore: unsupported save');
-    const course = opts.course || courseById(data.courseId || 'pines');
+    const course = opts.course || (data.courseId === MIXED_ID ? mixedCourse(data.seed, data.mix) : courseById(data.courseId || 'pines'));
     const g = new Game({ course, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
     const pending = data.pendingShot;
     delete data.pendingShot;
     const phase = RESTORABLE.includes(data.phase) ? data.phase : 'address';
     data.courseId = course.id || 'pines';
+    data.mix = course.mixed ? course.picks.map((p) => ({ courseId: p.courseId, hole: p.hole })) : null;
     if (!data.shotType) data.shotType = 'normal'; // saves from before special shots
     g.state = data;
     g._rng = mulberry32(data.rng >>> 0);
     g.def = g.course.holes[data.holeIndex];
-    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED, course });
+    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED, course: g.courseOf(data.holeIndex) });
     g.phase = phase;
     data.phase = phase;
     if (pending && phase === 'address') {
@@ -690,23 +711,24 @@ export class Game {
 // ------------------------------------------------------------------ saves and best rounds
 // Pure helpers for main.js (which owns localStorage and the in-memory fallback), section 8.5.
 
-// ?course= value -> a known course id, or null (unknown or missing: keep the menu's choice).
+// ?course= value -> a known course id (or 'mixed'), or null (unknown or missing: keep the menu's choice).
 export function courseFromParam(value) {
   const v = String(value ?? '').trim().toLowerCase();
-  return COURSES.some((c) => c.id === v) ? v : null;
+  return isCourseId(v) ? v : null;
 }
 
 // Course of a stored save {v, savedAt, courseId?, game}: the wrapper's id, else the game's; saves
 // from before the course picker have neither and are Hollow Pines.
 export function saveCourseId(save) {
   const id = (save && (save.courseId || (save.game && save.game.courseId))) || DEFAULT_COURSE_ID;
-  return courseById(id).id;
+  return isCourseId(id) ? id : DEFAULT_COURSE_ID;
 }
 
 const isRecord = (r) => !!r && typeof r === 'object' && Number.isFinite(r.strokes);
 
 // Best rounds by course. golf.best.v1 used to hold one record {strokes, toPar, date} (Hollow Pines,
-// the only course then); now it is a map {[courseId]: record}. Anything else is ignored.
+// the only course then); now it is a map {[courseId]: record} (mixed rounds share one 'mixed'
+// record: every draw is par 36). Anything else is ignored.
 export function bestMap(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
@@ -714,7 +736,7 @@ export function bestMap(raw) {
     out[DEFAULT_COURSE_ID] = { strokes: raw.strokes, toPar: raw.toPar ?? 0, date: raw.date || 0 };
     return out;
   }
-  for (const [id, r] of Object.entries(raw)) if (isRecord(r) && COURSES.some((c) => c.id === id)) out[id] = { strokes: r.strokes, toPar: r.toPar ?? 0, date: r.date || 0 };
+  for (const [id, r] of Object.entries(raw)) if (isRecord(r) && isCourseId(id)) out[id] = { strokes: r.strokes, toPar: r.toPar ?? 0, date: r.date || 0 };
   return out;
 }
 

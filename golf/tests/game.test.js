@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game, HOLED_HOLD, END_HOLD, windFor, pathAt, courseFromParam, saveCourseId, bestMap, mergeBest, recordBest } from '../src/game.js';
 import { COURSE } from '../src/course.js';
-import { courseById } from '../src/courses.js';
+import { courseById, COURSES, mixedCourse, drawMixedHoles, holeCourse, mixedSummary, isCourseId, courseName, MIXED_ID } from '../src/courses.js';
 import { buildHole } from '../src/terrain.js';
 import { clubTable, suggestClub, playsLike, puttRange, expectedFinish } from '../src/caddie.js';
 import { lieAt } from '../src/lie.js';
@@ -503,7 +503,92 @@ test('courses: a round on Red Mesa names the course, saves its id and restores o
   assert.equal(Game.restore(ps, { buildHole: build }).course.id, 'pines');
 });
 
+test('mixed rounds: nine random holes, par 36, two or three from every course, seeded per round', () => {
+  const seen = new Set();
+  for (let seed = 1; seed <= 60; seed++) {
+    const picks = drawMixedHoles(seed);
+    assert.deepEqual(drawMixedHoles(seed), picks, 'deterministic per seed');
+    assert.equal(picks.length, 9);
+    const c = mixedCourse(seed);
+    assert.equal(c.holes.reduce((a, h) => a + h.par, 0), 36);
+    assert.deepEqual(c.holes.map((h) => h.par).sort().join(''), '334444455');
+    assert.equal(c.holes[0].par, 4, 'opens with a par 4');
+    const per = {};
+    for (const p of picks) per[p.courseId] = (per[p.courseId] || 0) + 1;
+    for (const k of COURSES) assert.ok(per[k.id] >= 2 && per[k.id] <= 3, `seed ${seed}: ${k.id} gives ${per[k.id]}`);
+    assert.equal(new Set(picks.map((p) => `${p.courseId}:${p.hole}`)).size, 9, 'no hole twice');
+    for (let i = 1; i < 9; i++) assert.notEqual(picks[i].courseId, picks[i - 1].courseId, `seed ${seed}: no two holes of one course in a row`);
+    for (let i = 0; i < 9; i++) assert.equal(holeCourse(c, i).holes[picks[i].hole], c.holes[i]);
+    seen.add(picks.map((p) => `${p.courseId}${p.hole}`).join());
+  }
+  assert.ok(seen.size >= 55, 'rounds differ');
+  // A saved draw is replayed as is; a broken one is drawn again from the seed.
+  const keep = mixedCourse(99, drawMixedHoles(5));
+  assert.deepEqual(keep.picks, drawMixedHoles(5));
+  assert.deepEqual(mixedCourse(99, [{ courseId: 'mars', hole: 0 }]).picks, drawMixedHoles(99));
+  assert.equal(holeCourse(courseById('desert'), 3).id, 'desert', 'a normal round: its own course');
+  assert.ok(isCourseId(MIXED_ID) && isCourseId('links') && !isCourseId('mars'));
+  assert.equal(courseName(MIXED_ID), 'Mixed Nine');
+  const sum = mixedSummary();
+  assert.equal(sum.par, 36);
+  assert.equal(sum.lengthM, null);
+});
+
+test('mixed rounds: each hole plays its own course (theme, conditions, windy wind); the card and save follow', () => {
+  const course = mixedCourse(11);
+  const g = new Game({ course, seed: 11, settings: { wind: 'light' }, buildHole: build });
+  const heard = [];
+  g.on('hole', (h) => heard.push(h));
+  assert.equal(g.state.courseId, MIXED_ID);
+  assert.deepEqual(g.state.mix, course.picks);
+  assert.deepEqual(g.state.card.holes.map((h) => h.n), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(g.state.card.course, 'Mixed Nine');
+  for (let i = 0; i < 9; i++) {
+    const src = course.holeCourses[i];
+    assert.equal(g.state.card.holes[i].from.courseId, src.id);
+    assert.equal(g.state.card.holes[i].from.n, course.holes[i].n);
+  }
+  const linksAt = course.picks.findIndex((p) => p.courseId === 'links');
+  const otherAt = course.picks.findIndex((p) => p.courseId !== 'links');
+  for (const i of [otherAt, linksAt]) {
+    g.loadHole(i);
+    const info = heard[heard.length - 1];
+    const src = course.holeCourses[i];
+    assert.equal(info.n, i + 1, 'the round numbers its own holes');
+    assert.equal(info.holeN, course.holes[i].n);
+    assert.equal(info.holeCourseId, src.id);
+    assert.equal(info.holeCourseName, src.name);
+    assert.equal(info.courseName, 'Mixed Nine');
+    assert.ok(info.mixed);
+    assert.equal(g.terrain.theme, src.theme);
+    assert.equal(g.terrain.courseId, src.id);
+    assert.deepEqual(g.terrain.conditions, { firm: 1, greenStimpFt: 10.5, wind: 'normal', ...src.conditions });
+    assert.deepEqual(g.wind, windFor(11, i, 'light', src.conditions), 'the hole\'s own course sets the wind (Kittiwake is windy)');
+  }
+  // Save and restore: the same nine holes, on the same hole and course.
+  g.skipIntro();
+  const save = JSON.parse(JSON.stringify(g.serialize()));
+  assert.equal(save.courseId, MIXED_ID);
+  assert.equal(saveCourseId({ v: 1, courseId: MIXED_ID, game: save }), MIXED_ID);
+  const h = Game.restore(save, { buildHole: build });
+  assert.ok(h.course.mixed);
+  assert.deepEqual(h.course.picks, course.picks);
+  assert.equal(h.terrain.courseId, 'links');
+  assert.deepEqual(h.state, g.state);
+  // The round runs to the end on the mixed nine.
+  h.update(0);
+  h.state.holeIndex = 8;
+  h.loadHole(8);
+  h.skipIntro();
+  holeOut(h);
+  let n = 0;
+  while (h.phase === 'holed' && n++ < 400) h.update(1 / 60);
+  assert.equal(h.phase, 'roundOver');
+});
+
 test('saves and best rounds: ?course=, the save wrapper, the per-course best map', () => {
+  assert.equal(courseFromParam('mixed'), 'mixed');
+  assert.deepEqual(bestMap({ mixed: { strokes: 39, toPar: 3, date: 4 } }), { mixed: { strokes: 39, toPar: 3, date: 4 } });
   assert.equal(courseFromParam('desert'), 'desert');
   assert.equal(courseFromParam(' Links '), 'links');
   assert.equal(courseFromParam('pines'), 'pines');

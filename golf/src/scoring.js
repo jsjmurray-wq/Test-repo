@@ -3,6 +3,8 @@
 //
 //   newCard(course) -> {course, holes:[{n, par, si, lengthM, strokes:null, putts:null,
 //                       penalties:null, fir:null, gir:null, pickUp:false}]}
+//       A mixed round (course.mixed) numbers its holes 1-9 in playing order and adds each hole's
+//       own course: from {courseId, name, theme, n}.
 //   recordHole(card, i, {strokes, putts, penalties, fir, gir, pickUp}) -> card (mutated)
 //   totals(card) -> {played, strokes, par, toPar, coursePar, putts, penalties,
 //                    fir:{hit, of}, gir:{hit, of}, pickUps}
@@ -15,7 +17,8 @@ export function newCard(course) {
   return {
     course: course.name,
     holes: course.holes.map((h, i) => ({
-      n: h.n || i + 1,
+      n: course.mixed ? i + 1 : h.n || i + 1,
+      ...(course.mixed && course.holeCourses ? { from: { courseId: course.holeCourses[i].id, name: course.holeCourses[i].name, theme: course.holeCourses[i].theme, n: h.n || i + 1 } } : {}),
       par: h.par,
       si: h.si,
       lengthM: h.path ? Math.round(buildPath(h.path).length) : undefined,

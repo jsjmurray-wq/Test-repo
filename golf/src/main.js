@@ -21,13 +21,19 @@
 // course (golf.best.v1 = {[courseId]: best}; an old single record is Hollow Pines'). Restart and
 // Play again replay the round's own course.
 //
+// Mixed rounds: the fifth card, "Mixed Nine", draws nine holes at random from all four courses
+// (courses.js mixedCourse, seeded by the round seed: two or three from each course, par 36). Each
+// hole is built with its own course (theme, conditions, wind), the intro names the course it
+// comes from, the save stores the draw, and the best mixed round is kept under 'mixed'. Restart
+// replays the same nine; Play again draws a new one.
+//
 // Special shots (section 8.4): the shot chip beside the club picker opens the shot sheet (the
 // eligible shots with their carry/total); the selection lasts one stroke. The club readout, power
 // gauge, target notch and aim preview follow it: a draw or cut shows its curved flight draped on
 // the ground (gold) ending in the landing ring, and the toast names the shot ("7i Stinger · ...").
 //
 // URL parameters
-//   ?course=ID    desert | water | links | pines: the course for new rounds (menu and autoplay)
+//   ?course=ID    desert | water | links | pines | mixed: the course for new rounds (menu and autoplay)
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
 //   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
@@ -40,7 +46,7 @@
 
 import { Game, TREE_SEED, courseFromParam, saveCourseId, mergeBest, recordBest } from './game.js';
 import { COURSE } from './course.js';
-import { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID } from './courses.js';
+import { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, mixedCourse, mixedSummary, courseName, isCourseId } from './courses.js';
 import { shotById, shotIntent } from './shots.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
@@ -558,9 +564,13 @@ function setView(v) {
   updateInputMode();
 }
 
+// The intro's course line: the course name, or in a mixed round the hole's own course and its
+// number there ("Red Mesa · No. 7").
 function showIntroCard(g) {
   const t = g.terrain;
-  app.ui.showIntro({ hole: t.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si, course: g.course.name });
+  const info = g.holeInfo();
+  const course = info.mixed ? `${info.holeCourseName} · No. ${info.holeN}` : g.course.name;
+  app.ui.showIntro({ hole: info.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si, course });
 }
 
 function enterAddress() {
@@ -652,13 +662,14 @@ function unbindGame() {
   app.trail.count = 0;
 }
 
-// A new round on a course (the menu's choice; Restart and Play again pass the round's own).
-function newRound(courseId = app.courseId) {
+// A new round on a course (the menu's choice; Restart and Play again pass the round's own). A
+// mixed round draws its nine from the round seed, or replays a given draw (picks: Restart).
+function newRound(courseId = app.courseId, picks = null) {
   closeDialogs();
   app.ui.hideMenu();
   app.ui.hidePause();
   const seed = SEED ?? ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
-  const course = courseById(courseId);
+  const course = courseId === MIXED_ID ? mixedCourse(seed, picks) : courseById(courseId);
   const game = new Game({ course, seed, settings: gameSettings(), buildHole: cachedBuildHole });
   bindGame(game);
   game.loadHole(START_HOLE);
@@ -707,12 +718,12 @@ function showMenu() {
   let resumeSub = '';
   if (save && save.game) {
     const hole = (save.game.holeIndex ?? 0) + 1;
-    resumeSub = `${courseById(saveCourseId(save)).name} · Hole ${hole}`;
+    resumeSub = `${courseName(saveCourseId(save))} · Hole ${hole}`;
   }
   app.ui.showHud(false);
   app.ui.showMenu({
     canResume: !!save,
-    courses: COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })),
+    courses: [...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })), { ...mixedSummary(), best: best[MIXED_ID] || null }],
     selected: app.courseId,
     resumeSub,
   });
@@ -721,22 +732,30 @@ function showMenu() {
 
 // Course card picked: remember it and fly the backdrop over its first hole.
 function selectCourse(id) {
-  app.courseId = courseById(id).id;
+  app.courseId = isCourseId(id) ? id : courseById(id).id;
   saveCourseChoice(app.courseId);
   setBackdrop(app.courseId);
 }
 
-// Menu backdrop: the chosen course's first hole (built a moment after the tap has painted).
+// Menu backdrop: the chosen course's first hole (built a moment after the tap has painted); for
+// the mixed round, the first hole of a fixed sample draw.
+function backdropHole(courseId) {
+  const course = courseId === MIXED_ID ? mixedCourse(1) : courseById(courseId);
+  const i = course.mixed ? 0 : START_HOLE;
+  return { def: course.holes[i], course: course.mixed ? course.holeCourses[i] : course };
+}
+
 function setBackdrop(courseId) {
   if (app.renderer.isNull || app.game) return;
-  const course = courseById(courseId);
-  if (app.backdropCourse === course.id) return;
-  app.backdropCourse = course.id;
+  const id = isCourseId(courseId) ? courseId : DEFAULT_COURSE_ID;
+  if (app.backdropCourse === id) return;
+  app.backdropCourse = id;
   clearTimeout(app.backdropT);
   app.backdropT = setTimeout(() => {
-    if (app.game || app.backdropCourse !== course.id) return;
+    if (app.game || app.backdropCourse !== id) return;
     try {
-      const t = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
+      const { def, course } = backdropHole(id);
+      const t = cachedBuildHole(def, { pinIndex: 0, seed: TREE_SEED, course });
       app.holeTerrain = t;
       app.renderer.setHole(t);
     } catch (err) {
@@ -825,7 +844,7 @@ function onPhase(phase, prev) {
 function prebuildNext(g) {
   if (app.game !== g || g.phase !== 'scorecard') return;
   const i = g.state.holeIndex + 1;
-  if (i < g.course.holes.length) cachedBuildHole(g.course.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED, course: g.course });
+  if (i < g.course.holes.length) cachedBuildHole(g.course.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED, course: g.courseOf(i) });
 }
 
 function onShotEvent(ev) {
@@ -1436,6 +1455,9 @@ function installDebugHooks() {
         putt: g.isPutt,
         card: g.state.card.holes.map((h) => h.strokes),
         courseId: g.course.id,
+        holeCourseId: g.courseOf().id,
+        theme: g.terrain ? g.terrain.theme : null,
+        mix: g.state.mix,
         shotType: g.shotType,
       };
     },
@@ -1473,11 +1495,12 @@ function boot() {
   app.courseId = COURSE_PARAM || loadCourseChoice() || DEFAULT_COURSE_ID;
   if (TEST) installDebugHooks();
 
-  // From the menu: the picked course; Play again (final card) and Restart: the round's own.
+  // From the menu: the picked course; Play again (final card) and Restart: the round's own (a
+  // mixed round: Restart keeps its nine holes, Play again draws a new nine).
   const replayCourse = () => newRound(app.game ? app.game.course.id : app.courseId);
   ui.on('new-round', replayCourse);
   ui.on('resume', resumeGame);
-  ui.on('restart', replayCourse);
+  ui.on('restart', () => newRound(app.game ? app.game.course.id : app.courseId, app.game && app.game.course.mixed ? app.game.course.picks : null));
   ui.on('course', selectCourse);
   ui.on('shots', openShots);
   ui.on('shot', pickShot);
@@ -1540,9 +1563,9 @@ function boot() {
     setTimeout(() => {
       try {
         if (!app.renderer.isNull) {
-          const course = courseById(app.courseId);
-          app.backdropCourse = course.id;
-          app.holeTerrain = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
+          const { def, course } = backdropHole(app.courseId);
+          app.backdropCourse = app.courseId;
+          app.holeTerrain = cachedBuildHole(def, { pinIndex: 0, seed: TREE_SEED, course });
           app.renderer.setHole(app.holeTerrain);
         }
       } catch (err) {
