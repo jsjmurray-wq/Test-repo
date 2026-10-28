@@ -9,8 +9,9 @@
 // from the tee, from the green centre).
 //
 // Design notes (for a ~5 handicap: driver ~240 yd carry, and the firm fairways add some roll):
-//  - Every tee shot has a safe line: the fairway island starts 135-160 m out (a carry a hybrid
-//    clears from the raised tees) and is 30-40 m wide where a drive lands. Par 3s have a bail-out.
+//  - Every tee shot has a safe line: the fairway island starts 135-165 m out (a carry a hybrid
+//    clears from the raised tees) and is 30-35 m wide where a drive lands, with 5-6 m of rough
+//    before the desert. Par 3s have a bail-out apron short right of the green.
 //  - The desert floor is playable but costly (erratic bounces, the ball sits down, scrub and cactus
 //    in the way); washes are WASTE (firm sand, no penalty, the club may be grounded), so a ball in a
 //    wash can be played on. Only the 9th has water (a lake, red), with gentle banks for the drop.
@@ -31,7 +32,7 @@ function wiggle(t, seed) {
 // lateral offset o0 to o1, skewed by `skew` (m of s per m of offset) and meandering by `amp` over a
 // wavelength `wave`; the half-width hw breathes by +-35%. Returns {poly: [[s, off], ...], at(u)}
 // where at(off) gives the centre s and the half-width there (for the trees along its banks).
-function crossWash({ s, o0, o1, hw, skew = 0, amp = 6, wave = 60, seed = 1, step = 8 }) {
+function crossWash({ s, o0, o1, hw, skew = 0, amp = 6, wave = 60, seed = 1, step = 6 }) {
   const at = (off) => ({
     c: s + skew * off + amp * wiggle((off / wave) * TAU, seed),
     w: hw * (1 + 0.35 * wiggle(off / 21, seed + 4)),
@@ -47,7 +48,7 @@ function crossWash({ s, o0, o1, hw, skew = 0, amp = 6, wave = 60, seed = 1, step
 }
 
 // A wash running down the side of the hole from s0 to s1, centred on lateral offset `off`.
-function sideWash({ s0, s1, off, hw, amp = 6, wave = 90, seed = 1, step = 9 }) {
+function sideWash({ s0, s1, off, hw, amp = 6, wave = 90, seed = 1, step = 8 }) {
   const at = (s) => ({
     c: off + amp * wiggle((s / wave) * TAU, seed),
     w: hw * (1 + 0.35 * wiggle(s / 23, seed + 4)),
@@ -66,10 +67,10 @@ function sideWash({ s0, s1, off, hw, amp = 6, wave = 90, seed = 1, step = 9 }) {
 // as a cut bank rather than a kerb.
 const washArea = (w, dz = -1.3) => ({ surface: 'waste', poly: w.poly, dz, ease: 6 });
 
-// Palo verde (drawn as broadleaves), creosote and boulders strung along both banks of a wash: a
+// Palo verde (drawn as broadleaves), saguaros and boulders strung along both banks of a wash: a
 // small cluster every `every` metres, skipping the stretch within `clear` m of the line of play
 // for crossing washes, so the fairway corridor stays open.
-function washBanks(w, { every = 22, clear = 0, kind = { broad: 0.3, shrub: 0.45, rock: 0.25 }, n = 3 } = {}) {
+function washBanks(w, { every = 22, clear = 0, kind = { broad: 0.4, rock: 0.4, saguaro: 0.2 }, n = 3 } = {}) {
   const out = [];
   for (let u = w.u0 + every / 2; u <= w.u1; u += every) {
     if (!w.along && Math.abs(u) < clear) continue;
@@ -90,7 +91,7 @@ function greenArc(a0, a1, r, len, wid, n = 3) {
   for (let k = 0; k < n; k++) {
     const a = a0 + ((a1 - a0) * k) / Math.max(1, n - 1);
     const rad = (a * Math.PI) / 180;
-    out.push([r * Math.cos(rad), r * Math.sin(rad), len * (0.85 + 0.3 * ((k * 7) % 3) / 2), wid, a + 90]);
+    out.push([r * Math.cos(rad), r * Math.sin(rad), len * (0.85 + 0.15 * (k % 3)), wid, a + 90]);
   }
   return out;
 }
@@ -103,23 +104,26 @@ function plen(path) {
 }
 
 // The desert floor. Near the line of play: stones, boulders and dry bunch grass (visual only), with
-// saguaros standing over them; the creosote and bursage scrub thickens further out. Shrubs are kept
-// back from the corridor on purpose: physics drops a ball that rolls into one dead inside it, and a
-// ball at rest inside a bush is caught again by most shots played from there.
+// saguaros standing over them; the creosote and bursage scrub starts `shrubFrom` m out. Shrubs are
+// kept back from play on purpose: physics drops a ball that rolls into one dead inside it, and a
+// ball at rest inside a bush is caught again by most shots played from there (the bush's canopy
+// is rolled again at the strike), so they stay out of the forced carries, washes and the first
+// band of desert beyond the rough.
 //  - Saguaro rows keep clear of the line of play: |off| >= `inner` (18 m) with 5 m of jitter in
 //    front of the tee (the forced carry, up to `carry` - 12 m, where the first fairway or a par 3's
-//    green surround begins), so none stands in a tee shot or the view from the tee; a saguaro row at
-//    33 m runs the full length beyond the rough.
-//  - Scrub rows (creosote with saguaros) from 44 m out, every `step` m.
-function desertLife(path, carry, { inner = 18, outer = 88, step = 11, gap = 20 } = {}) {
+//    green surround begins), so none stands in a tee shot or the view from the tee; saguaro rows
+//    at 33 and 44 m run the full length beyond the rough.
+//  - Scrub rows (creosote with saguaros) from `shrubFrom` (55 m) out, every `step` m.
+function desertLife(path, carry, { inner = 18, outer = 88, step = 11, gap = 20, shrubFrom = 55 } = {}) {
   const L = plen(path);
   const out = [{ kind: { rock: 0.35, grass: 0.65 }, area: 'desert', density: 0.4 }];
   const row = (kind, off, to, g = gap) => {
     for (const side of [-1, 1]) out.push({ kind, from: -50, to, off: side * off, gap: g, jitter: 5 });
   };
-  for (let off = inner; off < 33; off += step) row({ saguaro: 0.65, shrub: 0.35 }, off, carry - 12);
+  for (let off = inner; off < 33; off += step) row({ saguaro: 0.75, rock: 0.25 }, off, carry - 12);
   row('saguaro', 33, L + 60, 26);
-  for (let off = 44; off <= outer; off += step) row({ shrub: 0.6, saguaro: 0.4 }, off, L + 60);
+  row({ saguaro: 0.6, rock: 0.4 }, 44, L + 60, 24);
+  for (let off = shrubFrom; off <= outer; off += step) row({ shrub: 0.65, saguaro: 0.35 }, off, L + 60);
   return out;
 }
 
@@ -128,7 +132,7 @@ function desertLife(path, carry, { inner = 18, outer = 88, step = 11, gap = 20 }
 function outcrop(at, n, spread, saguaros = Math.max(2, Math.round(n / 5))) {
   return [
     { kind: 'rock', ...at, cluster: n, spread },
-    { kind: { saguaro: 0.7, shrub: 0.3 }, ...at, cluster: saguaros, spread: spread * 1.5 },
+    { kind: { saguaro: 0.75, rock: 0.25 }, ...at, cluster: saguaros, spread: spread * 1.5 },
   ];
 }
 
@@ -149,7 +153,7 @@ function finish(def) {
   return { ...rest, bunkers: [...(def.bunkers || []), ...greenside.map((b) => greenBunker(def.green, b))] };
 }
 
-// ------------------------------------------------------------------ the washes
+// ------------------------------------------------------------------ centrelines, washes and water
 
 // Centrelines (tee first, green centre last), shared by the holes and their saguaro rows.
 const PATHS = [
@@ -236,10 +240,10 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
 
-    // 2. Par 3 across a canyon: the tee stands on the rim of an arroyo 18 m below it, the green
+    // 2. Par 3 across a canyon: the tee stands on the rim of an arroyo 20 m below it, the green
     //    on the far rim. All carry (about 120 m to the far rim); the bail-out is the apron short
     //    right of the green.
     {
@@ -261,7 +265,7 @@ export const DESERT = {
       areas: [washArea(W2, -0.5)],
       objects: [
         ...desertLife(PATHS[1], 112),
-        ...washBanks(W2, { every: 18, clear: 14, kind: { rock: 0.5, shrub: 0.5 } }),
+        ...washBanks(W2, { every: 18, clear: 14, kind: { rock: 0.7, saguaro: 0.3 } }),
         // Boulders tumbled down both canyon walls.
         ...[-62, -40, -18, 18, 40, 62].flatMap((off) => [
           { kind: { rock: 0.75, saguaro: 0.25 }, s: 38, off, cluster: 6, spread: 6 },
@@ -324,13 +328,13 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
 
-    // 4. The hardest hole: a long dogleg left round a boulder-strewn hill. The bold line over the
+    // 4. The longest par 4: a dogleg left round a boulder-strewn hill. The bold line over the
     //    hill's shoulder shortens it; hardpan through the corner catches the overhit drive.
     {
-      n: 4, par: 4, name: 'Sidewinder', si: 1,
+      n: 4, par: 4, name: 'Sidewinder', si: 2,
       path: PATHS[3],
       corners: [235],
       elev: [[0, 12], [16, 11.7], [45, 6], [140, 2], [230, 1], [330, 3], [410, 4]],
@@ -363,7 +367,7 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
 
     // 5. Drivable par 4 falling 18 m from the tee. The safe play lays up on the shelf short of a
@@ -402,7 +406,7 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 72 },
+      bounds: { margin: 70 },
     },
 
     // 6. Long downhill par 3 to a green wrapped by a sandy waste area front and left, a boulder
@@ -435,10 +439,11 @@ export const DESERT = {
       bounds: { margin: 70 },
     },
 
-    // 7. Uphill par 4 up a narrow valley with a wash shadowing the whole left side; bunkers pinch
-    //    the fairway at 255 m and a red-rock outcrop stands right of the raised green.
+    // 7. The hardest hole: uphill through a narrow valley with a wash shadowing the whole left
+    //    side; bunkers pinch the fairway at 255 m and a red-rock outcrop stands right of the
+    //    raised green.
     {
-      n: 7, par: 4, name: 'Red Rock', si: 2,
+      n: 7, par: 4, name: 'Red Rock', si: 1,
       path: PATHS[6],
       corners: [235],
       elev: [[0, 2], [100, 1], [220, 4], [300, 8], [376, 11]],
@@ -465,14 +470,14 @@ export const DESERT = {
       areas: [washArea(W7, -1.3)],
       mounds: [[374, 40, 22, 9], [150, 60, 28, 8]],
       objects: [
-        ...desertLife(PATHS[6], 150),
+        ...desertLife(PATHS[6], 150, { shrubFrom: 66 }),
         ...washBanks(W7, { every: 24 }),
         ...outcrop({ s: 374, off: 40 }, 42, 15, 6),
         ...outcrop({ s: 150, off: 60 }, 18, 11),
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
 
     // 8. Reachable downhill par 5. A wash runs down the left and cuts across 40 m short of the
@@ -506,7 +511,7 @@ export const DESERT = {
       areas: [washArea(W8a, -1.3), washArea(W8b, -1.3)],
       mounds: [[300, 66, 34, 12], [120, 60, 26, 6], [200, -78, 34, 10]],
       objects: [
-        ...desertLife(PATHS[7], 165),
+        ...desertLife(PATHS[7], 165, { shrubFrom: 66 }),
         ...washBanks(W8a, { every: 26 }),
         ...washBanks(W8b, { every: 20, clear: 16 }),
         ...outcrop({ s: 300, off: 66 }, 26, 13),
@@ -514,7 +519,7 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
 
     // 9. Home through the oasis: a dogleg right round a lake (red) that guards the front right of
@@ -529,8 +534,8 @@ export const DESERT = {
       undulate: 0.7,
       tee: { s: 0, w: 9, l: 15, raise: 0.5 },
       fairway: {
-        from: 150, to: 352, wobble: 2.2,
-        width: [[150, 26], [175, 31], [200, 29], [225, 34], [255, 30], [285, 28], [315, 26], [352, 22]],
+        from: 150, to: 366, wobble: 2.2,
+        width: [[150, 26], [175, 31], [200, 29], [225, 34], [255, 30], [285, 28], [315, 26], [345, 23], [366, 20]],
         shift: [[150, -2], [200, 2], [240, -1], [290, -3], [352, 0]],
       },
       rough: { w: 6, tee: 3, green: 6 },
@@ -562,7 +567,7 @@ export const DESERT = {
       ],
       forest: false,
       ob: { left: null, right: null },
-      bounds: { margin: 70 },
+      bounds: { margin: 66 },
     },
   ].map(finish),
 };
