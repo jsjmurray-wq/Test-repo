@@ -1411,5 +1411,10 @@ shots, the course picker, per-course saves and best rounds.
 - Tests: build-time checks warm up and take the best of three; the e2e tap meter sends both taps with explicit event
   times 600 ms apart and waits up to 45 s for shots to resolve.
 
+**Results** (final): `npm test` 306/306; ESLint clean; e2e 558/558 checks (portrait, landscape and foldable on
+`index.html` and `dist/golf.html`, now with the Mixed Nine flow); soak 30/30 (a full autoplay round on each of the four
+courses and a mixed round, on both builds: no errors, peak 13–16 draw calls at `quality=low`, bot −1 to +5); the repo
+root's `npm test` 159/159.
+
 **Known gaps:** near-field turf is still the 0.5 m bake (soft at 3× up close); the buttes are still silhouettes (no
 geometry); the bot plays the flop only from deep bunkers.
