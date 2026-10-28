@@ -27,9 +27,24 @@
 // with buildHole(def, {pinIndex, seed, course}), so the terrain carries the course's theme and
 // conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
 // stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
+//
+// Special shots (section 8.4, shots.js): state.shotType ('normal' by default, serialized) is the
+// shot the next swing plays. setShot(id) only takes a shot that the club and lie allow
+// (shotsAvailable()); it goes back to 'normal' after every stroke, on every new spot, and when the
+// club changes to one that cannot play it. clubInfo(), carryForPower() and shotPreview() follow the
+// selected shot (carry/total, the power curve with the side a draw or cut lands on, and the
+// intended flight for the aim preview); the club table, suggestClub and playsLike stay the stock
+// shot's (the caddie picks the club for a normal swing).
+//
+// Saves and best rounds (section 8.5): pure helpers for main.js, which owns the storage:
+//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines)
+//   saveCourseId(save) -> course id                  (the wrapper's or the game's; old saves: pines)
+//   bestMap(raw) -> {[courseId]: {strokes, toPar, date}}   (an old single record counts as pines)
+//   mergeBest(a, b) -> map: per course the newer record by date (stored vs in-memory copies)
+//   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only)
 
 import { COURSE } from './course.js';
-import { courseById } from './courses.js';
+import { courseById, COURSES, DEFAULT_COURSE_ID } from './courses.js';
 import { buildHole as defaultBuildHole } from './terrain.js';
 import { SURF, BALL_R, WINDY_EXTRA } from './constants.js';
 import { mulberry32, randInt } from './rng.js';
@@ -37,7 +52,8 @@ import { clubById } from './clubs.js';
 import { simulateShot } from './physics.js';
 import { lieAt } from './lie.js';
 import { swingToLaunch, PUTT_RANGES } from './swing.js';
-import { clubTable, suggestClub, playsLike, puttRange, powerCurve, curveAt } from './caddie.js';
+import { clubTable, clubRow, suggestClub, playsLike, puttRange, powerCurve, curveAt, shotPreview } from './caddie.js';
+import { shotsFor, isEligible } from './shots.js';
 import { resolveShot, scoreName } from './rules.js';
 import { newCard, recordHole, totals } from './scoring.js';
 import { normalizeAngle } from './vec3.js';
@@ -124,6 +140,10 @@ export class Game {
     this._tableKey = '';
     this._curve = null;
     this._curveKey = '';
+    this._shotRow = null;
+    this._shotRowKey = '';
+    this._preview = null;
+    this._previewKey = '';
     const s = seed >>> 0;
     const pinRng = mulberry32(s ^ 0x51ed270b);
     this.state = {
@@ -138,6 +158,7 @@ export class Game {
       hole: null,
       aimYaw: 0,
       clubId: 'D',
+      shotType: 'normal',
       puttRange: PUTT_RANGES[2],
       wind: { x: 0, y: 0 },
       decision: null,
@@ -197,6 +218,7 @@ export class Game {
     return {
       index: this.state.holeIndex,
       courseId: this.state.courseId,
+      courseName: this.course.name || '',
       theme: t.theme || 'parkland',
       n: t.n,
       par: t.par,
@@ -266,9 +288,30 @@ export class Game {
     return clubById(this.state.clubId);
   }
 
+  // A club that cannot play the selected special shot puts it back to 'normal'.
   setClub(id) {
-    if (!clubById(id)) return false;
+    const c = clubById(id);
+    if (!c) return false;
     this.state.clubId = id;
+    if (this.shotType !== 'normal' && (!this.state.hole || !isEligible(this.shotType, c, this.lie))) this.state.shotType = 'normal';
+    return true;
+  }
+
+  // ------------------------------------------------------------------ special shots
+
+  get shotType() {
+    return this.state.shotType || 'normal';
+  }
+
+  // Eligible shot ids for the selected club and the lie ('normal' first; only 'normal' to putt).
+  shotsAvailable() {
+    return shotsFor(this.club, this.lie);
+  }
+
+  // Selects the shot the next swing plays; false (and no change) when the club or lie cannot play it.
+  setShot(id) {
+    if (!isEligible(id, this.club, this.lie)) return false;
+    this.state.shotType = id;
     return true;
   }
 
@@ -323,28 +366,64 @@ export class Game {
     return this._table;
   }
 
-  // Carry/total (m) of a club from here, or the putt range for the putter.
+  // Carry/total (m) of a club from here (with the selected special shot for the selected club), or
+  // the putt range for the putter. landAngle: the descent angle (deg); shot: the shot it is for.
   clubInfo(id = this.state.clubId) {
     const c = clubById(id);
     if (!c) return null;
-    if (c.kind === 'putter') return { id, name: c.name, carry: null, total: null, puttRange: this.state.puttRange };
-    const row = this.table.find((r) => r.id === id);
-    return { id, name: c.name, carry: row ? row.carry : null, total: row ? row.total : null };
+    if (c.kind === 'putter') return { id, name: c.name, carry: null, total: null, puttRange: this.state.puttRange, shot: 'normal' };
+    const shot = id === this.state.clubId ? this.shotType : 'normal';
+    const row = shot === 'normal' ? this.table.find((r) => r.id === id) : this._specialRow(id, shot);
+    return { id, name: c.name, carry: row ? row.carry : null, total: row ? row.total : null, landAngle: row ? row.landAngle : null, shot: row ? row.shot : 'normal' };
   }
 
-  // Expected carry/total (m) of the selected club at a swing power, for the live power readout;
-  // for the putter, the flat-roll distance. The curve is cached per spot and club.
-  carryForPower(power) {
-    const c = this.club;
-    if (c.kind === 'putter') return { carry: 0, total: power * this.state.puttRange };
+  // Club-table row of a special shot (cached per spot, club, shot and hand, like the table).
+  _specialRow(id, shot) {
     const b = this.state.hole.ball;
     const w = this.state.wind;
-    const key = `${b.x},${b.y},${w.x},${w.y},${c.id}`;
+    const handed = this.state.settings.handed;
+    const key = `${b.x},${b.y},${w.x},${w.y},${id},${shot},${handed}`;
+    if (!this._shotRow || this._shotRowKey !== key) {
+      this._shotRow = clubRow(this.terrain, b, this.lie, w, id, { aimYaw: this.state.aimYaw, shot, handed });
+      this._shotRowKey = key;
+    }
+    return this._shotRow;
+  }
+
+  // Expected carry/total (m) of the selected club and shot at a swing power, for the live power
+  // readout, with side / sideTotal (m across the aim line, + = right: where a draw or cut lands and
+  // stops); for the putter, the flat-roll distance. The curve is cached per spot, club and shot.
+  carryForPower(power) {
+    const c = this.club;
+    if (c.kind === 'putter') return { carry: 0, total: power * this.state.puttRange, side: 0, sideTotal: 0 };
+    const b = this.state.hole.ball;
+    const w = this.state.wind;
+    const handed = this.state.settings.handed;
+    const key = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${handed}`;
     if (!this._curve || this._curveKey !== key) {
-      this._curve = powerCurve(this.terrain, b, this.lie, w, c.id, this.state.aimYaw);
+      this._curve = powerCurve(this.terrain, b, this.lie, w, c.id, this.state.aimYaw, { shot: this.shotType, handed });
       this._curveKey = key;
     }
     return curveAt(this._curve, power);
+  }
+
+  // Intended flight of the selected club and shot at a power along the current aim, over flat
+  // ground with the wind (caddie.shotPreview: {path [t,x,y,z]*, carry, total, landing, final}), for
+  // the curved aim preview of a draw or cut. null for the putter. Cached per spot, club, shot, aim
+  // and power (to 0.01).
+  shotPreview(power = 1) {
+    const c = this.club;
+    if (!c || c.kind === 'putter') return null;
+    const b = this.state.hole.ball;
+    const w = this.state.wind;
+    const st = this.state;
+    const p = Math.round(power * 100) / 100;
+    const key = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${st.settings.handed},${st.aimYaw},${p}`;
+    if (!this._preview || this._previewKey !== key) {
+      this._preview = shotPreview(this.terrain, b, this.lie, w, c.id, st.aimYaw, { power: p, shot: this.shotType, handed: st.settings.handed });
+      this._previewKey = key;
+    }
+    return this._preview;
   }
 
   suggestClub() {
@@ -395,6 +474,7 @@ export class Game {
     this._lie = null;
     this._table = null;
     st.puttRange = puttRange(Math.hypot(t.cup.x - b.x, t.cup.y - b.y));
+    st.shotType = 'normal';
     st.clubId = this.suggestClub();
   }
 
@@ -407,11 +487,12 @@ export class Game {
     if (!sw || !sw.ok) return { ok: false, reason: (sw && sw.reason) || 'cancel' };
     const st = this.state;
     const club = this.club;
-    const launch = swingToLaunch(club, this.lie, sw, st.aimYaw, this._rng, { pos: st.hole.ball, puttRange: st.puttRange });
+    const shot = club.kind === 'putter' || !isEligible(this.shotType, club, this.lie) ? 'normal' : this.shotType;
+    const launch = swingToLaunch(club, this.lie, sw, st.aimYaw, this._rng, { pos: st.hole.ball, puttRange: st.puttRange, shot, handed: st.settings.handed });
     const seed = (this._rng() * 4294967296) >>> 0;
     st.rng = this._rng.state();
     this._preShot = clone(st);
-    const swingInfo = { ok: true, kind: sw.kind, power: sw.power, startDir: sw.startDir, faceToPath: sw.faceToPath, tempo: sw.tempo, label: sw.label };
+    const swingInfo = { ok: true, kind: sw.kind, power: sw.power, startDir: sw.startDir, faceToPath: sw.faceToPath, tempo: sw.tempo, label: sw.label, shot };
     return { ok: true, shot: this._strike(launch, seed, club.id, swingInfo) };
   }
 
@@ -435,6 +516,7 @@ export class Game {
     }
     this.shot = { result, playT: 0, launch, clubId, seed, resolution, swing: swingInfo, from: copy3(hole.ball), next: 0, done: false };
     hole.strokes += 1;
+    st.shotType = 'normal'; // a special shot is for one stroke
     this._setPhase('flight');
     this._emit('shotStart', this.shot);
     this._emitEvents();
@@ -480,7 +562,7 @@ export class Game {
     if (r.putt) hole.putts++;
     if (r.fir !== undefined) hole.fir = r.fir;
     if (r.gir) hole.gir = true;
-    hole.last = { clubId: sh.clubId, carry: sh.result.carry, total: sh.result.total, outcome: r.outcome, label: sh.swing.label || '' };
+    hole.last = { clubId: sh.clubId, carry: sh.result.carry, total: sh.result.total, outcome: r.outcome, label: sh.swing.label || '', shot: sh.swing.shot || 'normal' };
 
     let next;
     let tone = 'info';
@@ -586,6 +668,7 @@ export class Game {
     delete data.pendingShot;
     const phase = RESTORABLE.includes(data.phase) ? data.phase : 'address';
     data.courseId = course.id || 'pines';
+    if (!data.shotType) data.shotType = 'normal'; // saves from before special shots
     g.state = data;
     g._rng = mulberry32(data.rng >>> 0);
     g.def = g.course.holes[data.holeIndex];
@@ -600,5 +683,57 @@ export class Game {
     g._announce = true;
     return g;
   }
+}
+
+// ------------------------------------------------------------------ saves and best rounds
+// Pure helpers for main.js (which owns localStorage and the in-memory fallback), section 8.5.
+
+// ?course= value -> a known course id, or null (unknown or missing: keep the menu's choice).
+export function courseFromParam(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  return COURSES.some((c) => c.id === v) ? v : null;
+}
+
+// Course of a stored save {v, savedAt, courseId?, game}: the wrapper's id, else the game's; saves
+// from before the course picker have neither and are Hollow Pines.
+export function saveCourseId(save) {
+  const id = (save && (save.courseId || (save.game && save.game.courseId))) || DEFAULT_COURSE_ID;
+  return courseById(id).id;
+}
+
+const isRecord = (r) => !!r && typeof r === 'object' && Number.isFinite(r.strokes);
+
+// Best rounds by course. golf.best.v1 used to hold one record {strokes, toPar, date} (Hollow Pines,
+// the only course then); now it is a map {[courseId]: record}. Anything else is ignored.
+export function bestMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  if (isRecord(raw)) {
+    out[DEFAULT_COURSE_ID] = { strokes: raw.strokes, toPar: raw.toPar ?? 0, date: raw.date || 0 };
+    return out;
+  }
+  for (const [id, r] of Object.entries(raw)) if (isRecord(r) && COURSES.some((c) => c.id === id)) out[id] = { strokes: r.strokes, toPar: r.toPar ?? 0, date: r.date || 0 };
+  return out;
+}
+
+// Two copies of the best-round map (stored and in memory): per course, the newer record wins.
+export function mergeBest(a, b) {
+  const A = bestMap(a);
+  const B = bestMap(b);
+  const out = { ...A };
+  for (const [id, r] of Object.entries(B)) if (!out[id] || (r.date || 0) > (out[id].date || 0)) out[id] = r;
+  return out;
+}
+
+// Records a finished round on a course: only a complete round (totals.played >= holes) counts, and
+// it is the new best when the course has none yet or it took fewer strokes. Returns the updated
+// map (a copy), the course's best and whether this round set it.
+export function recordBest(map, courseId, totals, holes, date = Date.now()) {
+  const m = bestMap(map);
+  const prev = m[courseId] || null;
+  if (!totals || totals.played < holes) return { map: m, best: prev, isNew: false };
+  const isNew = !prev || totals.strokes < prev.strokes;
+  if (isNew) m[courseId] = { strokes: totals.strokes, toPar: totals.toPar, date };
+  return { map: m, best: m[courseId], isNew };
 }
 

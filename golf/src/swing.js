@@ -3,7 +3,7 @@
 //
 //   interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty, handed, club?, target?,
 //                            padRect?}) -> SwingResult
-//   swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange}) -> Launch
+//   swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange, shot, handed}) -> Launch
 //   powerForDistance(distAt, dist, maxPower = 1) -> power | null   (inverts a power curve)
 //
 // samples: [{t (ms), x, y (CSS px)}] for one pointer, pointerdown to pointerup, exactly as
@@ -60,6 +60,7 @@ import { gaussian } from './rng.js';
 import { clubById, dPlane, makeLaunch } from './clubs.js';
 import { puttSpeedForDistance } from './physics.js';
 import { applyLie } from './lie.js';
+import { applyShot } from './shots.js';
 import { MAX_POWER, powerFromDepth, snapPower, draggedOut } from './input.js';
 
 // Difficulty: start-direction gain G_s and curve gain G_c (output deg per input deg) and their
@@ -409,6 +410,12 @@ export function partialSwing(club, power, speedFactor = 0.15 + 0.85 * power) {
 // the intended, error-free shot (caddie tables and the bot's planning).
 //   opts.pos        ball centre {x, y, z} (physics lifts a ball given at ground level)
 //   opts.puttRange  flat-roll distance (m) at putt power 1
+//   opts.shot       special shot id (shots.js, section 8.4; default 'normal'), applied after the lie
+//                   and the partial-swing terms, before the D-plane: its path and face-to-path add
+//                   to the swipe's own (and the contact scatter's)
+//   opts.handed     'R' | 'L': a left-hander's draw and cut are mirrored
+// Putts are paced on the hole's own green (lie.puttSurf: the course's green speed), so the putt
+// gauge's flat-roll distance holds on fast and slow greens alike.
 export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const c = typeof club === 'string' ? clubById(club) : club;
   const pos = opts.pos || { x: 0, y: 0, z: BALL_R };
@@ -420,7 +427,8 @@ export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
     const D = power * range;
     const nSpeed = g();
     const nDir = g();
-    const v = puttSpeedForDistance(D, SURFACES[SURF.GREEN]) * Math.max(0, 1 + PUTT_SIGMA_SPEED * nSpeed);
+    const green = (lie && lie.puttSurf) || SURFACES[SURF.GREEN];
+    const v = puttSpeedForDistance(D, green) * Math.max(0, 1 + PUTT_SIGMA_SPEED * nSpeed);
     const launch = makeLaunch({
       pos,
       aimYaw,
@@ -448,9 +456,11 @@ export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   const faceToPath = (swing.faceToPath || 0) + faceErr;
   const startDir = (swing.startDir || 0) + nDir * sDir + k * faceErr;
   const speedFactor = (0.15 + 0.85 * power) * Math.max(0.5, 1 + nSpeed * sSpeed) * (swing.tempo === 'decel' ? DECEL_SPEED : 1);
-  const p = applyLie({ ballSpeed: c.ballSpeed * speedFactor, ...partialSwing(c, power, speedFactor), startDirDeg: startDir }, lie, c);
-  const pathDeg = p.startDirDeg - k * faceToPath;
-  const faceDeg = pathDeg + faceToPath;
+  const pl = applyLie({ ballSpeed: c.ballSpeed * speedFactor, ...partialSwing(c, power, speedFactor), startDirDeg: startDir }, lie, c);
+  const shot = opts.shot || 'normal';
+  const p = applyShot({ ...pl, faceToPathDeg: faceToPath }, shot, c, lie, { handed: opts.handed, power });
+  const pathDeg = p.startDirDeg - k * p.faceToPathDeg;
+  const faceDeg = pathDeg + p.faceToPathDeg;
   const d = dPlane(c, faceDeg, pathDeg);
   const launch = makeLaunch({
     pos,
@@ -463,6 +473,6 @@ export function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
     club: c,
     mode: 'air',
   });
-  Object.assign(launch.meta, { power, faceDeg, pathDeg, faceToPathDeg: faceToPath });
+  Object.assign(launch.meta, { power, faceDeg, pathDeg, faceToPathDeg: p.faceToPathDeg, shot });
   return launch;
 }

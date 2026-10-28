@@ -2,8 +2,9 @@
 // wind and the caddie it relies on.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, HOLED_HOLD, END_HOLD, windFor, pathAt } from '../src/game.js';
+import { Game, HOLED_HOLD, END_HOLD, windFor, pathAt, courseFromParam, saveCourseId, bestMap, mergeBest, recordBest } from '../src/game.js';
 import { COURSE } from '../src/course.js';
+import { courseById } from '../src/courses.js';
 import { buildHole } from '../src/terrain.js';
 import { clubTable, suggestClub, playsLike, puttRange, expectedFinish } from '../src/caddie.js';
 import { lieAt } from '../src/lie.js';
@@ -13,7 +14,7 @@ import { planeTerrain } from '../src/physics.js';
 // Terrain builds are the slow part (~100 ms): share them between games.
 const cache = new Map();
 const build = (def, opts) => {
-  const k = `${def.n}:${opts.pinIndex}:${opts.seed}`;
+  const k = `${opts.course ? opts.course.id : 'pines'}:${def.n}:${opts.pinIndex}:${opts.seed}`;
   if (!cache.has(k)) cache.set(k, buildHole(def, opts));
   return cache.get(k);
 };
@@ -384,3 +385,161 @@ test('debugPlace, ball position and distances', () => {
   assert.equal(g.stepPuttRange(+1), 30);
   assert.equal(g.setPuttRange(10), 9);
 });
+
+// ------------------------------------------------------------------ special shots (section 8.4)
+
+test('special shots: eligible list, selection, reset after the stroke and on a club that cannot play it', () => {
+  const g = newGame();
+  g.loadHole(0);
+  g.skipIntro();
+  assert.equal(g.shotType, 'normal');
+  assert.equal(g.club.id, 'D');
+  assert.deepEqual(g.shotsAvailable(), ['normal', 'draw', 'cut', 'stinger']);
+  assert.equal(g.setShot('flop'), false, 'a driver cannot flop');
+  assert.equal(g.shotType, 'normal');
+  const stock = g.clubInfo();
+  const stockCurve = g.carryForPower(1);
+  assert.ok(g.setShot('stinger'));
+  assert.equal(g.shotType, 'stinger');
+  // The club picker and the power gauge follow the shot.
+  const info = g.clubInfo();
+  assert.equal(info.shot, 'stinger');
+  assert.ok(info.carry < 0.85 * stock.carry && info.landAngle < stock.landAngle, `${info.carry} vs ${stock.carry}`);
+  assert.ok(Math.abs(g.carryForPower(1).carry - info.carry) < 1e-6 && g.carryForPower(1).carry < stockCurve.carry);
+  assert.ok(g.shotPreview(1).path.length > 10);
+  assert.equal(g.clubInfo('3W').shot, 'normal', 'other clubs show their normal shot');
+  // Changing to a club that can still play it keeps it; one that cannot resets it.
+  g.setClub('3W');
+  assert.equal(g.shotType, 'stinger');
+  g.setClub('9i');
+  assert.equal(g.shotType, 'normal');
+  // The stroke plays the shot, then it goes back to normal.
+  g.setClub('D');
+  g.setShot('stinger');
+  const r = g.swing(full());
+  assert.ok(r.ok);
+  assert.equal(r.shot.swing.shot, 'stinger');
+  assert.equal(r.shot.launch.meta.shot, 'stinger');
+  assert.ok(r.shot.result.apex < 15, `stinger apex ${r.shot.result.apex}`);
+  assert.equal(g.shotType, 'normal', 'reset at the strike');
+  playOut(g);
+  if (g.phase === 'decision') g.decide('drop');
+  assert.equal(g.shotType, 'normal');
+  assert.equal(g.state.hole.last.shot, 'stinger');
+  // The putter has only the normal stroke.
+  holeOut(g);
+  assert.equal(g.phase, 'holed');
+});
+
+test('special shots: a draw curves left of the stock shot in the game; left-handed it goes right', () => {
+  const finish = (shot, handed) => {
+    const g = newGame({ settings: { wind: 'off', handed } });
+    g.loadHole(0);
+    g.skipIntro();
+    g.setClub('5i');
+    if (shot) assert.ok(g.setShot(shot));
+    const r = g.swing(full());
+    const f = r.shot.result.landing;
+    const b = r.shot.from;
+    const yaw = g.aimYaw;
+    return (f.x - b.x) * Math.sin(yaw) - (f.y - b.y) * Math.cos(yaw); // + = right of the aim
+  };
+  const n = finish(null, 'R');
+  assert.ok(finish('draw', 'R') < n - 8, 'right-handed draw lands left');
+  assert.ok(finish('draw', 'L') > finish(null, 'L') + 8, 'left-handed draw lands right');
+  assert.ok(finish('cut', 'R') > n + 8);
+});
+
+test('special shots: the selected shot is saved; old saves play normal; a mid-flight save restores identically', () => {
+  const g = newGame({ seed: 31 });
+  g.loadHole(1);
+  g.skipIntro();
+  g.setClub('7i');
+  assert.ok(g.setShot('punch'));
+  const save = JSON.parse(JSON.stringify(g.serialize()));
+  assert.equal(save.shotType, 'punch');
+  const h = Game.restore(save, { buildHole: build });
+  assert.equal(h.shotType, 'punch');
+  assert.deepEqual(h.state, g.state);
+  // A save from before special shots has no shotType.
+  delete save.shotType;
+  const old = Game.restore(save, { buildHole: build });
+  assert.equal(old.shotType, 'normal');
+  // Mid-flight: the restore re-plays the punch and resolves it.
+  g.swing(full(0.9));
+  g.update(0.5);
+  const fly = g.serialize();
+  assert.equal(fly.pendingShot.swing.shot, 'punch');
+  playOut(g);
+  const k = Game.restore(fly, { buildHole: build });
+  assert.deepEqual(k.state, g.state);
+  assert.equal(k.shot.launch.meta.shot, 'punch');
+});
+
+// ------------------------------------------------------------------ courses and saves (section 8.5)
+
+test('courses: a round on Red Mesa names the course, saves its id and restores onto it', () => {
+  const desert = courseById('desert');
+  const g = new Game({ course: desert, seed: 5, settings: { wind: 'off' }, buildHole: build });
+  const heard = [];
+  g.on('hole', (h) => heard.push(h));
+  g.loadHole(2);
+  assert.equal(heard[0].courseId, 'desert');
+  assert.equal(heard[0].courseName, desert.name);
+  assert.equal(heard[0].theme, 'desert');
+  assert.equal(g.state.card.course, desert.name);
+  g.skipIntro();
+  const save = JSON.parse(JSON.stringify(g.serialize()));
+  assert.equal(save.courseId, 'desert');
+  const h = Game.restore(save, { buildHole: build });
+  assert.equal(h.course.id, 'desert');
+  assert.equal(h.terrain.courseId, 'desert');
+  assert.deepEqual(h.state, g.state);
+  // An old save (no course id) is Hollow Pines.
+  const p = newGame();
+  p.loadHole(0);
+  const ps = JSON.parse(JSON.stringify(p.serialize()));
+  delete ps.courseId;
+  assert.equal(Game.restore(ps, { buildHole: build }).course.id, 'pines');
+});
+
+test('saves and best rounds: ?course=, the save wrapper, the per-course best map', () => {
+  assert.equal(courseFromParam('desert'), 'desert');
+  assert.equal(courseFromParam(' Links '), 'links');
+  assert.equal(courseFromParam('pines'), 'pines');
+  assert.equal(courseFromParam('mars'), null);
+  assert.equal(courseFromParam(null), null);
+  assert.equal(courseFromParam(''), null);
+  // The save wrapper: its own id, else the game's; old saves have neither (Hollow Pines).
+  assert.equal(saveCourseId({ v: 1, courseId: 'water', game: {} }), 'water');
+  assert.equal(saveCourseId({ v: 1, game: { courseId: 'links' } }), 'links');
+  assert.equal(saveCourseId({ v: 1, savedAt: 5, game: { v: 1 } }), 'pines');
+  assert.equal(saveCourseId(null), 'pines');
+  assert.equal(saveCourseId({ courseId: 'nowhere' }), 'pines');
+  // Best rounds: the old single record is Hollow Pines' best.
+  const old = { strokes: 38, toPar: 2, date: 100 };
+  assert.deepEqual(bestMap(old), { pines: old });
+  assert.deepEqual(bestMap(null), {});
+  assert.deepEqual(bestMap('junk'), {});
+  assert.deepEqual(bestMap({ desert: { strokes: 40, toPar: 4, date: 3 }, mars: { strokes: 1 }, links: { nope: 1 } }), { desert: { strokes: 40, toPar: 4, date: 3 } });
+  // Stored vs in-memory copies merge per course, the newer record winning.
+  const m = mergeBest({ pines: { strokes: 39, toPar: 3, date: 50 }, water: { strokes: 41, toPar: 5, date: 90 } }, { pines: { strokes: 37, toPar: 1, date: 60 }, links: { strokes: 44, toPar: 8, date: 10 } });
+  assert.deepEqual(Object.keys(m).sort(), ['links', 'pines', 'water']);
+  assert.equal(m.pines.strokes, 37);
+  assert.equal(m.water.strokes, 41);
+  assert.equal(mergeBest(old, null).pines.strokes, 38);
+  // Recording: only a complete nine counts; a lower score on that course is a new best.
+  const nine = (strokes) => ({ played: 9, strokes, toPar: strokes - 36 });
+  let r = recordBest(old, 'desert', nine(41), 9, 200);
+  assert.ok(r.isNew);
+  assert.deepEqual(r.best, { strokes: 41, toPar: 5, date: 200 });
+  assert.equal(r.map.pines.strokes, 38, 'other courses keep their best');
+  r = recordBest(r.map, 'pines', nine(39), 9, 300);
+  assert.ok(!r.isNew);
+  assert.equal(r.best.strokes, 38);
+  r = recordBest(r.map, 'pines', nine(36), 9, 400);
+  assert.ok(r.isNew && r.map.pines.strokes === 36 && r.map.desert.strokes === 41);
+  r = recordBest(r.map, 'links', { played: 5, strokes: 20, toPar: 0 }, 9, 500);
+  assert.ok(!r.isNew && r.best === null && !r.map.links, 'an unfinished round does not count');
+});
+
