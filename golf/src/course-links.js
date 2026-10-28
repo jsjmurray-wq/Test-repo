@@ -3,14 +3,14 @@
 // rumpled fairways, deep revetted pot bunkers in the driving zones and round the greens, tall
 // fescue and marram on the dunes (outside: 'fescue') with gorse (whin) thickets on their crests,
 // big wild greens on plateaus with run-offs and false fronts, a burn, the beach and the sea.
-//   1  Kittiwake     par 4  opener along the shore: beach and sea all down the left, a broken
-//                           dune ridge between, pots short of the green; an open front to run
-//                           the ball onto
+//   1  Kittiwake     par 4  opener along the shore: beach and sea all down the left behind a low
+//                           dune ridge, sandhills and gorse on the right, pots either side of the
+//                           driving zone; a green open in front to run the ball onto
 //   2  Sandhills     par 4  the blind drive: a marram-covered dune ridge crosses the hole 100-140 m
 //                           out; the fairway beyond falls into a valley guarded by pots, then up to
 //                           a plateau green with run-offs on both sides
-//   3  Postage       par 3  short, to a long narrow green on a shelf in the dunes, ringed by five
-//                           pots (the Coffin left), a big dune on the left, falling away right
+//   3  Postage       par 3  short, from a high dune tee to a long narrow green on a shelf in the
+//                           dunes, ringed by six pots (the Coffin left), a big dune on the left
 //   4  Hell          par 5  the long one: the Beardies (a nest of pots) left of the driving zone,
 //                           out of bounds (the old wall) all down the right, Hell bunker in the
 //                           middle of the second-shot landing zone, a huge green on a plateau
@@ -31,12 +31,14 @@
 // raised on firm ground, with short grass (fairway-cut run-offs) all round.
 //
 // Design notes (for a ~5 handicap: driver ~240 yd carry, plus ~10% extra run on firm turf):
-//  - Every tee shot has a wide line: fairways are 36-60 m wide where drives land, with ~9 m of
+//  - Every tee shot has a wide line: fairways are 40-58 m wide where drives land, with ~9 m of
 //    rough before the fescue. The pots in the landing zones sit off the aim line (the bold player
-//    flirts with them); the greenside pots leave an open front on every green.
+//    flirts with them); the greenside pots leave an open front on every green but the Postage.
 //  - Fescue stops a ball dead and costs distance, but it is never a penalty. Gorse (whin) is
 //    nearly unplayable (a ball inside a bush is caught again and again), so the thickets stand on
-//    the dune crests well away from where balls land.
+//    the dunes, 20 m or more from any short grass.
+//  - The sandhills come from the corridor rise (the land climbs beyond ~45 m of the centreline)
+//    plus chains of dune humps down each side; bare-sand blowouts scar their faces.
 //  - The sea and the burn are red penalty areas (lateral relief), with sand or grass beside them
 //    to drop on.
 //  - Greens are 9.5 ft: planes at 1.3-1.8% with tiers and humps, all under 5%; three pins each
@@ -131,7 +133,7 @@ function band(line, a, b) {
 const SEA_OUT = 1500;
 function sea(path, elev, box, line, corners, abs, extra = {}) {
   const n = line.length;
-  const xy = [line[0], ...smoothOpen(line.slice(1, n - 1), 2), line[n - 1]];
+  const xy = [line[0], ...smoothOpen(line.slice(1, n - 1), 1), line[n - 1]];
   for (const c of corners) {
     xy.push([c.includes('E') ? box.maxX + SEA_OUT : box.minX - SEA_OUT, c.includes('N') ? box.maxY + SEA_OUT : box.minY - SEA_OUT]);
   }
@@ -219,6 +221,10 @@ const blowout = (s, off, rx, ry, rot = 0) => ({
   surface: 'waste', s, off, dz: -0.6, ease: 4,
   shape: [[0, 0, rx, ry, rot], [r2(rx * 0.45), r2(ry * 0.5), r2(rx * 0.55), r2(ry * 0.8), rot + 40], [r2(-rx * 0.5), r2(-ry * 0.3), r2(rx * 0.5), r2(ry * 0.75), rot - 30]],
 });
+
+// A hummock of rough left standing in the fairway short of the driving zone (only a topped shot
+// finds it): a raised island of longer grass.
+const hummock = (s, off, rx, ry, rot = 0) => ({ surface: 'rough', s, off, shape: [[0, 0, rx, ry, rot], [r2(rx * 0.5), r2(ry * 0.4), r2(rx * 0.6), r2(ry * 0.7), rot + 30]], dz: 0.9, ease: 3 });
 
 // Closely mown surrounds (run-off areas) round a green: an ellipse `pad` m wider than the green.
 const surrounds = (G, pad = 9, extra = {}) => ({ surface: 'fairway', g: [0, 0], shape: [[0, 0, G.rx + pad, G.ry + pad, G.rot || 0]], ...extra });
@@ -335,8 +341,9 @@ export const LINKS = {
       },
       water: [sea(P1, E1, B1, SHORE1, ['NW', 'SW'], -0.6)],
       areas: [
-        { surface: 'waste', xy: smooth(band(SHORE1, -6, 20), 1) },
+        { surface: 'waste', xy: smooth(band(SHORE1, -22, 6), 1) },
         surrounds(G1),
+        hummock(96, -5, 7, 4, 10),
         blowout(110, 42, 8, 4, 10),
         blowout(250, 46, 9, 5, -20),
         blowout(175, -47, 6, 3.5, 0),
@@ -411,6 +418,8 @@ export const LINKS = {
         ...sandhills(203, 150, L2 + 30, -54, 54, 22, 4.5),
       ],
       objects: [
+        gorse(30, -30, 5, 6),
+        gorse(24, 32, 4, 6),
         gorse(118, -78, 8, 10),
         gorse(124, 80, 8, 10),
         gorse(200, -66, 6, 9),
@@ -460,6 +469,7 @@ export const LINKS = {
         ...dunes(302, [[20, 38], [90, 42], [160, 46]], 15, 2.6),
       ],
       objects: [
+        gorse(26, 30, 4, 6),
         gorse(70, -52, 7, 9),
         gorse(30, 46, 6, 8),
         gorse(-22, -26, 6, 7),
@@ -483,7 +493,8 @@ export const LINKS = {
       corridor: { w: 50, h: 6 },
       undulate: 1.1,
       tee: { s: 0, w: 9, l: 12, raise: 1.0 },
-      fairway: { from: 110, to: L4 - 16, width: [[110, 32], [200, 46], [300, 42], [400, 36], [L4 - 16, 28]], wobble: 3 },
+      // The Elysian Fields: the fairway opens out beyond the Beardies, then pinches in at Hell.
+      fairway: { from: 110, to: L4 - 16, width: [[110, 32], [200, 44], [270, 54], [330, 50], [372, 36], [420, 40], [L4 - 16, 28]], wobble: 3 },
       outside: 'fescue',
       rough: ROUGH,
       green: {
@@ -494,6 +505,7 @@ export const LINKS = {
       },
       areas: [
         surrounds(G4, 10),
+        hummock(150, 8, 8, 4.5, 0),
         blowout(170, -50, 8, 4.5, 15),
         blowout(330, -54, 9, 5, -10),
       ],
@@ -514,6 +526,7 @@ export const LINKS = {
         ...sandhills(402, -20, L4 + 20, -58, null, 22, 4.5),
       ],
       objects: [
+        gorse(30, -32, 5, 6),
         gorseRow(10, L4 - 40, 54, 5),
         gorse(80, -66, 6, 9),
         gorse(250, -72, 8, 10),
@@ -611,6 +624,7 @@ export const LINKS = {
         ...sandhills(603, 0, 330, -52, 52, 22, 4.0),
       ],
       objects: [
+        gorse(28, 30, 5, 6),
         gorse(60, -62, 7, 9),
         gorse(115, -60, 6, 8),
         gorse(175, -66, 7, 9),
@@ -645,7 +659,7 @@ export const LINKS = {
       },
       areas: [
         surrounds(G7, 9),
-        { surface: 'fairway', g: [0, 30], shape: [[0, 0, 14, 8, 0]], dz: -1.4, ease: 6 },
+        { surface: 'fairway', g: [0, 27], shape: [[0, 0, 13, 7, 0]], dz: -2, ease: 6 },
         blowout(60, -42, 7, 4, 10),
         blowout(130, 44, 7, 4, -10),
       ],
@@ -660,6 +674,7 @@ export const LINKS = {
         ...sandhills(702, -20, L7, -48, 48, 18, 3.5),
       ],
       objects: [
+        gorse(26, -28, 4, 6),
         gorse(20, -56, 6, 8),
         gorse(100, -58, 7, 9),
         gorse(40, 56, 6, 8),
@@ -708,11 +723,12 @@ export const LINKS = {
         potG(G8, 250, 4, 2.0),
       ],
       mounds: [
-        ...rumples(801, 120, L8 - 40, 18, 14),
-        ...sandhills(802, -20, L8 + 20, -56, null, 22, 4.5),
+        ...rumples(801, 120, L8 - 40, 18, 12),
+        ...sandhills(802, -20, L8 + 20, -56, null, 24, 4.5),
         ...dunes(803, [[40, 40], [120, 38], [190, 36]], 13, 1.8, 16),
       ],
       objects: [
+        gorse(28, 30, 4, 6),
         gorse(60, -64, 6, 8),
         gorse(160, -70, 8, 10),
         gorse(270, -66, 6, 8),
@@ -747,6 +763,8 @@ export const LINKS = {
         surrounds(G9, 10),
         // The Valley of Sin.
         { surface: 'fairway', g: [-4, -26], shape: [[0, 0, 11, 7, 15]], dz: -1.6, ease: 6 },
+        hummock(132, 6, 9, 5, -10),
+        hummock(160, -20, 6, 4, 20),
         blowout(140, -62, 8, 4.5, 10),
       ],
       bunkers: [

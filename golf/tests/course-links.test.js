@@ -350,7 +350,7 @@ test('the signature features: the sea and its beach, the blind drive, Hell, the 
   // 7: an open entrance: the line to the green's front is short grass all the way from 45 m out,
   //    and the ground behind the green falls away into a hollow.
   for (let s = h7.lengthM - 60; s <= h7.lengthM - 18; s += 1) assert.ok([SURF.FAIRWAY, SURF.FRINGE].includes(surf(h7, at(h7, s))), `entrance at ${s}`);
-  assert.ok(h(h7, greenPt(h7, 0, 30)) < h(h7, greenPt(h7, 0, LINKS.holes[6].green.ry)) - 1, 'hollow behind');
+  assert.ok(h(h7, greenPt(h7, 0, 28)) < h(h7, greenPt(h7, 0, LINKS.holes[6].green.ry)) - 1, 'hollow behind');
 
   // 9: out of bounds right; the Valley of Sin, a hollow short-left of the green, 1.2 m or more
   //    below the green's front, cut as fairway.
