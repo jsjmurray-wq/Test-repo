@@ -140,7 +140,7 @@ export class Game {
     this._tableKey = '';
     this._curve = null;
     this._curveKey = '';
-    this._shotRow = null;
+    this._shotRows = null;
     this._shotRowKey = '';
     this._preview = null;
     this._previewKey = '';
@@ -366,28 +366,30 @@ export class Game {
     return this._table;
   }
 
-  // Carry/total (m) of a club from here (with the selected special shot for the selected club), or
-  // the putt range for the putter. landAngle: the descent angle (deg); shot: the shot it is for.
-  clubInfo(id = this.state.clubId) {
+  // Carry/total (m) of a club from here, or the putt range for the putter. shot: the special shot
+  // to read it for (default: the selected shot for the selected club, else normal; a shot the club
+  // cannot play reads as normal). landAngle: the descent angle (deg); shot: the shot it is for.
+  clubInfo(id = this.state.clubId, shot = id === this.state.clubId ? this.shotType : 'normal') {
     const c = clubById(id);
     if (!c) return null;
     if (c.kind === 'putter') return { id, name: c.name, carry: null, total: null, puttRange: this.state.puttRange, shot: 'normal' };
-    const shot = id === this.state.clubId ? this.shotType : 'normal';
-    const row = shot === 'normal' ? this.table.find((r) => r.id === id) : this._specialRow(id, shot);
+    const row = shot === 'normal' || !isEligible(shot, c, this.lie) ? this.table.find((r) => r.id === id) : this._specialRow(id, shot);
     return { id, name: c.name, carry: row ? row.carry : null, total: row ? row.total : null, landAngle: row ? row.landAngle : null, shot: row ? row.shot : 'normal' };
   }
 
-  // Club-table row of a special shot (cached per spot, club, shot and hand, like the table).
+  // Club-table rows of special shots, cached for the spot (ball, wind, hand) like the table.
   _specialRow(id, shot) {
     const b = this.state.hole.ball;
     const w = this.state.wind;
     const handed = this.state.settings.handed;
-    const key = `${b.x},${b.y},${w.x},${w.y},${id},${shot},${handed}`;
-    if (!this._shotRow || this._shotRowKey !== key) {
-      this._shotRow = clubRow(this.terrain, b, this.lie, w, id, { aimYaw: this.state.aimYaw, shot, handed });
+    const key = `${b.x},${b.y},${w.x},${w.y},${handed}`;
+    if (!this._shotRows || this._shotRowKey !== key) {
+      this._shotRows = new Map();
       this._shotRowKey = key;
     }
-    return this._shotRow;
+    const k = `${id}:${shot}`;
+    if (!this._shotRows.has(k)) this._shotRows.set(k, clubRow(this.terrain, b, this.lie, w, id, { aimYaw: this.state.aimYaw, shot, handed }));
+    return this._shotRows.get(k);
   }
 
   // Expected carry/total (m) of the selected club and shot at a swing power, for the live power

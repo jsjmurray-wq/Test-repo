@@ -14,7 +14,19 @@
 // reaches the pin (or the aim point when the pin is out of reach), from the inverse of the
 // caddie's power curve; Easy snaps a power within 5% onto it.
 //
+// Courses (section 8.5): the main menu's course picker chooses the course of a new round (the
+// choice is remembered in golf.course.v1; ?course= overrides it); the menu backdrop flies over the
+// chosen course. The save (golf.save.v1) carries the course id, and the best round is kept per
+// course (golf.best.v1 = {[courseId]: best}; an old single record is Hollow Pines'). Restart and
+// Play again replay the round's own course.
+//
+// Special shots (section 8.4): the shot chip beside the club picker opens the shot sheet (the
+// eligible shots with their carry/total); the selection lasts one stroke. The club readout, power
+// gauge, target notch and aim preview follow it: a draw or cut shows its curved flight draped on
+// the ground (gold) ending in the landing ring, and the toast names the shot ("7i Stinger · ...").
+//
 // URL parameters
+//   ?course=ID    desert | water | links | pines: the course for new rounds (menu and autoplay)
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
 //   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
@@ -25,8 +37,10 @@
 //   ?quality=low  low-quality renderer regardless of the setting
 // globalThis.__golf = app (debugging and tests).
 
-import { Game, TREE_SEED } from './game.js';
-import { COURSE, coursePar } from './course.js';
+import { Game, TREE_SEED, courseFromParam, saveCourseId, mergeBest, recordBest } from './game.js';
+import { COURSE } from './course.js';
+import { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID } from './courses.js';
+import { shotById, shotIntent } from './shots.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
 import { CameraRig, FLYOVER_T, fovForAspect } from './camera.js';
@@ -34,7 +48,7 @@ import { InputController, readSafeInsets, snapPower, meterPower, depthForPower, 
 import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
 import { interpretSwing, swingLabel, powerForDistance } from './swing.js';
-import { RELEASE_K } from './caddie.js';
+import { releaseK } from './caddie.js';
 import { playBotShot, botDecide } from './bot.js';
 import { CLUBS, clubById } from './clubs.js';
 import { SURF, fmtDist, mToFt } from './constants.js';
@@ -42,6 +56,8 @@ import { clamp, DEG } from './vec3.js';
 
 const SAVE_KEY = 'golf.save.v1';
 const BEST_KEY = 'golf.best.v1';
+const COURSE_KEY = 'golf.course.v1'; // the course picked on the menu
+const PREVIEW_LIFT = 0.1; // m: the curved shot preview floats this far over the turf
 const INTRO_HOLD = 1.2; // s the intro holds on the green after the flyover before play starts
 const MAP_EXIT_S = 0.45; // after a Map tap, return to the address view this much later
 const BOT_THINK_S = 0.6; // autoplay pause before each shot (game time)
@@ -62,6 +78,7 @@ const FAST = clamp(parseFloat(params.get('fast')) || 1, 0.25, 50);
 const START_HOLE = clamp((parseInt(params.get('hole'), 10) || 1) - 1, 0, COURSE.holes.length - 1);
 const QUALITY = params.get('quality') === 'low' ? 'low' : null;
 const SEED = params.has('seed') ? parseInt(params.get('seed'), 10) >>> 0 : TEST ? 1 : null;
+const COURSE_PARAM = courseFromParam(params.get('course'));
 
 // Stand-in for the WebGL renderer under ?nogl=1: same API, draws nothing, so the whole game
 // (logic, HUD, input, saves) still runs where WebGL is missing (and in logic-only e2e runs).
@@ -121,6 +138,10 @@ const app = {
   targetPower: null, // power that reaches the pin / aim point (the arc's target notch), or null
   meter: null, // tap meter while it runs: {t0 (ms, event clock), kind:'full'|'putt'}
   trail: { data: new Float32Array(3 * 1024), count: 0 },
+  preview: { data: new Float32Array(3 * 512), count: 0 }, // curved aim preview (draw / cut)
+  courseId: DEFAULT_COURSE_ID, // course for a new round (menu picker, ?course=)
+  backdropCourse: null,
+  backdropT: 0,
   hudDirty: false,
   hudT: 0,
   windRel: null,
@@ -138,16 +159,16 @@ const app = {
   customHint: false,
   errors: 0,
   lastScene: null,
-  params: { DEBUG, AUTOPLAY, TEST, NOGL, FAST, START_HOLE, QUALITY, SEED },
+  params: { DEBUG, AUTOPLAY, TEST, NOGL, FAST, START_HOLE, QUALITY, SEED, COURSE: COURSE_PARAM },
   debug: null,
 };
 
 // ------------------------------------------------------------------ terrain cache
-// buildHole is deterministic per (hole, pin, seed); keep the last few so the menu backdrop, the
-// prebuilt next hole and a restored round never build the same terrain twice.
+// buildHole is deterministic per (course, hole, pin, seed); keep the last few so the menu backdrop,
+// the prebuilt next hole and a restored round never build the same terrain twice.
 const terrainCache = new Map();
 function cachedBuildHole(def, opts = {}) {
-  const key = `${def.n}:${opts.pinIndex ?? 0}:${opts.seed ?? 1}`;
+  const key = `${(opts.course && opts.course.id) || DEFAULT_COURSE_ID}:${def.n}:${opts.pinIndex ?? 0}:${opts.seed ?? 1}`;
   let t = terrainCache.get(key);
   if (!t) {
     t = buildHole(def, opts);
@@ -170,7 +191,7 @@ function saveGame() {
     clearSave(); // nothing to resume once the round is over
     return;
   }
-  memSave = JSON.stringify({ v: 1, savedAt: Date.now(), game: g.serialize() });
+  memSave = JSON.stringify({ v: 1, savedAt: Date.now(), courseId: g.course.id || DEFAULT_COURSE_ID, game: g.serialize() });
   try {
     localStorage.setItem(SAVE_KEY, memSave);
   } catch {
@@ -213,6 +234,8 @@ function clearSave() {
   }
 }
 
+// Best rounds by course {[courseId]: {strokes, toPar, date}}: the stored and in-memory copies
+// merged per course (an old single record counts as Hollow Pines').
 function loadBest() {
   let stored = null;
   try {
@@ -220,23 +243,47 @@ function loadBest() {
   } catch {
     /* fall back to memory */
   }
-  return newer(stored, memBest, 'date');
+  return mergeBest(stored, memBest);
 }
 
-// Records a completed nine; returns {best, isNew}.
-function recordBest(tot) {
-  const prev = loadBest();
-  if (tot.played < COURSE.holes.length || AUTOPLAY) return { best: prev, isNew: false };
-  const isNew = !prev || tot.strokes < prev.strokes;
-  if (isNew) {
-    memBest = { strokes: tot.strokes, toPar: tot.toPar, date: Date.now() };
+// Records a completed nine on its course; returns {best, isNew} for that course.
+function recordBestRound(tot, course) {
+  const map = loadBest();
+  if (AUTOPLAY) return { best: map[course.id] || null, isNew: false };
+  const r = recordBest(map, course.id, tot, course.holes.length);
+  if (r.isNew) {
+    memBest = r.map;
     try {
-      localStorage.setItem(BEST_KEY, JSON.stringify(memBest));
+      localStorage.setItem(BEST_KEY, JSON.stringify(r.map));
     } catch {
       /* memory only */
     }
   }
-  return { best: isNew ? memBest : prev, isNew };
+  return { best: r.best, isNew: r.isNew };
+}
+
+// The course picked on the menu (remembered across visits; ?course= wins for this visit).
+function loadCourseChoice() {
+  try {
+    return courseFromParam(localStorage.getItem(COURSE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveCourseChoice(id) {
+  try {
+    localStorage.setItem(COURSE_KEY, id);
+  } catch {
+    /* memory only */
+  }
+}
+
+// Menu card data per course (par and length need the hole splines: computed once).
+const summaries = new Map();
+function summaryOf(course) {
+  if (!summaries.has(course.id)) summaries.set(course.id, courseSummary(course));
+  return summaries.get(course.id);
 }
 
 // ------------------------------------------------------------------ formatting
@@ -337,6 +384,7 @@ function syncHinted() {
 function closeDialogs() {
   const ui = app.ui;
   ui.hideScorecard();
+  ui.hideShots();
   ui.el.decision.hidden = true;
   ui.hideIntro();
   ui.setPower(null);
@@ -371,6 +419,8 @@ function refreshClub() {
     const info = g.clubInfo();
     app.ui.setClub({ name: c.name, carry: info.carry, total: info.total });
   }
+  const shot = shotById(g.shotType);
+  app.ui.setShot({ id: shot.id, name: shot.short || shot.name, show: c.kind !== 'putter' });
   app.targetPower = targetPower(g);
   app.ui.setTarget(app.targetPower);
   syncControls();
@@ -393,11 +443,13 @@ function targetPower(g) {
   }
   const t = g.terrain;
   const b = g.state.hole.ball;
-  const row = g.table.find((r) => r.id === g.club.id);
-  const tanDescent = Math.tan(Math.max(20, row ? row.landAngle : 45) * DEG);
+  // The selected shot's descent angle and release share (a bump & run is played to run).
+  const info = g.clubInfo();
+  const tanDescent = Math.tan(Math.max(20, info.landAngle ?? 45) * DEG);
+  const k = releaseK(g.shotType);
   const finish = (p) => {
     const d = g.carryForPower(p);
-    return d.carry + RELEASE_K * Math.max(0, d.total - d.carry);
+    return d.carry + k * Math.max(0, d.total - d.carry);
   };
   const zBall = t.heightAt(b.x, b.y);
   const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
@@ -426,7 +478,7 @@ function updateInputMode() {
   const g = app.game;
   const input = app.input;
   let m = 'disabled';
-  if (g && !app.paused && !menuOpen()) {
+  if (g && !app.paused && !menuOpen() && !app.ui.shotsOpen) {
     if (AUTOPLAY) {
       m = g.phase === 'flight' || g.phase === 'holed' || g.phase === 'intro' ? 'watch' : 'disabled';
     } else {
@@ -479,7 +531,7 @@ function setView(v) {
 
 function showIntroCard(g) {
   const t = g.terrain;
-  app.ui.showIntro({ hole: t.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si });
+  app.ui.showIntro({ hole: t.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si, course: g.course.name });
 }
 
 function enterAddress() {
@@ -510,6 +562,33 @@ function changeClub(dir) {
   g.carryForPower(0.5);
   refreshClub();
   refreshHud();
+  updateInputMode();
+}
+
+// ------------------------------------------------------------------ special shots
+// The shot chip opens the sheet of the shots this club can play from this lie, each with its
+// carry/total from here; the pick lasts one stroke (game.js resets it).
+function openShots() {
+  const g = app.game;
+  if (!g || g.phase !== 'address' || g.isPutt || app.paused || app.view !== 'play') return;
+  cancelMeter();
+  const shots = g.shotsAvailable().map((id) => {
+    const s = shotById(id);
+    const info = g.clubInfo(g.club.id, id);
+    return { id, name: s.name, blurb: s.blurb, carry: info.carry, total: info.total };
+  });
+  app.ui.showShots({ shots, current: g.shotType, handed: app.ui.getSetting('handed'), kicker: `${g.club.name} · ${g.lie.label}` });
+  updateInputMode();
+}
+
+function pickShot(id) {
+  const g = app.game;
+  if (g && g.phase === 'address' && g.setShot(id)) {
+    g.carryForPower(0.5); // warm the shot's power curve before the first swing
+    refreshClub();
+    refreshHud();
+    saveGame();
+  }
   updateInputMode();
 }
 
@@ -544,12 +623,14 @@ function unbindGame() {
   app.trail.count = 0;
 }
 
-function newRound() {
+// A new round on a course (the menu's choice; Restart and Play again pass the round's own).
+function newRound(courseId = app.courseId) {
   closeDialogs();
   app.ui.hideMenu();
   app.ui.hidePause();
   const seed = SEED ?? ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
-  const game = new Game({ seed, settings: gameSettings(), buildHole: cachedBuildHole });
+  const course = courseById(courseId);
+  const game = new Game({ course, seed, settings: gameSettings(), buildHole: cachedBuildHole });
   bindGame(game);
   game.loadHole(START_HOLE);
   saveGame();
@@ -583,6 +664,9 @@ function quitToMenu() {
   unbindGame();
   closeDialogs();
   app.ui.hidePause();
+  // The backdrop is the hole just played: fly the menu's course again.
+  app.backdropCourse = null;
+  setBackdrop(app.courseId);
   showMenu();
   releaseWakeLock();
   updateInputMode();
@@ -590,13 +674,46 @@ function quitToMenu() {
 
 function showMenu() {
   const best = loadBest();
+  const save = loadSave();
+  let resumeSub = '';
+  if (save && save.game) {
+    const hole = (save.game.holeIndex ?? 0) + 1;
+    resumeSub = `${courseById(saveCourseId(save)).name} · Hole ${hole}`;
+  }
   app.ui.showHud(false);
   app.ui.showMenu({
-    canResume: !!loadSave(),
-    courseName: COURSE.name,
-    courseSub: `${COURSE.holes.length} holes · Par ${coursePar()}${best ? ` · Best ${best.strokes} (${fmtToPar(best.toPar)})` : ''}`,
+    canResume: !!save,
+    courses: COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })),
+    selected: app.courseId,
+    resumeSub,
   });
   updateInputMode();
+}
+
+// Course card picked: remember it and fly the backdrop over its first hole.
+function selectCourse(id) {
+  app.courseId = courseById(id).id;
+  saveCourseChoice(app.courseId);
+  setBackdrop(app.courseId);
+}
+
+// Menu backdrop: the chosen course's first hole (built a moment after the tap has painted).
+function setBackdrop(courseId) {
+  if (app.renderer.isNull || app.game) return;
+  const course = courseById(courseId);
+  if (app.backdropCourse === course.id) return;
+  app.backdropCourse = course.id;
+  clearTimeout(app.backdropT);
+  app.backdropT = setTimeout(() => {
+    if (app.game || app.backdropCourse !== course.id) return;
+    try {
+      const t = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
+      app.holeTerrain = t;
+      app.renderer.setHole(t);
+    } catch (err) {
+      console.error(err);
+    }
+  }, 30);
 }
 
 function setPaused(on) {
@@ -665,7 +782,7 @@ function onPhase(phase, prev) {
       break;
     case 'roundOver':
       // A restored finished round (the live 'roundOver' event shows its own card).
-      if (prev == null) showFinalCard(g.state.card, g.totals(), { best: loadBest(), isNew: false });
+      if (prev == null) showFinalCard(g.state.card, g.totals(), { best: loadBest()[g.course.id] || null, isNew: false }, g.course);
       break;
     default:
       break;
@@ -679,7 +796,7 @@ function onPhase(phase, prev) {
 function prebuildNext(g) {
   if (app.game !== g || g.phase !== 'scorecard') return;
   const i = g.state.holeIndex + 1;
-  if (i < COURSE.holes.length) cachedBuildHole(COURSE.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED });
+  if (i < g.course.holes.length) cachedBuildHole(g.course.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED, course: g.course });
 }
 
 function onShotEvent(ev) {
@@ -695,7 +812,9 @@ function onShotEnd({ shot, resolution: r }) {
       const left = app.game.distanceToCup();
       app.ui.toast(`${c.name} · ${fmtPutt(res.total)} · ${fmtShort(left)} left`, 2600);
     } else {
-      app.ui.toast(`${clubShort(c)} · ${fmtPair(res.carry, res.total)} · ${shotLabel(shot)}`, 3400);
+      // A special shot is named with the club: "7i Stinger · 140/178 yd · Straight".
+      const sp = shot.swing && shot.swing.shot && shot.swing.shot !== 'normal' ? ` ${shotById(shot.swing.shot).name}` : '';
+      app.ui.toast(`${clubShort(c)}${sp} · ${fmtPair(res.carry, res.total)} · ${shotLabel(shot)}`, 3400);
     }
   }
   saveGame();
@@ -708,11 +827,14 @@ const fmtPair = (a, b) => `${fmtLong(a).split(' ')[0]}/${fmtLong(b)}`;
 
 // What the swipe did, and separately what random contact added: a straight swipe that the
 // contact scatter pulled reads "Straight → pull", so the player is not blamed for the dice.
+// A special shot's own shape (a draw's bend) is in the toast's first segment, so it is taken out
+// here: a straight swipe on a draw reads "Straight".
 function shotLabel(shot) {
   const handed = app.ui.getSetting('handed');
   const m = shot.launch.meta;
-  const actual = swingLabel(m.startDirDeg || 0, m.faceToPathDeg || 0, handed);
   const sw = shot.swing;
+  const it = shotIntent(sw && sw.shot, shot.clubId, handed);
+  const actual = swingLabel((m.startDirDeg || 0) - it.startDirDeg, (m.faceToPathDeg || 0) - it.faceToPathDeg, handed);
   if (!sw || sw.kind !== 'full') return actual;
   const swipe = swingLabel(sw.startDir || 0, sw.faceToPath || 0, handed);
   let label = swipe === actual ? swipe : `${swipe} → ${actual.toLowerCase()}`;
@@ -756,15 +878,17 @@ function onHoled(info) {
 }
 
 function onRoundOver({ card, totals }) {
-  const best = recordBest(totals);
+  const g = app.game;
+  const best = recordBestRound(totals, g.course);
   clearSave();
-  showFinalCard(card, totals, best);
-  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, pickUps: totals.pickUps };
+  showFinalCard(card, totals, best, g.course);
+  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, pickUps: totals.pickUps, course: g.course.id };
 }
 
-function showFinalCard(card, totals, { best, isNew }) {
-  const kicker = isNew ? 'New best round!' : best ? `Round complete · Best ${best.strokes} (${fmtToPar(best.toPar)})` : 'Round complete';
-  app.ui.showScorecard(card, { final: true, kicker, title: `${totals.strokes} strokes · ${fmtToPar(totals.toPar)}` });
+// The final card: the course name heads it ("Red Mesa · New best round!").
+function showFinalCard(card, totals, { best, isNew }, course) {
+  const kicker = isNew ? 'New best round!' : best ? `Best ${best.strokes} (${fmtToPar(best.toPar)})` : 'Round complete';
+  app.ui.showScorecard(card, { final: true, kicker, course: course.name, title: `${totals.strokes} strokes · ${fmtToPar(totals.toPar)}` });
 }
 
 // ------------------------------------------------------------------ input callbacks
@@ -985,6 +1109,45 @@ function buildTrail(g) {
   return count > 1 ? tr : null;
 }
 
+// Curved aim preview for a draw or cut at address: the intended flight at the gauge's power (full
+// power while idle) draped on the hole up to where it lands, so the line bends the way the ball
+// will. Returns {trail, landing} or null for shots that fly straight down the aim line.
+function buildPreview(g, power) {
+  const it = shotIntent(g.shotType, g.club, app.ui.getSetting('handed'));
+  if (!it.faceToPathDeg) return null;
+  const pv = g.shotPreview(power);
+  if (!pv || !pv.landing) return null;
+  const t = g.terrain;
+  const path = pv.path;
+  const n = path.length / 4;
+  const pr = app.preview;
+  if (pr.data.length < (n + 1) * 3) pr.data = new Float32Array((n + 64) * 3);
+  const d = pr.data;
+  // Up to the first touchdown: past the apex, the first sample back at (or below) the launch height.
+  const z0 = path[3];
+  let apex = 0;
+  let k = 0;
+  for (; k < n; k++) {
+    const z = path[k * 4 + 3];
+    if (z > path[apex * 4 + 3]) apex = k;
+    if (k > apex + 1 && z <= z0 + 0.02) break;
+    const x = path[k * 4 + 1];
+    const y = path[k * 4 + 2];
+    d[k * 3] = x;
+    d[k * 3 + 1] = y;
+    d[k * 3 + 2] = t.heightAt(x, y) + PREVIEW_LIFT;
+  }
+  const L = pv.landing;
+  d[k * 3] = L.x;
+  d[k * 3 + 1] = L.y;
+  d[k * 3 + 2] = t.heightAt(L.x, L.y) + PREVIEW_LIFT;
+  pr.count = k + 1;
+  // Direction of travel at the landing, for the ring's stub.
+  const j = Math.max(0, k - 1);
+  const yaw = Math.atan2(L.y - d[j * 3 + 1], L.x - d[j * 3]);
+  return { trail: pr.count > 1 ? pr : null, landing: L, yaw, carry: pv.carry };
+}
+
 function buildScene(time, cam) {
   const g = app.game;
   const scene = { time, cam, ball: null, trail: null, aim: null, pin: { visible: true }, wind: { x: 0, y: 0 }, read: { on: false } };
@@ -1012,8 +1175,16 @@ function buildScene(time, cam) {
       const carry = app.swingPower != null ? app.swingPower * g.puttRange : g.distanceToCup();
       scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(0.3, carry), ring: 0.2, width: 0.012, lift: 0.008, dash: 0.45 };
     } else {
-      const carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
-      scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(1, carry) };
+      const pv = buildPreview(g, app.swingPower != null ? app.swingPower : 1);
+      if (pv) {
+        // Draw / cut: the gold curve is the line; the landing ring sits where it comes down.
+        scene.trail = pv.trail;
+        const L = pv.landing;
+        scene.aim = { x: L.x, y: L.y, z: L.z, yaw: pv.yaw, carry: 0.3, ring: Math.max(1.6, pv.carry * 0.035) };
+      } else {
+        const carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
+        scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(1, carry) };
+      }
     }
   }
   const dec = phase === 'decision' ? g.state.decision : null;
@@ -1219,8 +1390,17 @@ function installDebugHooks() {
     },
     state() {
       const g = app.game;
-      if (!g) return { phase: 'menu' };
-      return { phase: g.phase, hole: g.state.holeIndex, strokes: g.state.hole.strokes, clubId: g.state.clubId, putt: g.isPutt, card: g.state.card.holes.map((h) => h.strokes) };
+      if (!g) return { phase: 'menu', courseId: app.courseId };
+      return {
+        phase: g.phase,
+        hole: g.state.holeIndex,
+        strokes: g.state.hole.strokes,
+        clubId: g.state.clubId,
+        putt: g.isPutt,
+        card: g.state.card.holes.map((h) => h.strokes),
+        courseId: g.course.id,
+        shotType: g.shotType,
+      };
     },
   };
 }
@@ -1253,11 +1433,18 @@ function boot() {
     onSkip,
   });
   app.input.swingStyle = settings.swing;
+  app.courseId = COURSE_PARAM || loadCourseChoice() || DEFAULT_COURSE_ID;
   if (TEST) installDebugHooks();
 
-  ui.on('new-round', newRound);
+  // From the menu: the picked course; Play again (final card) and Restart: the round's own.
+  const replayCourse = () => newRound(app.game ? app.game.course.id : app.courseId);
+  ui.on('new-round', replayCourse);
   ui.on('resume', resumeGame);
-  ui.on('restart', newRound);
+  ui.on('restart', replayCourse);
+  ui.on('course', selectCourse);
+  ui.on('shots', openShots);
+  ui.on('shot', pickShot);
+  ui.on('shots-closed', updateInputMode);
   ui.on('quit', quitToMenu);
   ui.on('pause', () => setPaused(true));
   ui.on('unpause', () => setPaused(false));
@@ -1316,7 +1503,9 @@ function boot() {
     setTimeout(() => {
       try {
         if (!app.renderer.isNull) {
-          app.holeTerrain = cachedBuildHole(COURSE.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED });
+          const course = courseById(app.courseId);
+          app.backdropCourse = course.id;
+          app.holeTerrain = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
           app.renderer.setHole(app.holeTerrain);
         }
       } catch (err) {

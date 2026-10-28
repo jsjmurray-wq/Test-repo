@@ -5,8 +5,9 @@
 //   const ui = new UI(root = document)
 //   ui.on(evt, fn) -> unsubscribe      button events (fn gets no args unless noted):
 //       'new-round' 'resume' 'next-hole' 'club-prev' 'club-next' 'read' 'map' 'flyover'
-//       'putt-range+' 'putt-range-' 'pause' 'unpause' 'restart' 'quit'
+//       'putt-range+' 'putt-range-' 'pause' 'unpause' 'restart' 'quit' 'shots' 'shots-closed'
 //       'settings-changed' (settings, key)    'decision' (id)    'layout' (mode)
+//       'course' (id: a course card was picked)   'shot' (id: a shot was picked in the sheet)
 //     The UI hides its own overlay before emitting: new-round/resume hide #menu (and #scorecard,
 //     #pause), next-hole hides #scorecard, unpause/restart/quit hide #pause, pause shows #pause.
 //     quit also shows #menu with the last canResume; main may call showMenu() again to correct it.
@@ -14,7 +15,13 @@
 //   ui.applyLayout()                  re-measure (automatic on resize / orientation change)
 //   ui.padRect                        {x,y,w,h} CSS px, same as InputController.padRect
 //
-//   ui.showMenu({canResume=false, courseName?, courseSub?}) / ui.hideMenu()
+//   ui.showMenu({canResume=false, courseName?, courseSub?, courses?, selected?, resumeSub?}) /
+//       ui.hideMenu()
+//       courses: [{id, name, tagline, theme, par, lengthM, holes?, best?: {strokes, toPar}|null}]
+//       builds the course picker (cards with a theme-gradient thumbnail, name, tagline, par and
+//       length, best round); selected: the highlighted id (its name and par fill the title). A
+//       card tap selects it and emits 'course' (id). resumeSub: small line under Resume round.
+//   ui.selectedCourse                 id of the highlighted course card (or null)
 //   ui.showPause({title?}) / ui.hidePause()       ui.showSettings() ui.showHowTo()
 //   ui.setLoading(on, text='Loading')             ui.showNoGL()
 //   ui.showHud(on=true)
@@ -46,10 +53,20 @@
 //       putt: bool (putt hint, putt range control). canRead: Read button (default = putt).
 //       read / map: bool, highlights the tool and hides the swing controls.
 //       puttRange: display string, e.g. '30 ft'.
-//   ui.showIntro({hole, name, par, yards | lengthM, si}) / ui.hideIntro()   hole lower third
+//   ui.showIntro({hole, name, par, yards | lengthM, si, course?}) / ui.hideIntro()   hole lower
+//       third; course: the course name above the hole name
+//   ui.setShot({id, name, special?, show?})   the shot chip beside the club picker ('Shot ·
+//       Normal ▾'): special (a special shot is selected) tints it gold; show false hides it
+//       (putts). Tapping it emits 'shots'; main answers with showShots.
+//   ui.showShots({shots:[{id, name, blurb, carry?, total?}], current, handed, kicker}) /
+//       ui.hideShots() / ui.shotsOpen   the shot sheet: one row per eligible shot with a tiny
+//       flight-shape icon (side view; draw and cut seen from above, mirrored for a left-hander),
+//       its blurb and carry/total (m). A pick hides the sheet and emits 'shot' (id); closing it
+//       (x, or a tap outside the panel) emits 'shots-closed'.
 //   ui.toast(text, ms=2600)    'A · B · C' renders A as a bold tab (shot toast format)
 //   ui.banner(title, sub='', {tone:'under'|'par'|'over'|'ace', ms=2400})
-//   ui.showScorecard(card, {final=false, current, title?, kicker?}) / ui.hideScorecard()
+//   ui.showScorecard(card, {final=false, current, title?, kicker?, course?}) / ui.hideScorecard()
+//       The header's first line is the course name (course, else card.course), then the kicker.
 //       card: {holes:[{n?, par, lengthM? | yards?, strokes|null, putts?, fir?: bool|null,
 //              gir?: bool|null}]} or the holes array itself. current: 0-based hole to
 //       highlight. final shows Play again ([data-act="new-round"]) + Menu ([data-act="quit"])
@@ -63,9 +80,10 @@
 //       golf.settings.v1 (swing: Settings "Swing control: Swipe / Tap meter").
 //   UI.DEFAULT_SETTINGS
 //
-// DOM contract (index.html): canvas#gl, #hud (#topbar, #pause-btn, #infocard, #tools, #club,
-// #putt-range, #pad, #toast, #banner, #intro, #read-hint), #menu, #pause, #settings, #howto,
-// #scorecard, #decision, #loading, #nogl. Values live in [data-f="..."] elements.
+// DOM contract (index.html): canvas#gl, #hud (#topbar, #pause-btn, #infocard, #tools, #club-row
+// (#club, #shot), #putt-range, #pad, #toast, #banner, #intro, #read-hint), #menu (.course-pick),
+// #shots, #pause, #settings, #howto, #scorecard, #decision, #loading, #nogl. Values live in
+// [data-f="..."] elements.
 
 import { fmtDist, fmtWind, mToYd, SURF_NAMES } from './constants.js';
 import { padRectFor, readSafeInsets, layoutMode, onTarget, MAX_POWER } from './input.js';
@@ -100,6 +118,20 @@ const arcPt = (deg, r = ARC_R) => {
 };
 const arcDeg = (power) => ARC_START + ARC_SWEEP * ((power * 100) / 110);
 
+// Flight-shape icons for the shot sheet (viewBox 44 x 30). Side views over a ground line (g), with
+// the roll dashed (r); draw and cut are seen from above, bending off the dashed target line (t),
+// and are mirrored for a left-hander.
+const SHOT_ICONS = {
+  normal: '<path class="g" d="M2 26H42"/><path d="M5 26Q20 -2 35 26"/><path class="r" d="M35 25.5h4"/>',
+  draw: '<path class="t" d="M22 28V2"/><path d="M22 28C22.5 17 21 9 11 3"/>',
+  cut: '<path class="t" d="M22 28V2"/><path d="M22 28C21.5 17 23 9 33 3"/>',
+  stinger: '<path class="g" d="M2 26H42"/><path d="M4 26C10 17 18 15.5 26 24"/><path class="r" d="M26 25.5H41"/>',
+  punch: '<path class="g" d="M2 26H42"/><path d="M4 26Q15 11 27 25"/><path class="r" d="M27 25.5h8"/>',
+  flop: '<path class="g" d="M2 26H42"/><path d="M11 26Q19 -12 28 26"/>',
+  bump: '<path class="g" d="M2 26H42"/><path d="M4 26Q8.5 19 13 25"/><path class="r" d="M13 25.5H41"/>',
+};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
 const DECISION_LABELS = {
   drop: { label: 'Drop', detail: '+1 stroke · relief near where it went in' },
   replay: { label: 'Replay', detail: '+1 stroke · from where you last played' },
@@ -115,6 +147,12 @@ function scoreName(strokes, par) {
 export function fmtToPar(d) {
   if (!d) return 'E';
   return d > 0 ? `+${d}` : `−${-d}`;
+}
+
+// Course length for the menu cards: "3,314 yd" / "3,030 m".
+function fmtLength(m, units) {
+  const n = Math.round(units === 'm' ? m : mToYd(m));
+  return `${n.toLocaleString('en-US')} ${units === 'm' ? 'm' : 'yd'}`;
 }
 
 function surfKey(lieSurface, label) {
@@ -153,6 +191,7 @@ export class UI {
       howto: $('#howto'), scorecard: $('#scorecard'), decision: $('#decision'), loading: $('#loading'),
       nogl: $('#nogl'), pad: $('#pad'), toast: $('#toast'), banner: $('#banner'), intro: $('#intro'),
       windArrow: $('.wind-arrow'), wind: $('.wind'), lie: $('[data-f="lie"]'),
+      shots: $('#shots'), shot: $('#shot'), coursePick: $('#menu .course-pick'),
     };
     this.f = {};
     for (const n of root.querySelectorAll('[data-f]')) this.f[n.dataset.f] = n;
@@ -164,6 +203,8 @@ export class UI {
     this._canResume = false;
     this._decision = null;
     this._target = null;
+    this._courses = [];
+    this._course = null;
     this.padRect = { x: 0, y: 0, w: 1, h: 1 };
 
     this._buildArc();
@@ -208,6 +249,23 @@ export class UI {
       this._resolveDecision(dec.dataset.dec);
       return;
     }
+    const opt = e.target.closest('.shot-opt[data-shot]');
+    if (opt) {
+      this.hideShots();
+      this.emit('shot', opt.dataset.shot);
+      return;
+    }
+    // A tap on the shot sheet's backdrop (outside the panel) closes it.
+    if (e.target === this.el.shots) {
+      this._closeShots();
+      return;
+    }
+    const card = e.target.closest('[data-course]');
+    if (card) {
+      this._selectCourse(card.dataset.course);
+      this.emit('course', card.dataset.course);
+      return;
+    }
     const seg = e.target.closest('.seg button');
     if (seg) {
       const key = seg.parentElement.dataset.setting;
@@ -232,12 +290,14 @@ export class UI {
       case 'quit':
         this.hidePause();
         this.hideScorecard();
+        this.hideShots();
         this.showMenu({ canResume: this._canResume });
         break;
       case 'new-round':
         this.hideMenu();
         this.hideScorecard();
         this.hidePause();
+        this.hideShots();
         break;
       case 'resume':
         this.hideMenu();
@@ -256,6 +316,9 @@ export class UI {
         if (ov) ov.hidden = true;
         return;
       }
+      case 'close-shots':
+        this._closeShots();
+        return;
       default:
         break;
     }
@@ -290,22 +353,87 @@ export class UI {
   setPadRect(r) {
     this.padRect = { ...r };
     const s = this.el.hud.style;
-    s.setProperty('--pad-x', `${r.x}px`);
-    s.setProperty('--pad-y', `${r.y}px`);
-    s.setProperty('--pad-w', `${r.w}px`);
-    s.setProperty('--pad-h', `${r.h}px`);
+    // Also on the root, for overlays outside #hud (the shot sheet keeps clear of the pad).
+    const root = this.doc.documentElement.style;
+    for (const st of [s, root]) {
+      st.setProperty('--pad-x', `${r.x}px`);
+      st.setProperty('--pad-y', `${r.y}px`);
+      st.setProperty('--pad-w', `${r.w}px`);
+      st.setProperty('--pad-h', `${r.h}px`);
+    }
     const arc = Math.round(Math.min(r.w * 0.82, r.h * 0.78, 300));
     s.setProperty('--arc', `${arc}px`);
   }
 
   // ------------------------------------------------------------------ screens
-  showMenu({ canResume = false, courseName, courseSub } = {}) {
+  showMenu({ canResume = false, courseName, courseSub, courses, selected, resumeSub } = {}) {
     this._canResume = !!canResume;
     const resume = this.$('#menu [data-act="resume"]');
     resume.hidden = !canResume;
+    this.f.resumeSub.textContent = resumeSub || '';
+    if (courses) {
+      this._courses = courses.map((c) => ({ ...c }));
+      this._renderCourses();
+      this._selectCourse(selected ?? (this._courses[0] && this._courses[0].id));
+    }
     if (courseName) this.f.courseName.textContent = courseName;
     if (courseSub) this.f.courseSub.textContent = courseSub;
     this.el.menu.hidden = false;
+  }
+
+  get selectedCourse() {
+    return this._course;
+  }
+
+  // Course picker cards: a theme thumbnail (CSS gradient by data-theme) with the best round on it,
+  // then the name, the tagline and par / length.
+  _renderCourses() {
+    const box = this.el.coursePick;
+    const doc = this.doc;
+    const units = this._settings.units;
+    box.textContent = '';
+    for (const c of this._courses) {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'course-card';
+      b.dataset.course = c.id;
+      b.dataset.theme = c.theme || 'parkland';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', 'false');
+      const thumb = doc.createElement('span');
+      thumb.className = 'cc-thumb';
+      if (c.best) {
+        const best = doc.createElement('span');
+        best.className = 'cc-best';
+        best.textContent = `Best ${c.best.strokes}`;
+        thumb.appendChild(best);
+      }
+      const body = doc.createElement('span');
+      body.className = 'cc-body';
+      const name = doc.createElement('b');
+      name.className = 'cc-name';
+      name.textContent = c.name;
+      const tag = doc.createElement('span');
+      tag.className = 'cc-tag';
+      tag.textContent = c.tagline || '';
+      const meta = doc.createElement('span');
+      meta.className = 'cc-meta';
+      meta.textContent = `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
+      body.append(name, tag, meta);
+      b.append(thumb, body);
+      box.appendChild(b);
+    }
+  }
+
+  // Highlights a course card and puts its name, par, length and best round in the menu title.
+  _selectCourse(id) {
+    const c = this._courses.find((k) => k.id === id) || this._courses[0];
+    if (!c) return;
+    this._course = c.id;
+    for (const b of this.el.coursePick.querySelectorAll('[data-course]')) b.setAttribute('aria-checked', b.dataset.course === c.id ? 'true' : 'false');
+    this.f.courseName.textContent = c.name;
+    const best = c.best ? ` · Best ${c.best.strokes} (${fmtToPar(c.best.toPar)})` : '';
+    this.f.courseSub.textContent = `${c.holes || 9} holes · Par ${c.par}${best}`;
   }
 
   hideMenu() {
@@ -345,7 +473,7 @@ export class UI {
   }
 
   showNoGL() {
-    for (const k of ['menu', 'pause', 'loading', 'scorecard', 'decision']) this.el[k].hidden = true;
+    for (const k of ['menu', 'pause', 'loading', 'scorecard', 'decision', 'shots']) this.el[k].hidden = true;
     this.el.hud.hidden = true;
     this.el.nogl.hidden = false;
   }
@@ -463,6 +591,7 @@ export class UI {
   setControls(c = {}) {
     const s = Object.assign(this._controls, c);
     const hud = this.el.hud;
+    if (s.phase !== 'address' || s.putt || s.read || s.map) this._closeShots();
     if (s.phase) hud.dataset.phase = s.phase;
     hud.dataset.putt = s.putt ? '1' : '0';
     hud.dataset.read = s.read ? '1' : '0';
@@ -478,9 +607,11 @@ export class UI {
     this.setHint(this._hint);
   }
 
-  showIntro({ hole, name, par, yards, lengthM, si } = {}) {
+  showIntro({ hole, name, par, yards, lengthM, si, course } = {}) {
     const units = this._hud.units || this._settings.units;
     if (hole != null) this.f.introHole.textContent = hole;
+    this.f.introCourse.textContent = course || '';
+    this.f.introCourse.hidden = !course;
     this.f.introName.textContent = name || '';
     if (par != null) this.f.introPar.textContent = `Par ${par}`;
     if (lengthM != null) this.f.introYards.textContent = fmtDist(lengthM, units);
@@ -530,8 +661,77 @@ export class UI {
     this._bannerT2 = setTimeout(() => b.classList.remove('show', 'out'), ms);
   }
 
+  // ------------------------------------------------------------------ shots
+  setShot({ id = 'normal', name = 'Normal', special, show = true } = {}) {
+    const chip = this.el.shot;
+    this.f.shotName.textContent = name;
+    chip.dataset.cur = id;
+    chip.dataset.special = (special ?? id !== 'normal') ? '1' : '0';
+    chip.dataset.show = show ? '1' : '0';
+    chip.setAttribute('aria-label', `Shot: ${name}`);
+  }
+
+  showShots({ shots = [], current = 'normal', handed = 'R', kicker = '' } = {}) {
+    const doc = this.doc;
+    const units = this._hud.units || this._settings.units;
+    const list = this.$('#shots .shot-list');
+    list.textContent = '';
+    this.f.shotsKicker.textContent = kicker;
+    for (const s of shots) {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'shot-opt';
+      b.dataset.shot = s.id;
+      b.setAttribute('aria-pressed', s.id === current ? 'true' : 'false');
+      const ico = doc.createElementNS(SVG_NS, 'svg');
+      ico.setAttribute('class', 'shot-ico');
+      ico.setAttribute('viewBox', '0 0 44 30');
+      ico.setAttribute('aria-hidden', 'true');
+      const g = doc.createElementNS(SVG_NS, 'g');
+      // Static markup from SHOT_ICONS (no user text). Draw and cut bend the other way for a lefty.
+      g.innerHTML = SHOT_ICONS[s.id] || SHOT_ICONS.normal;
+      if (handed === 'L' && (s.id === 'draw' || s.id === 'cut')) g.setAttribute('transform', 'translate(44 0) scale(-1 1)');
+      ico.appendChild(g);
+      const body = doc.createElement('span');
+      body.className = 'so-body';
+      const name = doc.createElement('b');
+      name.textContent = s.name;
+      const blurb = doc.createElement('small');
+      blurb.textContent = s.blurb || '';
+      body.append(name, blurb);
+      b.append(ico, body);
+      if (s.carry != null) {
+        const d = doc.createElement('span');
+        d.className = 'so-dist';
+        const num = (m) => Math.round(units === 'm' ? m : mToYd(m));
+        // Carry/total, as the toasts write it ("106/107 yd").
+        d.textContent = s.total != null ? `${num(s.carry)}/${num(s.total)}` : `${num(s.carry)}`;
+        const u = doc.createElement('small');
+        u.textContent = units;
+        d.appendChild(u);
+        b.appendChild(d);
+      }
+      list.appendChild(b);
+    }
+    this.el.shots.hidden = false;
+  }
+
+  hideShots() {
+    this.el.shots.hidden = true;
+  }
+
+  get shotsOpen() {
+    return !this.el.shots.hidden;
+  }
+
+  _closeShots() {
+    if (this.el.shots.hidden) return;
+    this.hideShots();
+    this.emit('shots-closed');
+  }
+
   // ------------------------------------------------------------------ scorecard
-  showScorecard(card, { final = false, current = null, title, kicker } = {}) {
+  showScorecard(card, { final = false, current = null, title, kicker, course } = {}) {
     const holes = (Array.isArray(card) ? card : (card && card.holes) || []).map((h, i) => ({
       n: h.n ?? i + 1,
       par: h.par ?? 4,
@@ -585,7 +785,10 @@ export class UI {
     row('r-putts', 'Putts', holes.map((h) => (h.strokes == null ? '' : h.putts ?? '')), played.length ? sum(played, 'putts') : '');
 
     const last = current != null ? holes[current] : played[played.length - 1];
-    this.f.cardKicker.textContent = kicker || (final ? 'Round complete' : this.f.courseName.textContent);
+    // Header: the course name first, then what the card is ("Red Mesa · Round complete").
+    const courseName = course || (card && !Array.isArray(card) && card.course) || '';
+    const what = kicker || (final ? 'Round complete' : '');
+    this.f.cardKicker.textContent = [courseName, what].filter(Boolean).join(' · ') || this.f.courseName.textContent;
     this.f.cardTitle.textContent =
       title || (final ? `${sum(played, 'strokes')} strokes` : last && last.strokes != null ? `Hole ${last.n} · ${scoreName(last.strokes, last.par)}` : 'Scorecard');
     this.f.cardTotal.textContent = fmtToPar(toPar);
@@ -659,7 +862,13 @@ export class UI {
       // storage full or blocked: keep the in-memory value
     }
     this._syncSettingsUI();
-    if (k === 'units') this.setHud({});
+    if (k === 'units') {
+      this.setHud({});
+      if (this._courses.length) {
+        this._renderCourses();
+        this._selectCourse(this._course);
+      }
+    }
     if (k === 'swing') this.setHint(this._hint);
     this.emit('settings-changed', this.settings, k);
   }

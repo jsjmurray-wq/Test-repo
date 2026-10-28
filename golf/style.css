@@ -29,6 +29,8 @@
   --radius: 14px;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
   --gap: 10px;
+  /* Swing pad rect, mirrored here by ui.setPadRect for overlays outside #hud (the shot sheet). */
+  --pad-x: 0px; --pad-y: 55vh; --pad-w: 100vw; --pad-h: 45vh;
 }
 
 * { box-sizing: border-box; }
@@ -207,13 +209,18 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .tool[aria-pressed="true"] { background: rgba(255, 210, 90, 0.92); color: #1b1606; border-color: transparent; }
 .tool[aria-pressed="true"] svg { stroke: #1b1606; }
 
-/* ---------------- club picker ---------------- */
-#club {
+/* ---------------- club picker + shot chip ---------------- */
+/* One row at the bottom of the pad (portrait, centred as a pair) or bottom left (landscape). The
+   row itself takes no touches: only its two panels do, the gap goes to the canvas. */
+#club-row {
   left: 50%;
   bottom: calc(var(--sab) + 12px);
   transform: translateX(-50%);
+  display: flex; align-items: stretch; gap: 8px;
+}
+#club {
   height: 56px;
-  min-width: 232px;
+  min-width: 214px;
   display: flex; align-items: center;
   padding: 0 4px;
   border-radius: 16px;
@@ -224,6 +231,22 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .club-body { flex: 1; text-align: center; padding: 0 6px; min-width: 0; }
 .club-name { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
 .club-sub { font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap; margin-top: 1px; }
+
+#shot {
+  height: 56px; min-width: 70px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 0 10px;
+  border-radius: 16px;
+}
+#shot .shot-k { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+#shot .shot-v { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+#shot b { font-size: 14px; font-weight: 800; }
+#shot svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; }
+#shot:active { transform: scale(0.97); }
+/* A special shot is selected: gold, so it is never forgotten at address. */
+#shot[data-special="1"] { background: rgba(255, 210, 90, 0.92); color: #1b1606; border-color: transparent; }
+#shot[data-special="1"] .shot-k { color: rgba(27, 22, 6, 0.7); }
+#hud[data-putt="1"] #shot, #shot[data-show="0"] { display: none; }
 
 /* ---------------- putt range ---------------- */
 #putt-range {
@@ -305,9 +328,9 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(-
 
 /* ---------------- phases ---------------- */
 /* Controls only while addressing the ball. */
-#hud:not([data-phase="address"]) :is(#club, #putt-range, #pad, #tools) { display: none !important; }
-#hud[data-read="1"] :is(#club, #putt-range, #pad) { display: none !important; }
-#hud[data-map="1"] :is(#club, #putt-range, #pad, #infocard) { display: none !important; }
+#hud:not([data-phase="address"]) :is(#club-row, #putt-range, #pad, #tools) { display: none !important; }
+#hud[data-read="1"] :is(#club-row, #putt-range, #pad) { display: none !important; }
+#hud[data-map="1"] :is(#club-row, #putt-range, #pad, #infocard) { display: none !important; }
 #hud[data-phase="intro"] #infocard { display: none; }
 #intro { display: none; }
 #hud[data-intro="1"] #intro { display: flex; }
@@ -391,6 +414,7 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(-
 }
 .in-hole span:last-child { font-size: 40px; font-weight: 900; line-height: 1; }
 .in-body { flex: 1; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.in-course { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .in-name { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .in-meta { font-size: 14px; color: var(--muted); font-weight: 600; margin-top: 3px; white-space: nowrap; }
 .in-meta b { color: var(--gold); font-weight: 800; }
@@ -455,6 +479,39 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(-
 .btn-row { display: flex; gap: 10px; }
 .btn-row .btn { flex: 1; }
 
+/* ---------------- shot sheet ---------------- */
+/* Portrait: a panel at the top, above the swing pad (the view stays visible through the scrim);
+   landscape: on the left, clear of the pad on the right. Tapping the scrim closes it. */
+#shots {
+  align-items: flex-start;
+  background: linear-gradient(to bottom, rgba(3, 8, 14, 0.55), rgba(3, 8, 14, 0.12) var(--pad-y));
+  padding-top: calc(var(--sat) + 10px);
+  z-index: 11;
+}
+.shot-sheet { max-width: 420px; max-height: calc(var(--pad-y) - var(--sat) - 18px); gap: 8px; padding: 16px; }
+.shot-sheet .sheet-t { font-size: 21px; }
+.shot-list { display: flex; flex-direction: column; gap: 6px; }
+.shot-opt {
+  display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 10px;
+  min-height: 50px; padding: 5px 12px 5px 8px;
+  border-radius: 14px; text-align: left;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.shot-opt:active { background: rgba(255, 255, 255, 0.14); }
+.shot-opt[aria-pressed="true"] { background: rgba(255, 210, 90, 0.16); border-color: rgba(255, 210, 90, 0.75); }
+.shot-ico { width: 46px; height: 31px; overflow: visible; }
+.shot-ico path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.shot-ico path.g { stroke: rgba(255, 255, 255, 0.3); stroke-width: 1.4; }
+.shot-ico path.r { stroke: var(--gold); stroke-width: 2; stroke-dasharray: 2 2.6; }
+.shot-ico path.t { stroke: rgba(255, 255, 255, 0.35); stroke-width: 1.3; stroke-dasharray: 2 2.5; }
+.shot-opt[aria-pressed="true"] .shot-ico path:not(.g):not(.t):not(.r) { stroke: var(--gold); }
+.so-body { display: flex; flex-direction: column; min-width: 0; }
+.so-body b { font-size: 15px; font-weight: 800; }
+.so-body small { font-size: 12.5px; line-height: 1.3; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.so-dist { display: flex; align-items: baseline; gap: 3px; font-size: 14px; font-weight: 800; white-space: nowrap; }
+.so-dist small { font-size: 11px; font-weight: 700; color: var(--muted); }
+
 /* ---------------- main menu ---------------- */
 #menu { padding: 0; align-items: stretch; z-index: 12; }
 .menu-bg {
@@ -467,14 +524,77 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(-
   position: relative;
   flex: 1;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-  padding: calc(var(--sat) + 12vh) calc(var(--sar) + 24px) calc(var(--sab) + 28px) calc(var(--sal) + 24px);
+  padding: calc(var(--sat) + 7vh) calc(var(--sar) + 24px) calc(var(--sab) + 24px) calc(var(--sal) + 24px);
+  overflow-y: auto; /* a short screen scrolls rather than squash the course cards */
 }
 .brand { text-align: center; color: #fff; }
-.brand-mark { width: 74px; height: 74px; color: #fff; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.4)); }
-.brand-k { margin-top: 14px; font-size: 12px; font-weight: 800; letter-spacing: 0.4em; text-transform: uppercase; color: var(--gold); padding-left: 0.4em; }
-.brand-t { margin: 6px 0 0; font-size: 46px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; text-shadow: 0 6px 30px rgba(0, 0, 0, 0.45); }
+.brand-mark { width: 64px; height: 64px; color: #fff; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.4)); }
+.brand-k { margin-top: 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.4em; text-transform: uppercase; color: var(--gold); padding-left: 0.4em; }
+.brand-t { margin: 6px 0 0; font-size: 42px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; text-shadow: 0 6px 30px rgba(0, 0, 0, 0.45); }
 .brand-s { margin-top: 10px; font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.78); letter-spacing: 0.04em; }
 .menu-actions { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 10px; }
+.btn.resume { flex-direction: column; line-height: 1.15; }
+.btn.resume small { font-size: 11.5px; font-weight: 600; opacity: 0.65; }
+.btn.resume small:empty { display: none; }
+
+/* Course picker: 2 x 2 cards with a theme-gradient thumbnail on top (portrait), a thumbnail on
+   the left in landscape. */
+.course-pick { width: 100%; max-width: 420px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0; }
+.course-card {
+  position: relative;
+  display: flex; flex-direction: column; align-items: stretch;
+  min-width: 0; overflow: hidden; text-align: left;
+  border-radius: 14px;
+  background: rgba(8, 17, 28, 0.66);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  transition: transform 0.08s, border-color 0.15s;
+}
+.course-card:active { transform: scale(0.98); }
+.course-card[aria-checked="true"] { border-color: var(--gold); box-shadow: 0 0 0 1.5px var(--gold), 0 6px 20px rgba(0, 0, 0, 0.35); }
+.course-card[aria-checked="true"]::after {
+  content: ''; position: absolute; top: 7px; left: 7px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--gold) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3l2.3 2.2 4.7-5' fill='none' stroke='%231b1606' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.cc-thumb { position: relative; display: block; height: 44px; flex-shrink: 0; }
+.cc-best {
+  position: absolute; right: 6px; top: 6px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.02em;
+  padding: 2px 6px; border-radius: 999px; background: rgba(6, 14, 22, 0.62); color: var(--gold);
+}
+.cc-body { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px 9px; min-width: 0; }
+.cc-name { font-size: 15px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-tag {
+  font-size: 11.5px; line-height: 1.25; color: rgba(255, 255, 255, 0.7); font-weight: 600;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.5em;
+}
+.cc-meta { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; margin-top: 1px; }
+/* Theme thumbnails: sky, horizon and ground of each course in a few gradients. */
+.course-card[data-theme="parkland"] .cc-thumb {
+  background:
+    radial-gradient(70% 90% at 22% 112%, #1c4a26 0 58%, transparent 60%),
+    radial-gradient(60% 80% at 80% 118%, #173f22 0 58%, transparent 60%),
+    linear-gradient(180deg, #5d9ccc 0%, #a9cfe0 48%, #3f7d3c 49%, #4f9a45 72%, #3d8a3a 100%);
+}
+.course-card[data-theme="desert"] .cc-thumb {
+  background:
+    linear-gradient(90deg, transparent 0 18%, #2f9a5e 18% 36%, transparent 36%) 0 34px / 100% 10px no-repeat,
+    radial-gradient(40% 70% at 70% 66%, #b4552f 0 54%, transparent 56%),
+    linear-gradient(180deg, #e3c9a2 0%, #f0dcc0 44%, #c8693d 45%, #d9a06a 62%, #e2b98a 100%);
+}
+.course-card[data-theme="tropical"] .cc-thumb {
+  background:
+    radial-gradient(28% 38% at 64% 80%, #3fae55 0 60%, transparent 63%),
+    radial-gradient(36% 44% at 64% 80%, #f3ead2 0 62%, transparent 65%),
+    linear-gradient(180deg, #2b74c4 0%, #6fb5e6 40%, #1fb3b9 41%, #34c6c2 70%, #20a2b0 100%);
+}
+.course-card[data-theme="links"] .cc-thumb {
+  background:
+    linear-gradient(90deg, transparent 0 30%, #a9b85a 30% 62%, transparent 62%) 0 33px / 100% 11px no-repeat,
+    linear-gradient(180deg, #7f93a6 0%, #a8b6c2 34%, #4e6f86 35%, #5d7f93 46%, #b99c62 47%, #c7aa6c 100%);
+}
 
 /* ---------------- settings ---------------- */
 .set-list { display: flex; flex-direction: column; }
@@ -562,7 +682,12 @@ body[data-layout="landscape"] #infocard { top: calc(var(--sat) + 62px); padding:
 body[data-layout="landscape"] .ic-num { font-size: 32px; }
 body[data-layout="landscape"] #tools { flex-direction: row; top: calc(var(--sat) + 8px); }
 body[data-layout="landscape"] .tool { height: 46px; width: 54px; }
-body[data-layout="landscape"] #club { left: calc(var(--sal) + 10px); top: auto; bottom: calc(var(--sab) + 12px); transform: none; }
+body[data-layout="landscape"] #club-row { left: calc(var(--sal) + 10px); top: auto; bottom: calc(var(--sab) + 12px); transform: none; }
+body[data-layout="landscape"] #club { min-width: 232px; }
+body[data-layout="landscape"] #shots { align-items: center; justify-content: flex-start; padding-top: calc(var(--sat) + 12px); background: linear-gradient(to right, rgba(3, 8, 14, 0.55), rgba(3, 8, 14, 0.1) var(--pad-x)); }
+body[data-layout="landscape"] .shot-sheet { max-width: min(430px, calc(var(--pad-x) - var(--sal) - 28px)); max-height: 100%; padding: 12px 14px; gap: 6px; }
+body[data-layout="landscape"] .shot-list { gap: 4px; }
+body[data-layout="landscape"] .shot-opt { min-height: 44px; padding: 3px 12px 3px 8px; }
 body[data-layout="landscape"] #putt-range { left: calc(var(--sal) + 10px); top: auto; bottom: calc(var(--sab) + 76px); transform: none; }
 body[data-layout="landscape"] #toast { left: calc(var(--sal) + 10px); transform: none; top: auto; bottom: calc(var(--sab) + 80px); align-items: flex-start; max-width: 56vw; }
 body[data-layout="landscape"] #hud[data-phase="address"] #toast { bottom: calc(var(--sab) + 130px); }
@@ -572,9 +697,27 @@ body[data-layout="landscape"] .pad-readout { top: calc(44% - var(--arc, 260px) *
 body[data-layout="landscape"] .pad-num { font-size: 40px; }
 body[data-layout="landscape"] #banner { top: 30%; }
 body[data-layout="landscape"] #intro { right: auto; width: min(520px, 70vw); }
-body[data-layout="landscape"] .menu-inner { flex-direction: row; align-items: center; justify-content: space-evenly; padding: calc(var(--sat) + 20px) calc(var(--sar) + 32px) calc(var(--sab) + 20px) calc(var(--sal) + 32px); }
-body[data-layout="landscape"] .brand-t { font-size: 42px; }
-body[data-layout="landscape"] .menu-actions { max-width: 320px; }
+/* Landscape menu: title above the course cards on the left, the buttons on the right. */
+body[data-layout="landscape"] .menu-inner {
+  display: grid; grid-template-columns: minmax(0, 470px) minmax(220px, 300px); grid-template-rows: auto auto;
+  align-content: center; justify-content: space-evenly; column-gap: 28px; row-gap: 10px;
+  padding: calc(var(--sat) + 14px) calc(var(--sar) + 28px) calc(var(--sab) + 14px) calc(var(--sal) + 28px);
+}
+body[data-layout="landscape"] .brand { grid-column: 1; grid-row: 1; text-align: left; display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: center; }
+body[data-layout="landscape"] .brand-mark { width: 46px; height: 46px; grid-row: 1 / span 3; }
+body[data-layout="landscape"] .brand-k { margin-top: 0; padding-left: 0; font-size: 10.5px; }
+body[data-layout="landscape"] .brand-t { font-size: 32px; margin-top: 2px; }
+body[data-layout="landscape"] .brand-s { margin-top: 4px; font-size: 13px; }
+body[data-layout="landscape"] .course-pick { grid-column: 1; grid-row: 2; max-width: none; margin: 0; }
+body[data-layout="landscape"] .course-card { flex-direction: row; align-items: center; min-height: 70px; }
+body[data-layout="landscape"] .cc-thumb { width: 58px; height: auto; align-self: stretch; }
+body[data-layout="landscape"] .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
+body[data-layout="landscape"] .cc-body { padding: 6px 9px; }
+body[data-layout="landscape"] .cc-tag { font-size: 11px; }
+body[data-layout="landscape"] .course-card[aria-checked="true"]::after { top: 5px; left: 5px; width: 16px; height: 16px; }
+body[data-layout="landscape"] .course-card[data-theme="desert"] .cc-thumb,
+body[data-layout="landscape"] .course-card[data-theme="links"] .cc-thumb { background-position: 0 70%, 0 0, 0 0; background-size: 100% 18%, auto, auto; }
+body[data-layout="landscape"] .menu-actions { grid-column: 2; grid-row: 1 / span 2; align-self: center; max-width: 300px; }
 body[data-layout="landscape"] .sheet { max-width: 460px; padding: 16px 18px; }
 body[data-layout="landscape"] .card { max-width: 640px; }
 body[data-layout="landscape"] .sheet-t { font-size: 21px; }
@@ -609,6 +752,11 @@ body[data-layout="square"] .card { max-width: 620px; }
 @media (min-width: 700px) and (min-height: 700px) {
   .sc th, .sc td { height: 36px; min-width: 34px; }
   .sc { font-size: 15px; }
+}
+@media (max-height: 700px) {
+  body:not([data-layout="landscape"]) .brand-mark { display: none; }
+  body:not([data-layout="landscape"]) .menu-inner { padding-top: calc(var(--sat) + 4vh); }
+  body:not([data-layout="landscape"]) .cc-tag { -webkit-line-clamp: 1; min-height: 0; }
 }
 @media (max-width: 360px) {
   .tb-stat { min-width: 48px; padding: 0 7px; }

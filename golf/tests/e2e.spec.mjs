@@ -211,11 +211,11 @@ async function smoke(browser, base, path, vp, gl) {
     const hit = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
     const padBox = { left: pad.x, top: pad.y, right: pad.x + pad.w, bottom: pad.y + pad.h };
     const landscape = document.body.dataset.layout === 'landscape';
-    for (const id of ['#topbar', '#infocard', '#tools', '#club', '#putt-range']) {
+    for (const id of ['#topbar', '#infocard', '#tools', '#club', '#shot', '#putt-range']) {
       const el = document.querySelector(id);
       if (!el || el.offsetParent === null) continue;
       const r = el.getBoundingClientRect();
-      const inPad = (id === '#club' || id === '#putt-range') && !landscape;
+      const inPad = (id === '#club' || id === '#shot' || id === '#putt-range') && !landscape;
       if (inPad ? hit(r, arc) : hit(r, padBox)) hits.push(id);
     }
     return hits;
@@ -340,8 +340,83 @@ async function smoke(browser, base, path, vp, gl) {
     `resume restores hole/strokes/card (hole ${after.hole + 1}, ${after.strokes} strokes, hole 1: ${after.card[0]})`,
   );
   await page.waitForTimeout(300);
+
+  // Version 2 (sections 8.4 and 8.5): pick a course on the menu, play a special shot from the
+  // shot sheet, and resume that course. Builds without the course picker (a stale dist/) skip it.
+  if (await page.evaluate(() => !!document.querySelector('#menu [data-course]'))) await coursesAndShots(page, tag, vpw, vph);
+
   check(errors.length === 0, `no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await context.close();
+}
+
+// Course picker -> new round on Red Mesa -> stinger off the tee from the shot sheet -> its toast;
+// then the ?course= parameter and resuming the desert round.
+async function coursesAndShots(page, tag, vpw, vph) {
+  await page.locator('#pause-btn').tap();
+  await page.waitForTimeout(400);
+  await page.locator('#pause [data-act="quit"]').tap();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 5000), 'quit to the menu');
+  check((await page.locator('#menu [data-course]').count()) === 4, 'menu shows four course cards');
+  await page.locator('#menu [data-course="desert"]').tap();
+  await page.waitForTimeout(600);
+  const picked = await page.evaluate(() => ({
+    checked: document.querySelector('#menu [data-course="desert"]').getAttribute('aria-checked'),
+    title: document.querySelector('[data-f="courseName"]').textContent,
+  }));
+  check(picked.checked === 'true' && picked.title === 'Red Mesa', `course card selects Red Mesa ("${picked.title}")`);
+  await shot(page, tag, 'menu-courses');
+  await page.locator('#menu [data-act="new-round"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase === 'intro' && window.__golf.game.course.id === 'desert', 8000), 'new round starts on the picked course');
+  const intro = await page.evaluate(() => document.querySelector('[data-f="introCourse"]').textContent);
+  check(intro === 'Red Mesa', `hole intro names the course ("${intro}")`);
+  await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 5000), 'address on Red Mesa hole 1');
+  await page.waitForTimeout(400);
+
+  // Shot chip -> sheet of the driver's shots -> Stinger.
+  await page.locator('#shot').tap();
+  check(await waitFor(page, () => !document.getElementById('shots').hidden, 3000), 'shot chip opens the shot sheet');
+  await page.waitForTimeout(700);
+  const opts = await page.evaluate(() => [...document.querySelectorAll('#shots .shot-opt')].map((b) => b.dataset.shot));
+  check(opts.join() === 'normal,draw,cut,stinger', `driver shots: ${opts.join(', ')}`);
+  const clear = await page.evaluate(() => {
+    const pad = window.__golf.debug.padRect();
+    const r = document.querySelector('#shots .shot-sheet').getBoundingClientRect();
+    return Math.min(r.right, pad.x + pad.w) - Math.max(r.left, pad.x) <= 2 || Math.min(r.bottom, pad.y + pad.h) - Math.max(r.top, pad.y) <= 2;
+  });
+  check(clear, 'shot sheet stays clear of the swing pad');
+  await shot(page, tag, 'shot-sheet');
+  await page.locator('#shots [data-shot="stinger"]').tap();
+  check(await waitFor(page, () => document.getElementById('shots').hidden && window.__golf.game.shotType === 'stinger', 3000), 'picking Stinger closes the sheet and selects it');
+  const chip = await page.evaluate(() => ({ text: document.querySelector('[data-f="shotName"]').textContent, special: document.getElementById('shot').dataset.special }));
+  check(chip.text === 'Stinger' && chip.special === '1', `shot chip reads "${chip.text}"`);
+  await page.waitForTimeout(400);
+  const pad = await page.evaluate(() => window.__golf.debug.padRect());
+  const depth = await page.evaluate(() => window.__golf.debug.depthForPower(1, 'full'));
+  await flickSwing(page, pad.x + pad.w * 0.5, pad.y + pad.h * 0.2, Math.min(depth, pad.h * 0.7));
+  check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'the stinger is struck');
+  const flight = await page.evaluate(() => ({ shot: window.__golf.game.shot.swing.shot, apex: window.__golf.game.shot.result.apex, after: window.__golf.game.shotType }));
+  check(flight.shot === 'stinger' && flight.apex < 15 && flight.after === 'normal', `stinger flies low (apex ${flight.apex.toFixed(1)} m) and the shot resets`);
+  check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000), 'stinger resolved');
+  const toast = await page.evaluate(() => document.getElementById('toast').textContent);
+  check(/Driver Stinger/.test(toast), `toast names the shot ("${toast}")`);
+  await shot(page, tag, 'after-stinger');
+  if ((await state(page)).phase === 'decision') {
+    await page.locator('#decision [data-dec="drop"]').tap();
+    await waitFor(page, () => window.__golf.game.phase === 'address', 3000);
+  }
+
+  // ?course= picks the course on load; Resume still returns to the saved desert round.
+  const url = new URL(page.url());
+  url.searchParams.set('course', 'links');
+  await page.goto(url.toString());
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 15000), 'menu after ?course=links');
+  const sel = await page.evaluate(() => ({ links: document.querySelector('#menu [data-course="links"]').getAttribute('aria-checked'), sub: document.querySelector('[data-f="resumeSub"]').textContent }));
+  check(sel.links === 'true', '?course=links selects Gorse Point');
+  check(/Red Mesa/.test(sel.sub), `resume names the saved course ("${sel.sub}")`);
+  await page.locator('#menu [data-act="resume"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === 'desert', 8000), 'resume restores the desert round');
+  await page.waitForTimeout(300);
 }
 
 async function soak(browser, base, path, gl) {

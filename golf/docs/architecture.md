@@ -52,6 +52,7 @@ metres). Wind shows in mph (or km/h).
 | `terrain.js` | `buildHole(def, {pinIndex, seed, course}) -> HoleTerrain` (see below and §8.2) |
 | `courses.js` | `COURSES`, `courseById(id)`, `DEFAULT_COURSE_ID`, `courseSummary(course)` (§8.2) |
 | `themes.js` | `THEMES`, `themeFor(id)`: per-theme palettes, data only (§8.3) |
+| `shots.js` | `SHOTS`, `shotById`, `shotsFor(club, lie)`, `isEligible`, `applyShot(p, id, club, lie, opts)`, `shotIntent`: special shots (§8.4) |
 | `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`, `surfaceParams(terrain, surfId)` / `surfaceTable(terrain)` (SURFACES with the course conditions, §8.2). Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
 | `lie.js` | `lieAt(terrain, pos, aimYaw, {handed}) -> Lie`, `applyLie(launchParams, lie, club)` |
 | `swing.js` | `interpretSwing(samples, opts) -> SwingResult`, `swingToLaunch(club, lie, swing, aimYaw, rng, opts) -> Launch` |
@@ -452,7 +453,7 @@ with the real club, so the launch's start direction equals `startDir` plus scatt
   Drift gain 0.08°/px is for Normal and scales with `G_s` (Easy ×0.6, Pro ×1.4) with a `dzA`-px
   dead zone (4/2/0 px). The downswing start is extrapolated back from the first samples that leave
   the bottom, so a motionless pause (no touch events) does not count as downswing time.
-- `swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange})`; `rng = null` gives the intended
+- `swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange, shot, handed})` (special shots: §8.4 as built); `rng = null` gives the intended
   shot with no scatter (caddie and bot). Scatter: σ_dir = 0.6°·(2 if overswing) + lie.sdir on the
   start direction; σ_face = 0.4°·(2 if overswing) + 0.3–0.6° if rushed on the face (it moves the curve
   fully and the start direction by k); σ_speed = 1.5%·(2 if overswing). Putts: σ_speed 1%, σ_dir 0.3°.
@@ -460,7 +461,7 @@ with the real club, so the launch's start direction equals `startDir` plus scatt
 - Exports `DIFFICULTY`, `STRIKE_SPEED`, `PUTT_RANGES = [3, 6, 9, 12, 18, 24, 30]`, `swingLabel`,
   `partialSwing`, `PARTIAL_LAUNCH`, `RUSHED_FRAC`, `PUTT_MIN_DEPTH_PX`.
 
-**Caddie** — `clubTable(terrain, pos, lie, wind, {aimYaw})` → rows `{id, name, short, kind, carry,
+**Caddie** (special shots: `opts.shot`, §8.4 as built) — `clubTable(terrain, pos, lie, wind, {aimYaw})` → rows `{id, name, short, kind, carry,
 total, totalG, carry0, total0, apex, landAngle}` (stock full swing with the lie, flat fairway at the
 ball's height; `totalG` over a flat green; `carry0`/`total0` without wind; no putter row).
 `suggestClub(terrain, pos, lie, wind, {table, par, teeShot, aimYaw})` → club id: putter on the green
@@ -523,7 +524,7 @@ gir:{hit, of}, pickUps}` (par 3s have `fir: null`).
   {buildHole, terrain, course})` re-simulates and resolves it, so quitting mid-flight cannot undo a
   stroke. Restorable phases: intro, address, decision, holed, scorecard, roundOver.
 
-**Bot** — `planShot(game, {rng})` → `{clubId, yaw, swing, puttRange?, target, expected}`;
+**Bot** — `planShot(game, {rng})` → `{clubId, yaw, swing, puttRange?, target, expected, shot}` (§8.4 as built);
 `playBotShot(game)` applies it (club, aim, putt range) and swings; `botDecide(game)` picks drop or
 replay. Candidates are simulated on the real hole with the wind and scored by expected strokes to
 hole out from the rest point (penalties weighted a little extra), the best few re-scored with
@@ -627,7 +628,7 @@ export class CameraRig {
   - Save and resume (`golf.save.v1` with an in-memory fallback), wake lock,
     `visibilitychange`/`pagehide`, and `globalThis.__golf = app`.
   - URL parameters: `?debug=1`, `?autoplay=1`, `?fast=N`, `?nogl=1`, `?hole=N`, `?test=1`,
-    `?quality=low`.
+    `?quality=low`, `?course=ID` (§8.5).
 
 ### main.js (Integration, as built)
 
@@ -638,7 +639,7 @@ export class CameraRig {
   ?test})`. `!renderer.ok` shows `#nogl` and stops. `?nogl=1` uses a `NullRenderer` stub (same
   API, draws nothing) so logic, HUD, input and saves still run. The menu backdrop is a slow drone
   shot down hole 1, built behind the `#loading` spinner.
-- **Terrain cache:** `Game` gets a caching `buildHole` (last 3 by hole, pin and seed); the next
+- **Terrain cache:** `Game` gets a caching `buildHole` (last 3 by course, hole, pin and seed); the next
   hole is prebuilt ~150 ms after the scorecard appears, so "Next hole" only uploads to the GPU.
 - **Loop:** dt clamped to 0.1 s; `game.update(dt·fast)`, camera `rig.update(dt·fast)`, scene,
   `renderer.draw`. While paused one frame is drawn and then drawing stops. A frame that throws is
@@ -648,7 +649,7 @@ export class CameraRig {
   aims at `renderer.pickTerrain` and returns to the ball after 0.45 s — and `flyover`); flight =
   TV sequence for full shots, the putt camera held at the strike point for putts; holed = cup
   orbit + score banner + applause (par and better); scorecard; roundOver = final card with the
-  best round (`golf.best.v1`, completed nines only). Camera moves longer than 60 m after a
+  best round on that course (`golf.best.v1`, a per-course map since §8.5; completed nines only). Camera moves longer than 60 m after a
   flight/holed/flyover are hard cuts.
 - **Input modes:** `full`/`putt` by club, `read`, `map`, `intro` (intro and flyover), `watch`
   (flight fast-forward, holed → scorecard), `disabled` otherwise (menus, dialogs, pause).
@@ -731,7 +732,8 @@ input.resize(); input.destroy()
   `'settings-changed' (settings, key)`, `'decision' (id)`, `'layout' (mode)`. The UI hides its own
   overlay before emitting (menu on new-round/resume, scorecard on next-hole, pause sheet on
   unpause/restart/quit; `#pause-btn` opens the pause sheet; quit also re-shows `#menu`).
-- Screens: `showMenu({canResume, courseName?, courseSub?})`, `hideMenu()`, `showPause({title?})`,
+- Screens: `showMenu({canResume, courseName?, courseSub?, courses?, selected?, resumeSub?})` (course picker, §8.5 as
+  built), `hideMenu()`, `showPause({title?})`,
   `hidePause()`, `paused`, `showSettings()`, `showHowTo()`, `setLoading(on, text)`, `showNoGL()`,
   `showHud(on)` (`#hud` starts hidden).
 - HUD: `setHud({hole, par, lengthM | yards, si, strokes, toPar, distToPin, playsLike, lieLabel,
@@ -741,10 +743,10 @@ input.resize(); input.destroy()
   `setPower({power, overswing, full?, carryText, target?} | null)`, `setTarget(power|null)` (§8.1).
   `setHint(text|null)`.
   `setControls({phase, putt, canRead, read, map, puttRange})` — club picker, tools and swing pad
-  are shown only for `phase === 'address'`. `showIntro({hole, name, par, lengthM, si})`,
-  `hideIntro()`. `toast(text, ms)` (`'7 Iron · Carry 158 yd · Total 164 yd'`; the first segment is
+  are shown only for `phase === 'address'`. `showIntro({hole, name, par, lengthM, si, course?})`,
+  `hideIntro()`. Shot chip and sheet: `setShot`, `showShots`, `hideShots`, `shotsOpen` (§8.4 as built). `toast(text, ms)` (`'7 Iron · Carry 158 yd · Total 164 yd'`; the first segment is
   a bold tab). `banner(title, sub, {tone:'under'|'par'|'over'|'ace', ms})`.
-- `showScorecard(card, {final, current, title?, kicker?})`: `card.holes[i] = {n?, par, lengthM? |
+- `showScorecard(card, {final, current, title?, kicker?, course?})` (the kicker starts with the course name): `card.holes[i] = {n?, par, lengthM? |
   yards?, strokes|null, putts?, fir?: bool|null, gir?: bool|null}` (or the array itself). Totals,
   FIR/GIR/putt stats, circle (birdie or better) and square (bogey or worse) are computed by the UI.
   `final` swaps `[data-act="next-hole"]` for Play again (`new-round`) and Menu (`quit`).
@@ -1106,3 +1108,103 @@ export function applyShot(p, shotId, club, lie, opts)  // p = {ballSpeed, launch
 - The save (`golf.save.v1`) stores `courseId`. Old saves without it load as Hollow Pines.
 - The best round is kept per course: `golf.best.v1` becomes a map `{[courseId]: best}`. An old single value counts as Hollow Pines.
 - `?course=desert|water|links|pines` URL parameter.
+
+#### 8.4 as built (special shots)
+
+**`shots.js`** (pure): `SHOTS` (menu order `normal, draw, cut, stinger, punch, flop, bump`; each `{id, name, short?,
+blurb, ...factors, releaseK?, clubs?, notFrom?}`, blurbs one line, ≤ 26 characters), `shotById(id)` (unknown →
+normal), `isEligible(id, club, lie)`, `shotsFor(club, lie)` (ids, `'normal'` first; the putter only `['normal']`),
+`applyShot(p, id, club, lie, {handed, power})` → a new `p` (normal, unknown ids and the putter: an unchanged copy;
+eligibility is the caller's business), `shotIntent(id, club, handed)` → `{startDirDeg, faceToPathDeg}` (the shape the
+shot adds: what the toast takes out of the swipe label), `FLOP_MAX_LAUNCH = 60`. Eligibility exactly as the contract
+(stinger not from BUNKER or FESCUE, flop not from WASTE or DESERT). A path change `dPath` with a face-to-path change
+`dF` moves the start direction by `dPath + k·dF` (k = the club's D-plane split), so a 7-iron draw starts on the line.
+
+**Factors as built** (deviation: the contract's factors are where tuning started; these hold the table's results for
+every eligible club with this physics, `tests/shots.test.js`):
+
+| Shot | As built | Measured (full power, flat, still air) |
+|---|---|---|
+| Draw | path +3°, face-to-path −4°, spin × 0.92, **launch −2.5°** | 7i 12.6 yd left, +4.2 yd roll, carry +0.6% |
+| Cut | path −3°, face-to-path +4°, spin × 1.08, launch +1°, **ball speed × 0.985** | 7i 11.9 yd right, carry −3.0% |
+| Stinger | launch × 0.5, **spin × 0.7**, ball speed × 0.97 | driver apex 8.8 m, carry −21%, roll × 3.5, total −2% (+1% firm links) |
+| Punch | launch × 0.6, spin × 0.75, **ball speed × 0.91** | apex 38–42% of normal, carry 82–86%, 5 m/s headwind costs 8–21% of the normal loss |
+| Flop | **launch +18°** (≤ 60°), **spin × 0.42**, ball speed × 0.72 | lands 56.6–59.2°, rolls −2.5…+0 yd on a green (partial swings ≤ 2.4 yd) |
+| Bump & run | **launch × 0.3, spin × 0.2, ball speed × 0.8** | carry 37–43% of total on a fairway (7i–SW) |
+
+Why: the draw and cut factors alone gave +1 yd of draw roll and −1.3% of cut carry (the closed face delofts, the open
+face glances). Stinger at × 0.6 spin carried 25.4% shorter with × 4.04 roll (both just outside). A flop at × 1.1 spin
+(10 800 rpm at 25 m/s, landing at 55°) zips back 4–6 yd here, the opposite of "stops dead" (the test asks |roll| ≤ 3
+yd); the low spin is what a slow, glancing open-face strike gives. The bump's launch × 0.45 carried 58–62% of the
+total on a fairway (it met the range only on a green). `releaseK: 1` on stinger, punch and bump: shots meant to run
+count all of their release for the target notch (caddie `releaseK(id)`, else `RELEASE_K`).
+
+**Swing** — `swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange, shot, handed})`: `applyShot` runs on
+`{...applyLie(...), faceToPathDeg}` (the swipe's face-to-path plus contact scatter) after the lie and partial-swing
+terms, before the D-plane; `launch.meta` adds `shot` and its `faceToPathDeg` includes the shot's. Putts are now paced
+with `lie.puttSurf || SURFACES[GREEN]` (closes the 8.2 gap; identical on Hollow Pines).
+
+**Caddie** — `clubTable(t, pos, lie, wind, {aimYaw, shot, handed})`: the shot where the club can play it, else normal;
+rows add `side` (landing m across the aim line, + = right) and `shot`. `clubRow(t, pos, lie, wind, clubId, opts)` →
+one such row (null for the putter). `powerCurve(t, pos, lie, wind, clubId, aimYaw, {shot, handed})` rows and
+`curveAt` add `side` / `sideTotal`. `predictShot(..., power, {shot, handed})`. `shotPreview(t, pos, lie, wind,
+clubId, aimYaw, {power, shot, handed})` → `{path [t,x,y,z]*, carry, total, landing, final}` (the intended flight over
+flat fairway, recorded). `expectedFinish(row, k = RELEASE_K)`, `releaseK(shotId)`. `suggestClub` and `playsLike` use
+the stock table (the caddie picks the club for a normal swing).
+
+**Game** — `state.shotType` (`'normal'`; serialized; restore of an older save → normal), `shotType`, `setShot(id)` →
+false unless eligible for the club and lie, `shotsAvailable()` → ids. Reset to normal at the strike (`_strike`, so a
+restored mid-flight save matches), on every new spot (`_newLie`), and by `setClub` when the new club cannot play it.
+`swing()` plays it (with `settings.handed`); `shot.swing.shot` and `hole.last.shot` record it. `clubInfo(id?, shot?)`
+→ adds `landAngle` and `shot` (default: the selected shot for the selected club; special rows cached per spot),
+`carryForPower(p)` follows the shot and adds `side`/`sideTotal`, `shotPreview(power)` (cached per spot, club, shot,
+aim and power to 0.01; null for the putter). `holeInfo()` adds `courseName`.
+
+**Bot** — plans carry `shot`; `playBotShot` calls `setShot`. Candidates: bump & run (8i, PW) for approaches under
+45 m from fairway, fringe, tee or waste; punch with the approach clubs and a stinger with the two longest advance
+clubs into a headwind of ≥ 4 m/s. Scored like any candidate, so they win only when they score better (seed 7,
+breezy: stingers on the links tees, the odd punch; bumps rarely win). Also: the canopy-less object fix (`tr.canopy ?
+tr.canopy.rx : tr.trunkR`), lie costs WASTE +0.1, DESERT +0.4, FESCUE +0.45 strokes, and the flat planning plane
+carries the course conditions. Bot rounds (seed 7, breezy): pines +3, desert +2, water +1, links +6.
+
+**UI** — `#club-row` holds the club picker and the shot chip `#shot` ("SHOT / Normal ▾", gold while a special shot is
+selected, hidden for putts): `ui.setShot({id, name, special?, show?})`; a tap emits `'shots'`.
+`ui.showShots({shots:[{id, name, blurb, carry?, total?}], current, handed, kicker})` opens `#shots`: one row per
+eligible shot with a flight-shape icon (side view; draw/cut from above, mirrored left-handed), the blurb and
+"carry/total yd"; a pick emits `'shot'` (id), the × or a tap outside emits `'shots-closed'`; `hideShots()`,
+`shotsOpen`. The panel sits above the pad in portrait and left of it in landscape (`--pad-*` are mirrored onto
+`:root`); input is disabled while it is open, and any phase/putt/read/map change closes it.
+
+**main.js** — the chip opens the sheet with each shot's `clubInfo(club, id)` carry/total; a pick sets the shot,
+refreshes the club readout, notch and chip and saves. Target notch: the shot's `landAngle` and `releaseK`. **Aim
+preview:** for a draw or cut (`shotIntent` bends) the address scene draws `game.shotPreview(power)` (gauge power,
+full while idle) draped 0.1 m over the hole up to the landing as `scene.trail` (gold), and `scene.aim` becomes only
+the landing ring there (`carry 0.3`, `ring = max(1.6, 0.035·carry)`). Deviation: the renderer is not this stage's, so
+the curve reuses the shot-trail ribbon instead of bending the dashed aim line; other shots keep the straight line
+with the shot's carry. Toast: "7i Stinger · 140/178 yd · Straight" (`shotById(id).name` after the short club name;
+the label is the swipe's own shape with the shot's intent taken out).
+
+#### 8.5 as built (menu, saves, best rounds)
+
+- **Picker:** `ui.showMenu({canResume, courses:[{...courseSummary(c), best}], selected, resumeSub})` builds
+  `.course-pick`: 2 × 2 cards (thumbnail on top in portrait, on the left in landscape) with a CSS-gradient theme
+  thumbnail (`data-theme`), the best score on it, name, tagline and "Par 36 · 3,314 yd"; the selected card has a gold
+  ring and check, and the title above shows its name and "9 holes · Par 36 · Best 38 (+2)". A tap emits `'course'`
+  (id); `ui.selectedCourse`. The choice is stored in `golf.course.v1`; `?course=` overrides it for the visit (not
+  stored). The menu backdrop flies over the selected course's first hole (rebuilt 30 ms after a pick).
+- **Rounds:** New round plays the selected course; Restart and Play again replay the round's own course. The
+  terrain cache key is `courseId:n:pin:seed`, and the scorecard prebuild uses the round's course.
+- **Saves:** the wrapper is `{v: 1, savedAt, courseId, game}` (and the game state has `courseId`); `saveCourseId(save)`
+  → the wrapper's id, else the game's, else pines. Resume shows "Red Mesa · Hole 4" under its label.
+- **Best rounds:** `golf.best.v1` = `{[courseId]: {strokes, toPar, date}}`; `bestMap(raw)` reads an old single record as
+  Hollow Pines'; stored and in-memory copies merge per course by date (`mergeBest`); `recordBest(map, courseId,
+  totals, holes)` → `{map, best, isNew}` (complete nines only). These helpers and `courseFromParam(value)` are pure
+  exports of `game.js` (unit-tested); `main.js` owns the storage.
+- **Headers:** the scorecard kicker starts with the course name (`showScorecard(card, {course})`, default
+  `card.course`): "Hollow Pines", "Red Mesa · New best round!". The hole intro has the course name above the hole name
+  (`showIntro({..., course})`).
+- `?autoplay` reports `__golfDone.course`; `app.debug.state()` adds `courseId` and `shotType`.
+- **e2e:** after the version 1 flow, quit to the menu, pick Red Mesa, check the intro, open the shot sheet (driver:
+  normal, draw, cut, stinger; panel clear of the pad), play a stinger with a flick (apex < 15 m, shot resets), check
+  the toast "Driver Stinger", then `?course=links` selects Gorse Point and Resume (sub-line "Red Mesa · Hole 1")
+  restores the desert round. Builds without the picker (a stale `dist/`) skip it.

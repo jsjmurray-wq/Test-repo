@@ -43,16 +43,16 @@ import { clubById, dPlane } from './clubs.js';
 
 // prettier-ignore
 export const SHOTS = [
-  { id: 'normal',  name: 'Normal',     blurb: 'Your stock swing: the full carry and roll of the club' },
-  { id: 'draw',    name: 'Draw',       blurb: 'Starts on your line, curves gently left and runs out', path: 3, faceToPath: -4, spin: 0.92, launchAdd: -2.5 },
-  { id: 'cut',     name: 'Cut',        blurb: 'Starts on your line and slides right; lands softer', path: -3, faceToPath: 4, spin: 1.08, launchAdd: 1, speed: 0.985 },
-  { id: 'stinger', name: 'Stinger',    blurb: 'Low bullet under the wind that runs a long way', launch: 0.5, spin: 0.7, speed: 0.97, releaseK: 1,
+  { id: 'normal',  name: 'Normal',     blurb: 'Your stock swing' },
+  { id: 'draw',    name: 'Draw',       blurb: 'Bends left, runs out', path: 3, faceToPath: -4, spin: 0.92, launchAdd: -2.5 },
+  { id: 'cut',     name: 'Cut',        blurb: 'Slides right, lands soft', path: -3, faceToPath: 4, spin: 1.08, launchAdd: 1, speed: 0.985 },
+  { id: 'stinger', name: 'Stinger',    blurb: 'Low bullet under the wind', launch: 0.5, spin: 0.7, speed: 0.97, releaseK: 1,
     clubs: ['D', '3W', '5W', '4H', '5i', '6i'], notFrom: [SURF.BUNKER, SURF.FESCUE] },
-  { id: 'punch',   name: 'Punch',      blurb: 'Knock-down under branches or into the wind', launch: 0.6, spin: 0.75, speed: 0.91, releaseK: 1,
+  { id: 'punch',   name: 'Punch',      blurb: 'Low under trees and wind', launch: 0.6, spin: 0.75, speed: 0.91, releaseK: 1,
     clubs: ['4H', '5i', '6i', '7i', '8i', '9i', 'PW', 'GW'] },
-  { id: 'flop',    name: 'Flop',       blurb: 'Sky-high, lands steeply and stops; needs grass', launchAdd: 18, spin: 0.42, speed: 0.72,
+  { id: 'flop',    name: 'Flop',       blurb: 'Sky-high, stops dead', launchAdd: 18, spin: 0.42, speed: 0.72,
     clubs: ['GW', 'SW', 'LW'], notFrom: [SURF.WASTE, SURF.DESERT] },
-  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Low chip that lands short and rolls out like a putt', launch: 0.3, spin: 0.2, speed: 0.8, releaseK: 1,
+  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Lands short, rolls out', launch: 0.3, spin: 0.2, speed: 0.8, releaseK: 1,
     clubs: ['7i', '8i', '9i', 'PW', 'GW', 'SW'] },
 ];
 

@@ -32,7 +32,7 @@ const yd = (m) => mToYd(m);
 test('SHOTS: the seven shots in menu order, each with a name and a one-line blurb', () => {
   assert.deepEqual(SHOTS.map((s) => s.id), ['normal', 'draw', 'cut', 'stinger', 'punch', 'flop', 'bump']);
   for (const s of SHOTS) {
-    assert.ok(s.name && s.blurb && s.blurb.length < 70, s.id);
+    assert.ok(s.name && s.blurb && s.blurb.length <= 26, `${s.id}: a one-line blurb`);
   }
   assert.equal(shotById('bump').name, 'Bump & run');
   assert.equal(shotById('nope').id, 'normal');

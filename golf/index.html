@@ -67,13 +67,20 @@
     </button>
   </nav>
 
-  <div id="club" class="glass" aria-label="Club">
-    <button class="club-arrow" type="button" data-act="club-prev" aria-label="Previous club"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
-    <div class="club-body">
-      <div class="club-name" data-f="clubName">7 Iron</div>
-      <div class="club-sub"><span data-f="clubCarry">Carry 165</span><i class="dot"></i><span data-f="clubTotal">Total 172</span></div>
+  <!-- Club picker and, beside it, the shot chip (special shots; hidden for putts). -->
+  <div id="club-row">
+    <div id="club" class="glass" aria-label="Club">
+      <button class="club-arrow" type="button" data-act="club-prev" aria-label="Previous club"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="club-body">
+        <div class="club-name" data-f="clubName">7 Iron</div>
+        <div class="club-sub"><span data-f="clubCarry">Carry 165</span><i class="dot"></i><span data-f="clubTotal">Total 172</span></div>
+      </div>
+      <button class="club-arrow" type="button" data-act="club-next" aria-label="Next club"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
-    <button class="club-arrow" type="button" data-act="club-next" aria-label="Next club"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    <button id="shot" class="glass" type="button" data-act="shots" data-special="0" aria-label="Shot: Normal" aria-haspopup="dialog">
+      <span class="shot-k">Shot</span>
+      <span class="shot-v"><b data-f="shotName">Normal</b><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></span>
+    </button>
   </div>
 
   <div id="putt-range" class="glass" aria-label="Putt range">
@@ -111,6 +118,7 @@
   <section id="intro" class="glass" aria-live="polite">
     <div class="in-hole"><span class="tb-k">Hole</span><span data-f="introHole">1</span></div>
     <div class="in-body">
+      <div class="in-course" data-f="introCourse">Hollow Pines</div>
       <div class="in-name" data-f="introName">First Light</div>
       <div class="in-meta"><b data-f="introPar">Par 4</b><i class="dot"></i><span data-f="introYards">383 yd</span><i class="dot"></i><span data-f="introSi">SI 5</span></div>
     </div>
@@ -133,14 +141,29 @@
       <h1 class="brand-t" data-f="courseName">Hollow Pines</h1>
       <div class="brand-s" data-f="courseSub">9 holes · Par 36</div>
     </div>
+    <!-- Course picker: one card per course (ui.showMenu builds them). -->
+    <div class="course-pick" role="radiogroup" aria-label="Course"></div>
     <div class="menu-actions">
       <button class="btn primary" type="button" data-act="new-round">New round</button>
-      <button class="btn" type="button" data-act="resume">Resume round</button>
+      <button class="btn resume" type="button" data-act="resume">Resume round<small data-f="resumeSub"></small></button>
       <div class="btn-row">
         <button class="btn ghost" type="button" data-act="settings">Settings</button>
         <button class="btn ghost" type="button" data-act="howto">How to play</button>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ============================== SHOT SHEET ============================== -->
+<!-- Special shots for the club and lie (ui.showShots builds the list). The panel stays clear of the
+     swing pad: above it in portrait, left of it in landscape; a tap anywhere else closes it. -->
+<section id="shots" class="overlay" aria-label="Shot type" hidden>
+  <div class="sheet glass-strong shot-sheet" role="dialog" aria-label="Choose a shot">
+    <div class="sheet-head">
+      <div><div class="sheet-k" data-f="shotsKicker">7 Iron · Fairway</div><div class="sheet-t">Shot</div></div>
+      <button class="x-btn" type="button" data-act="close-shots" aria-label="Close">&times;</button>
+    </div>
+    <div class="shot-list"></div>
   </div>
 </section>
 
@@ -188,6 +211,8 @@
       <div class="ht"><b>Tempo</b><span>A brisk, even flick is right. Only a frantic snap is <em>Rushed</em> (the face wanders); creeping back up is <em>Decel</em> (a little less distance).</span></div>
       <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Changed your mind? Slide back up to the start, or off to the side, before you let go. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
       <div class="ht"><b>Clubs</b><span>The caddie picks a club for every lie. Use &#9664; &#9654; to change it.</span></div>
+      <div class="ht"><b>Shots</b><span>Tap <em>Shot</em> beside the club for a special shot: a <em>Draw</em> or <em>Cut</em> that bends around trouble (aim away from the target and the curved line shows where it lands), a low <em>Stinger</em> or <em>Punch</em> under the wind, a high <em>Flop</em> that stops dead, or a <em>Bump &amp; run</em>. It lasts one stroke.</span></div>
+      <div class="ht"><b>Courses</b><span>Pick a course on the main menu before a new round: parkland, desert, island or links. Each keeps its own best round.</span></div>
       <div class="ht"><b>Rules</b><span>Out of bounds: stroke and distance. Water: drop (+1) or replay (+1). Pick up at double par.</span></div>
     </div>
     <button class="btn primary" type="button" data-act="close">Got it</button>
