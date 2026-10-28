@@ -118,21 +118,36 @@ test('surfaceParams: default conditions are the SURFACES table itself (Hollow Pi
   assert.equal(surfaceTable(links), surfaceTable(links));
   for (const id of [SURF.BUNKER, SURF.WATER, SURF.WASTE, SURF.DESERT, SURF.FESCUE, SURF.FRINGE]) assert.equal(surfaceParams(links, id), SURFACES[id]);
   const fw = surfaceParams(links, SURF.FAIRWAY);
-  assert.ok(Math.abs(fw.a0 - SURFACES[SURF.FAIRWAY].a0 / 1.45) < 1e-12);
+  assert.ok(Math.abs(fw.a0 - SURFACES[SURF.FAIRWAY].a0 / 1.45 ** 2) < 1e-12);
   assert.ok(fw.e > 1 && fw.e <= 1.2, 'firmer bounce, clamped');
   assert.equal(SURFACES[SURF.FAIRWAY].a0, 1.1, 'the table itself is untouched');
 });
 
-test('links: a firm fairway lets a 7-iron run out 30-60% further than parkland', () => {
-  const park = roll(shot(flat(SURF.FAIRWAY, COURSE.conditions), '7i'));
-  const links = roll(shot(flat(SURF.FAIRWAY, LINKS.conditions), '7i'));
-  const k = links / park;
-  assert.ok(k >= 1.3 && k <= 1.6, `x${k.toFixed(2)} (${park.toFixed(2)} -> ${links.toFixed(2)} m)`);
-  // The driver runs further too, and a putt-paced roll scales with the firmness exactly.
-  assert.ok(roll(shot(flat(SURF.FAIRWAY, LINKS.conditions), 'D')) > roll(shot(flat(SURF.FAIRWAY, COURSE.conditions), 'D')) + 2);
+test('links: a firm fairway runs a drive on 30+ yd and releases irons; firm greens release instead of spinning back', () => {
+  const yd = (m) => m / 0.9144;
+  const park = (id) => roll(shot(flat(SURF.FAIRWAY, COURSE.conditions), id));
+  const links = (id) => roll(shot(flat(SURF.FAIRWAY, LINKS.conditions), id));
+  const desert = (id) => roll(shot(flat(SURF.FAIRWAY, DESERT.conditions), id));
+  // Driver: parkland ~19 yd of roll, Red Mesa ~29, Kittiwake ~37 (a dry links runs on 30+ yd).
+  assert.ok(yd(park('D')) > 15 && yd(park('D')) < 22, `parkland D ${yd(park('D')).toFixed(1)} yd`);
+  assert.ok(yd(links('D')) >= 30 && yd(links('D')) <= 45, `links D ${yd(links('D')).toFixed(1)} yd`);
+  assert.ok(yd(desert('D')) > yd(park('D')) + 5 && yd(desert('D')) < yd(links('D')), `desert D ${yd(desert('D')).toFixed(1)} yd`);
+  // A 7-iron landing on a links fairway releases several times as far as on parkland.
+  const k = links('7i') / park('7i');
+  assert.ok(k >= 3 && k <= 8, `7i x${k.toFixed(2)} (${park('7i').toFixed(2)} -> ${links('7i').toFixed(2)} m)`);
+  // A putt-paced roll scales with firmness squared (the roll resistance is a0, kv / firm^2).
   const a = simulateShot(flat(SURF.FAIRWAY, COURSE.conditions), rolled(5), { record: false }).total;
   const b = simulateShot(flat(SURF.FAIRWAY, LINKS.conditions), rolled(5), { record: false }).total;
-  assert.ok(Math.abs(b / a - 1.45) < 0.03, `rolled x${b / a}`);
+  assert.ok(Math.abs(b / a - 1.45 ** 2) < 0.06, `rolled x${b / a}`);
+  // Greens: on Hollow Pines a full SW spins back and a 7-iron stops; on Kittiwake's firm greens
+  // the 7-iron releases a few yards and the SW stops by its pitch mark.
+  const onGreen = (c, id) => yd(roll(shot(flat(SURF.GREEN, c), id)));
+  assert.ok(onGreen(COURSE.conditions, 'SW') < -2 && Math.abs(onGreen(COURSE.conditions, '7i')) < 1.5);
+  assert.ok(onGreen(LINKS.conditions, 'SW') > -0.5 && onGreen(LINKS.conditions, 'SW') < 2.5, `links SW ${onGreen(LINKS.conditions, 'SW').toFixed(1)} yd`);
+  assert.ok(onGreen(LINKS.conditions, '7i') > 3 && onGreen(LINKS.conditions, '7i') < 12, `links 7i ${onGreen(LINKS.conditions, '7i').toFixed(1)} yd`);
+  assert.ok(onGreen(DESERT.conditions, '7i') > onGreen(COURSE.conditions, '7i') + 1);
+  // A softer course (Coral Cay, 0.95) keeps parkland greens.
+  assert.deepEqual(surfaceParams({ conditions: { firm: 0.95, greenStimpFt: 10.5 } }, SURF.GREEN), SURFACES[SURF.GREEN]);
 });
 
 test('green speed: Stimp 12 rolls 12/9 as far as Stimp 9; 10.5 is the calibrated green', () => {

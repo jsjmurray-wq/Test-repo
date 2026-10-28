@@ -53,6 +53,11 @@ const FIELD_STEP = 2; // (s, lat, elevation) field spacing, m
 const STAKE_GAP = 12; // m between OOB stakes
 const LIP_W = 2; // m, width of the raised ring round a bunker (keep bunkers >= fringe + LIP_W off greens)
 const POT_FACE = 0.35; // m, ramp of a pot bunker's revetted face (the 1 m grid smooths it to ~55 deg)
+// The 1 m height grid spreads a pot's face up to a grid cell outside its outline; that steep band
+// (gradient over POT_STEEP within POT_BAND m of the outline) is still the pot's face, so it counts
+// as BUNKER (physics plays the revetted wall there; bake.js paints it sod).
+const POT_BAND = 1.1;
+const POT_STEEP = 0.7;
 const MAX_OBJECTS = 5000; // per hole, safety cap on scattered objects
 const MAX_DECOR = 8000; // per hole, dune-grass tufts
 // HoleDef names: `outside` values and `areas[].surface` values.
@@ -666,6 +671,8 @@ export function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
   });
 
   // ---- surface classification (exact edges) ----
+  const gsurf = { x: 0, y: 0 };
+  const potList = bunkers.filter((b) => b.pot);
   function surfaceAt(x, y) {
     if (x < minX || x > maxX || y < minY || y > maxY) return SURF.OOB;
     fieldAt(x, y, fs, false);
@@ -673,8 +680,12 @@ export function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     for (const w of waters) if (inBox(w.box, x, y) && pointInPoly(w.poly, x, y)) return SURF.WATER;
     if (flood && floodWet(x, y)) return SURF.WATER;
     for (const b of bunkers) {
-      if (!inBox(b.box, x, y)) continue;
+      if (!inBox(b.pot ? b.lipBox : b.box, x, y)) continue;
       for (const e of b.ells) if (ellQ(e, x, y) < 1) return SURF.BUNKER;
+      if (b.pot && bunkerSd(b, x, y) < POT_BAND) {
+        gradAt(x, y, gsurf);
+        if (Math.hypot(gsurf.x, gsurf.y) > POT_STEEP) return SURF.BUNKER;
+      }
     }
     if (inBox(gBoxM, x, y)) {
       if (ellQ(gE, x, y) <= 1) return SURF.GREEN;
@@ -685,6 +696,19 @@ export function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     if (inFairway(fs.s, fs.lat)) return SURF.FAIRWAY;
     if (hasCorridor && !floodOutside && corridorSd(x, y) > 0) return outsideSurf;
     return SURF.ROUGH;
+  }
+  // Inside a pot bunker (or on the steep band of its face just outside the outline)?
+  function potAt(x, y) {
+    for (const b of potList) {
+      if (!inBox(b.lipBox, x, y)) continue;
+      const sd = bunkerSd(b, x, y);
+      if (sd < 0) return true;
+      if (sd < POT_BAND) {
+        gradAt(x, y, gsurf);
+        if (Math.hypot(gsurf.x, gsurf.y) > POT_STEEP) return true;
+      }
+    }
+    return false;
   }
   function isOOB(x, y) {
     if (x < minX || x > maxX || y < minY || y > maxY) return true;
@@ -1178,7 +1202,7 @@ export function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     path,
     corners,
     heightAt, gradAt, normalAt,
-    surfaceAt, isOOB, waterAt,
+    surfaceAt, isOOB, waterAt, potAt,
     waters: waterList,
     trees, treesNear, decor,
     stakes,

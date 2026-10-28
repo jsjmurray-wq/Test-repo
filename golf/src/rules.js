@@ -31,7 +31,7 @@
 // Both cost one stroke. OB is stroke and distance.
 
 import { SURF, CLUB_LENGTH, BALL_R, G } from './constants.js';
-import { simulateShot, surfaceParams } from './physics.js';
+import { simulateShot, contactParams } from './physics.js';
 import { clamp } from './vec3.js';
 
 export const RELIEF_R = 2 * CLUB_LENGTH; // 2.28 m
@@ -95,8 +95,8 @@ function slopeAt(terrain, x, y) {
 // well under the surface's rolling drag a0 (the physics rest test, with a margin; firm courses
 // have less drag, so fewer spots hold).
 export function holdsBall(terrain, x, y) {
-  const surf = surfaceParams(terrain, terrain.surfaceAt(x, y));
   const t = slopeAt(terrain, x, y);
+  const surf = contactParams(terrain, terrain.surfaceAt(x, y), t);
   return (5 / 7) * G * (t / Math.sqrt(1 + t * t)) < surf.a0 * HOLD_MARGIN;
 }
 

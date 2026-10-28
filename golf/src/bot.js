@@ -19,6 +19,12 @@
 // Special shots (section 8.4) join the candidates where a decent player would think of them: a
 // bump & run for a short approach from short grass, a punch into a stiff headwind, a stinger off
 // the tee (or a lay-up) into one. They win only when they score better, like any candidate.
+//   escape    from a deep bunker (a pot: the rim a metre or more above the ball), the wedges and
+//             their flops at a few powers over a wide fan (out sideways, or backwards), since the
+//             line at the cup may cross a face nothing clears
+// An approach whose intended ball hits a tree (or comes back behind the ball) is not "corrected"
+// toward where the ricochet went; a few lines just either side of it are tried instead, so the bot
+// plays round a trunk in its way.
 // The best few are re-scored with seeded random misses (the bot's execution error plus the game's
 // contact scatter), so risky lines next to water or OB lose to safer ones.
 //
@@ -56,6 +62,10 @@ const BUMP_RANGE = 45; // m: approaches this short may be bumped along the groun
 const BUMP_CLUBS = ['8i', 'PW'];
 const BUMP_FROM = new Set([SURF.FAIRWAY, SURF.FRINGE, SURF.TEE, SURF.WASTE]);
 const HEADWIND = 4; // m/s against the shot before the bot thinks of keeping it low
+const DEEP_RIM = 1; // m: a bunker whose rim stands this far above the ball calls for an escape
+const ESCAPE_FAN = [0, -25, 25, -50, 50, -90, 90, 180]; // deg from the cup line
+const ESCAPE_POWERS = [0.6, 0.85, 1];
+const AROUND = [-3, 3, -6, 6]; // deg: lines either side of an approach blocked by a tree
 const ZERO_WIND = { x: 0, y: 0 };
 
 // Expected strokes to hole out, by surface and distance (m). Piecewise-linear tables tuned to a
@@ -172,6 +182,9 @@ function approach(ctx, club, target, shot = 'normal') {
     const along = c.along - tc.along;
     const lat = c.lat - tc.lat;
     if (Math.abs(along) < 2 && Math.abs(lat) < 2) break;
+    // A ball that hit a tree, or finished behind where it started, says nothing about the aim:
+    // correcting toward the ricochet sent shots far off line (planFull tries lines round it).
+    if (c.along < 0 || res.events.some((e) => e.type === 'tree')) break;
     // Rotate toward the target (a ball finishing right needs a yaw increase: CCW is left) and
     // re-solve the power for the corrected distance.
     if (f.outcome === 'rest') {
@@ -196,6 +209,17 @@ function candidateClubs(ctx, pl) {
   if (pl < 60) for (const id of ['SW', 'LW', 'GW']) if (!out.includes(id)) out.push(id);
   if (lie.surface === SURF.BUNKER && !out.includes('SW')) out.unshift('SW');
   return out.slice(0, 3);
+}
+
+// Height of the highest ground within ~2.5 m above the ball's ground (a deep bunker's rim).
+function rimAbove(t, pos) {
+  const z = t.heightAt(pos.x, pos.y);
+  let top = z;
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * 2 * Math.PI;
+    for (const r of [1.5, 2.5, 3.5]) top = Math.max(top, t.heightAt(pos.x + r * Math.cos(a), pos.y + r * Math.sin(a)));
+  }
+  return top - z;
 }
 
 function planFull(game, rng) {
@@ -261,6 +285,30 @@ function planFull(game, rng) {
         for (const off of LAYUP_FAN) {
           const yaw = yaw0 + off * DEG;
           cands.push({ clubId: id, yaw, power: 1, intended: simulate(t, club, ctx.lie, fullSwing(1), yaw, pos, wind, so), shot: 'stinger' });
+        }
+      }
+    }
+  }
+  // Approaches blocked by a tree: try lines just either side (same club, power and shot).
+  for (const c of cands.slice()) {
+    if (!c.intended.events.some((e) => e.type === 'tree')) continue;
+    const club = clubById(c.clubId);
+    for (const off of AROUND) {
+      const yaw = c.yaw + off * DEG;
+      cands.push({ clubId: c.clubId, yaw, power: c.power, intended: simulate(t, club, ctx.lie, fullSwing(c.power), yaw, pos, wind, { shot: c.shot, handed: ctx.handed }), shot: c.shot });
+    }
+  }
+  // Deep in a pot: wedges and flops over a wide fan, the way out first and the distance second.
+  if (ctx.lie.surface === SURF.BUNKER && rimAbove(t, pos) >= DEEP_RIM) {
+    const yawCup = Math.atan2(cup.y - pos.y, cup.x - pos.x);
+    for (const id of ['SW', 'LW']) {
+      const club = clubById(id);
+      for (const shot of ['flop', 'normal']) {
+        if (shot !== 'normal' && !isEligible(shot, id, ctx.lie)) continue;
+        const so = { shot, handed: ctx.handed };
+        for (const off of ESCAPE_FAN) {
+          const yaw = yawCup + off * DEG;
+          for (const power of ESCAPE_POWERS) cands.push({ clubId: id, yaw, power, intended: simulate(t, club, ctx.lie, fullSwing(power), yaw, pos, wind, so), shot });
         }
       }
     }

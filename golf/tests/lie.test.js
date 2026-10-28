@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { lieAt, applyLie, greenEdgeDist, isExplosion } from '../src/lie.js';
 import { COURSE } from '../src/course.js';
 import { buildHole } from '../src/terrain.js';
-import { planeTerrain } from '../src/physics.js';
+import { planeTerrain, simulateShot } from '../src/physics.js';
+import { swingToLaunch } from '../src/swing.js';
 import { clubById } from '../src/clubs.js';
-import { SURF, SURFACES } from '../src/constants.js';
+import { SURF, SURFACES, BALL_R } from '../src/constants.js';
 import { DEG } from '../src/vec3.js';
 
 const hole1 = buildHole(COURSE.holes[0], { pinIndex: 0, seed: 1 });
@@ -148,4 +149,47 @@ test('applyLie: lie factors, woods from rough and sand, greenside explosion, put
   assert.ok(close(applyLie(params, side, clubById('7i')).startDirDeg, side.dirOffset));
   assert.deepEqual(applyLie(params, rough, clubById('P')), params);
   assert.deepEqual(applyLie(params, null, clubById('7i')), params);
+});
+
+test('fescue and desert: the long, flat-faced clubs lose the most, so the club out of them is an iron', () => {
+  const land = planeTerrain({ surface: SURF.FAIRWAY });
+  const carry = (surface, id) => {
+    const lie = lieAt(planeTerrain({ surface }), { x: 0, y: 0, z: 0 }, 0);
+    const L = swingToLaunch(clubById(id), lie, { power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' }, 0, null, { pos: { x: 0, y: 0, z: 0 } });
+    return simulateShot(land, L, { record: false }).carry / 0.9144;
+  };
+  for (const surface of [SURF.FESCUE, SURF.DESERT]) {
+    const c = Object.fromEntries(['3W', '5W', '4H', '5i', '7i', '9i'].map((id) => [id, carry(surface, id)]));
+    const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0][0];
+    assert.ok(['5i', '7i', '9i'].includes(best), `${surface}: best ${best} ${JSON.stringify(c)}`);
+    assert.ok(c['3W'] < c['7i'], `3W ${c['3W'].toFixed(0)} vs 7i ${c['7i'].toFixed(0)}`);
+  }
+  // Fescue advances a short iron 60-100 yd.
+  const f7 = carry(SURF.FESCUE, '7i');
+  assert.ok(f7 > 60 && f7 < 100, `fescue 7i ${f7.toFixed(0)} yd`);
+  // The factor itself: woods x0.45 in fescue, the table's 0.70 for the short irons; rough unchanged.
+  const lie = lieAt(planeTerrain({ surface: SURF.FESCUE }), { x: 0, y: 0, z: 0 }, 0);
+  assert.ok(close(applyLie(params, lie, clubById('3W')).ballSpeed, 50 * 0.45));
+  assert.ok(close(applyLie(params, lie, clubById('9i')).ballSpeed, 50 * 0.7));
+  assert.ok(close(applyLie(params, lie, clubById('LW')).ballSpeed, 50 * 0.7));
+});
+
+test('a ball lying inside gorse or a shrub: labelled, and close to unplayable (a hack-out)', () => {
+  const bush = { kind: 'gorse', x: 0, y: 0, z: 0, trunkR: 0, trunkH: 0, canopy: { cz: 0.6, rx: 1.6, rz: 0.85 } };
+  const T = planeTerrain({ surface: SURF.FESCUE, trees: [bush] });
+  const ball = { x: 0.4, y: 0.2, z: BALL_R };
+  const lie = lieAt(T, ball, 0);
+  assert.equal(lie.bush, 'gorse');
+  assert.equal(lie.label, 'Fescue · In the gorse');
+  const out = lieAt(T, { x: 3, y: 0, z: BALL_R }, 0);
+  assert.equal(out.bush, null);
+  assert.equal(out.label, 'Fescue');
+  const p = (l, id) => applyLie(params, l, clubById(id)).ballSpeed;
+  assert.ok(close(p(lie, '7i') / p(out, '7i'), 0.5));
+  assert.ok(p(lie, '3W') / p(out, '3W') < 0.31, 'woods lose more');
+  // Played out of it, a 7-iron goes nowhere near its fescue distance.
+  const hit = (l, pos) => simulateShot(T, swingToLaunch(clubById('7i'), l, { power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' }, 0, null, { pos }), { record: false });
+  assert.ok(hit(lie, ball).carry < 0.55 * hit(out, { x: 3, y: 0, z: BALL_R }).carry);
+  const shrub = lieAt(planeTerrain({ surface: SURF.DESERT, trees: [{ ...bush, kind: 'shrub' }] }), ball, 0);
+  assert.equal(shrub.label, 'Desert · In a bush');
 });

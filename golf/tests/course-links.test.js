@@ -9,7 +9,7 @@ import { courseById, courseSummary } from '../src/courses.js';
 import { buildHole } from '../src/terrain.js';
 import { SURF, BALL_R, mToYd, ydToM } from '../src/constants.js';
 import { resolveShot, isDropOk, holdsBall } from '../src/rules.js';
-import { simulateShot } from '../src/physics.js';
+import { simulateShot, REVET_GRAD } from '../src/physics.js';
 import { stockLaunch, clubById, CLUBS } from '../src/clubs.js';
 import { swingToLaunch } from '../src/swing.js';
 import { lieAt } from '../src/lie.js';
@@ -427,3 +427,92 @@ for (const [seed, wind] of [[1, 'light'], [2, 'light'], [3, 'breezy']]) {
     assert.ok(tt.pickUps <= 1);
   });
 }
+
+// Floors of the pot bunkers (the lowest sand cells of each deep bunker) at least `minCup` m from
+// the cup, with the hole they are on.
+function potFloors(minCup = 70) {
+  const out = [];
+  holes.forEach((t, hi) => {
+    const sg = t.sgrid;
+    const seen = new Uint8Array(sg.nx * sg.ny);
+    for (let k0 = 0; k0 < sg.data.length; k0++) {
+      if (seen[k0] || sg.data[k0] !== SURF.BUNKER) continue;
+      const stack = [k0];
+      seen[k0] = 1;
+      const cells = [];
+      while (stack.length) {
+        const q = stack.pop();
+        cells.push(q);
+        const qi = q % sg.nx;
+        const qj = (q / sg.nx) | 0;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = qi + di;
+          const nj = qj + dj;
+          if (ni < 0 || nj < 0 || ni >= sg.nx || nj >= sg.ny) continue;
+          const nk = nj * sg.nx + ni;
+          if (!seen[nk] && sg.data[nk] === SURF.BUNKER) {
+            seen[nk] = 1;
+            stack.push(nk);
+          }
+        }
+      }
+      const pts = cells.map((k) => ({ x: sg.minX + (k % sg.nx + 0.5) * sg.step, y: sg.minY + (((k / sg.nx) | 0) + 0.5) * sg.step }));
+      const zs = pts.map((p) => t.heightAt(p.x, p.y));
+      const lo = Math.min(...zs);
+      if (Math.max(...zs) - lo < 1 || !t.potAt(pts[0].x, pts[0].y)) continue;
+      const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+      const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+      if (Math.hypot(t.cup.x - cx, t.cup.y - cy) < minCup) continue;
+      pts.forEach((p, i) => zs[i] < lo + 0.15 && out.push({ t, hi, ...p }));
+    }
+  });
+  return out;
+}
+
+test('pot bunkers: a long iron or hybrid from the floor at the face stays in the pot (the revetted wall is no ramp)', () => {
+  const floors = potFloors();
+  assert.ok(floors.length > 60, `${floors.length} floor spots`);
+  for (const id of ['4H', '5i']) {
+    let stay = 0;
+    for (const f of floors) {
+      const yaw = Math.atan2(f.t.cup.y - f.y, f.t.cup.x - f.x);
+      const pos = { x: f.x, y: f.y, z: f.t.heightAt(f.x, f.y) + BALL_R };
+      const L = swingToLaunch(clubById(id), lieAt(f.t, pos, yaw), { power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' }, yaw, null, { pos });
+      const r = simulateShot(f.t, L, { record: false });
+      if (r.final.surface === SURF.BUNKER) stay++;
+    }
+    assert.ok(stay / floors.length >= 0.88, `${id}: ${stay}/${floors.length} stay in the pot`);
+  }
+  // The flop is the escape.
+  let out = 0;
+  for (const f of floors) {
+    const yaw = Math.atan2(f.t.cup.y - f.y, f.t.cup.x - f.x);
+    const pos = { x: f.x, y: f.y, z: f.t.heightAt(f.x, f.y) + BALL_R };
+    const L = swingToLaunch(clubById('LW'), lieAt(f.t, pos, yaw), { power: 1, startDir: 0, faceToPath: 0, tempo: 'smooth' }, yaw, null, { pos, shot: 'flop' });
+    if (simulateShot(f.t, L, { record: false }).final.surface !== SURF.BUNKER) out++;
+  }
+  assert.ok(out / floors.length > 0.9, `LW flop: ${out}/${floors.length} out`);
+});
+
+test('pot bunkers: the steep face is sand or sod (BUNKER) right up to the lip, and no ball rests on it', () => {
+  let faces = 0;
+  for (const t of holes) {
+    const g = t.grid;
+    for (let j = 1; j < g.ny - 1; j += 1) {
+      for (let i = 1; i < g.nx - 1; i += 1) {
+        const x = g.minX + i + 0.5;
+        const y = g.minY + j + 0.5;
+        if (!t.potAt(x, y)) continue;
+        if (slope(t, x, y) > REVET_GRAD) {
+          faces++;
+          assert.equal(t.surfaceAt(x, y), SURF.BUNKER, `steep pot face at ${x}, ${y} is ${t.surfaceAt(x, y)}`);
+          assert.ok(!holdsBall(t, x, y), 'a revetted face holds no ball');
+          // A ball set down on the face runs down to the floor.
+          const r = simulateShot(t, { pos: { x, y, z: t.heightAt(x, y) + BALL_R }, vel: { x: 0, y: 0, z: 0 }, spin: { x: 0, y: 0, z: 0 }, mode: 'roll' }, { record: false, pin: false, maxT: 8 });
+          assert.ok(slope(t, r.final.x, r.final.y) <= REVET_GRAD, `rests on the wall at ${x}, ${y}`);
+        }
+      }
+    }
+  }
+  assert.ok(faces > 50, `${faces} face samples`);
+});

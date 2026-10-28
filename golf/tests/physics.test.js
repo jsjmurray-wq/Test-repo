@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CLUBS, clubById, stockLaunch, makeLaunch } from '../src/clubs.js';
-import { simulateShot, flightStep, bounceImpulse, treeHit, planeTerrain } from '../src/physics.js';
+import { simulateShot, flightStep, bounceImpulse, treeHit, planeTerrain, contactParams, REVET_GRAD } from '../src/physics.js';
 import { SURF, SURFACES, BALL_R, G, RECORD_HZ, mToYd } from '../src/constants.js';
 
 // Minimal HoleTerrain built here (independent of terrain.js and of planeTerrain) to prove that
@@ -267,7 +267,9 @@ test('trunk top: a ball dropping onto it glances off and falls without hanging',
 });
 
 test('rest: a slow ball on a slope just inside the hold limit stops instead of creeping to MAX_SHOT_T', () => {
-  for (const [surf, slope] of [[SURF.ROUGH, 0.393], [SURF.ROUGH, 0.402], [SURF.FAIRWAY, 0.166], [SURF.GREEN, 0.066], [SURF.BUNKER, 1.1]]) {
+  // (Sand steeper than REVET_GRAD is a pot's revetted sod wall, which holds no ball: 0.85 is the
+  // steepest sand that does.)
+  for (const [surf, slope] of [[SURF.ROUGH, 0.393], [SURF.ROUGH, 0.402], [SURF.FAIRWAY, 0.166], [SURF.GREEN, 0.066], [SURF.BUNKER, 0.85]]) {
     const t = planeTerrain({ surface: surf, sx: slope });
     for (const v0 of [0.05, 0.3]) {
       const r = simulateShot(t, makeLaunch({ pos: { x: 0, y: 0, z: 0 }, aimYaw: 0, ballSpeed: v0, mode: 'roll' }), { record: false });
@@ -348,4 +350,21 @@ test('performance: driver < 20 ms, 30 m putt < 15 ms', () => {
   for (let i = 0; i < 5; i++) simulateShot(g, stockLaunch('P', { ballSpeed: 6.8 }));
   const pms = (performance.now() - t0) / 5;
   assert.ok(pms < 15, `putt ${pms} ms`);
+});
+
+test('revetted faces: sand steeper than REVET_GRAD is a sod wall that kills a ball and never holds one', () => {
+  // A pot: flat sand floor for x < 2, then a wall rising at gradient 1.4 to a lip 1.5 m up.
+  const wall = (x) => (x < 2 ? 0 : Math.min(1.5, (x - 2) * 1.4));
+  const t = planeTerrain({ surface: SURF.BUNKER, heightFn: (x) => wall(x) });
+  // A long iron thinned along the floor into the wall drops back: it never gets over the lip.
+  for (const v of [20, 35, 47]) {
+    const r = simulateShot(t, makeLaunch({ pos: { x: 0, y: 0, z: 0 }, aimYaw: 0, ballSpeed: v, launchDeg: 8 }), { record: false });
+    assert.ok(r.final.x < 3.2 && r.final.z < 1, `${v} m/s: finished at x ${r.final.x.toFixed(2)}, z ${r.final.z.toFixed(2)}`);
+  }
+  // A ball set down on the wall runs down to the floor.
+  const r = simulateShot(t, makeLaunch({ pos: { x: 2.6, y: 0, z: wall(2.6) }, aimYaw: 0, ballSpeed: 0, mode: 'roll' }), { record: false });
+  assert.ok(r.final.x < 2.05, `rests at x ${r.final.x.toFixed(2)}`);
+  assert.equal(contactParams(t, SURF.BUNKER, REVET_GRAD + 0.1).a0 < 4, true);
+  assert.equal(contactParams(t, SURF.BUNKER, REVET_GRAD - 0.1), SURFACES[SURF.BUNKER]);
+  assert.equal(contactParams(t, SURF.FAIRWAY, 2), SURFACES[SURF.FAIRWAY]);
 });

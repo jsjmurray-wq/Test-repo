@@ -26,17 +26,21 @@
 //   9  Home          par 4  the home hole: a huge fairway, out of bounds right (the town), pots
 //                           down the left, and the Valley of Sin, a deep hollow short-left of a
 //                           big two-tier green
-// Conditions (section 8.2): firm 1.45 (drives and approaches release; the ball runs on), greens
+// Conditions (section 8.2): firm 1.45 (a drive landing on the fairway runs on 30-40 yd, a 7-iron
+// releases on the firm greens and a wedge stops by its pitch mark instead of spinning back), greens
 // 9.5 ft, windy. Bump & run and punch shots are the natural play: the greens are open in front,
 // raised on firm ground, with short grass (fairway-cut run-offs) all round.
 //
-// Design notes (for a ~5 handicap: driver ~240 yd carry, plus ~10% extra run on firm turf):
+// Design notes (for a ~5 handicap: driver ~240 yd carry, plus 30-40 yd of run on firm turf):
 //  - Every tee shot has a wide line: fairways are 40-58 m wide where drives land, with ~9 m of
 //    rough before the fescue. The pots in the landing zones sit off the aim line (the bold player
 //    flirts with them); the greenside pots leave an open front on every green but the Postage.
-//  - Fescue stops a ball dead and costs distance, but it is never a penalty. Gorse (whin) is
-//    nearly unplayable (a ball inside a bush is caught again and again), so the thickets stand on
-//    the dunes, 20 m or more from any short grass.
+//  - Fescue stops a ball dead and costs distance (the way out is a short iron or a wedge, lie.js),
+//    but it is never a penalty. Gorse (whin) is nearly unplayable (a ball inside a bush is hacked
+//    out 20-30 yd, lie.js BUSH_LIE), so the thickets stand on the dunes, 20 m or more from any
+//    short grass.
+//  - Pot bunkers are deep with revetted sod faces (terrain.potAt, physics REVET): a long club from
+//    the floor dies against the face; the way out is a wedge or a flop, sideways if need be.
 //  - The sandhills come from the corridor rise (the land climbs beyond ~45 m of the centreline)
 //    plus chains of dune humps down each side; bare-sand blowouts scar their faces.
 //  - The sea and the burn are red penalty areas (lateral relief), with sand or grass beside them

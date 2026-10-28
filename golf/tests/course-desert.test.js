@@ -189,11 +189,13 @@ for (const t of holes) {
       assert.ok(on.length >= 1, 'no club reaches the green');
       return;
     }
-    // Par 4/5: along the default aim line, at least two of the long clubs finish on the fairway
-    // and none of them in water or out of bounds; the line never starts over OOB.
+    // Par 4/5: along the default aim line, at least two of the clubs from the driver to the
+    // 7-iron finish on the fairway (on the firm desert ground the woods run through a short
+    // hole's dogleg, so the lay-up is an iron) and none of them in water or out of bounds; the
+    // line never starts over OOB.
     const aim = t.aimPoint(t.tee);
     const yaw = Math.atan2(aim.y - t.tee.y, aim.x - t.tee.x);
-    const res = ['D', '3W', '5W', '4H', '5i'].map((id) => [id, teeShot(t, id, yaw).final]);
+    const res = ['D', '3W', '5W', '4H', '5i', '6i', '7i'].map((id) => [id, teeShot(t, id, yaw).final]);
     const onFw = res.filter(([, f]) => f.surface === SURF.FAIRWAY).map(([id]) => id);
     assert.ok(onFw.length >= 2, `on the fairway: ${onFw.join(',')} (${res.map(([id, f]) => `${id}:${f.surface}`).join(' ')})`);
     for (const [id, f] of res) assert.equal(f.outcome, 'rest', `${id} ${f.outcome}`);

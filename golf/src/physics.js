@@ -65,20 +65,70 @@ const ZERO_WIND = { x: 0, y: 0 };
 const clampN = (x, a, b) => (x < a ? a : x > b ? b : x);
 const isLow = (tr) => tr.kind === 'shrub' || tr.kind === 'gorse';
 
+// Revetted pot-bunker faces. A bunker steeper than REVET_GRAD (41 deg; only pot bunkers' faces,
+// every ordinary bunker stays under 0.75) is a wall of stacked sod, not sand: a ball hitting it
+// dies against it (little restitution, no crater ramp, the tangential speed ploughed away), so a
+// long iron thinned into the face drops back into the pot instead of riding the face up and out
+// like a ramp; and it never holds a ball (a0 too low for the slope), which runs down to the floor.
+export const REVET_GRAD = 0.88;
+const REVET_NZ = 1 / Math.sqrt(1 + REVET_GRAD * REVET_GRAD);
+const REVET = { e: 0.25, crater: 0, mu: 1, spinKeep: 0.1, plough: 0.94, maxBack: 0, a0: 3.2 };
+const _revet = new WeakMap(); // bunker params -> revetted-face params
+export function revetParams(surf) {
+  let r = _revet.get(surf);
+  if (!r) {
+    r = { ...surf, ...REVET };
+    _revet.set(surf, r);
+  }
+  return r;
+}
+
+// The sand inside a pot bunker (terrain.potAt) is deep and soft: a ball driven into its rising
+// floor ploughs in (a shallow crater, most of the tangential speed lost) rather than being kicked
+// up by the crater's back wall and out over the lip. Only Kittiwake has pots.
+const POT_SAND = { crater: 0.5, plough: 0.8 };
+const _potSand = new WeakMap();
+function potSandParams(surf) {
+  let r = _potSand.get(surf);
+  if (!r) {
+    r = { ...surf, ...POT_SAND };
+    _potSand.set(surf, r);
+  }
+  return r;
+}
+
+// Ground parameters at a contact: the surface's own, or a revetted face's on a bunker steeper than
+// REVET_GRAD (grad: |gradient| there). rules.holdsBall uses the same.
+export function contactParams(terrain, surfId, grad) {
+  const surf = surfaceParams(terrain, surfId);
+  return surfId === SURF.BUNKER && grad > REVET_GRAD ? revetParams(surf) : surf;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Course conditions (docs/architecture.md section 8.2)
 
 // Surfaces whose roll resistance follows the course's firmness (OOB plays as rough).
 const FIRM_SURFS = [SURF.FAIRWAY, SURF.TEE, SURF.ROUGH, SURF.OOB];
 const _tables = new WeakMap(); // terrain -> {key, table}
-const CRATER_FIRM = 0.12;
+const ROLL_FIRM = 2; // roll resistance a0, kv / firm^2
+const CRATER_FIRM = 1.5; // crater tilt x firm^-1.5 on fairway, tee and rough
+const FIRM_E = 0.4; // fairway restitution + (firm - 1) * 0.4
+const GREEN_CRATER_FIRM = 0.8; // firm greens (firm > 1): crater tilt x firm^-0.8,
+const GREEN_SPIN_FIRM = 0.3; //   spin kept at the bounce x (1 - 0.3 (firm - 1)),
+const GREEN_BACK_FIRM = 1.2; //   spin-back cap x (1 - 1.2 (firm - 1))
 
 // The SURFACES table with terrain.conditions applied, cached per terrain. Default conditions (or
 // none) return SURFACES itself, so Hollow Pines is bit-for-bit the shipped game.
-//   firm: roll resistance a0 and kv / firm on fairway, tee and rough (every roll-out on them
-//         scales by firm, see stimpDistance), fairway restitution + (firm - 1) * 0.25, and the
-//         crater tilt x firm^-CRATER_FIRM (firm turf dents less, so a spinning iron checks less:
-//         a links 7-iron releases ~45% further, not just the ~13% the roll terms alone give).
+//   firm: roll resistance a0 and kv / firm^2 on fairway, tee and rough (a pure roll-out on them
+//         scales by firm^2, see stimpDistance), fairway restitution + (firm - 1) * 0.4, and the
+//         crater tilt x firm^-1.5 (firm turf dents less, so the ball keeps its pace at the bounce
+//         and a spinning iron checks less). Measured with a stock driver landing on the fairway:
+//         parkland rolls ~19 yd, Red Mesa (1.25) ~22-29, Kittiwake (1.45) ~33-37 (a dry links
+//         runs a 240-yd carry on 30+ yd); the roll terms alone barely moved it, because most of
+//         a drive's release is the first bounces. Greens are firm too when firm > 1: crater tilt
+//         x firm^-0.8, spin kept at the bounce x (1 - 0.3 (firm - 1)), spin-back cap x
+//         (1 - 1.2 (firm - 1)), so on Kittiwake a 7-iron releases ~7 yd and a full SW stops by its
+//         pitch mark instead of spinning back 3 yd (Hollow Pines: 7-iron 0.5 yd, SW -3 yd).
 //   greenStimpFt: green a0 and kv / k with k = greenStimpFt / STIMP_REF_FT, which scales the
 //         green's roll-out from any speed by exactly k (D(v0; a0/k, kv/k) = k D(v0; a0, kv)).
 export function surfaceTable(terrain) {
@@ -93,15 +143,24 @@ export function surfaceTable(terrain) {
   const table = { ...SURFACES };
   // Clamped so the bounce and roll stay physical (fairway e x Penner curve stays under ~0.65).
   const f = clampN(firm, 0.6, 1.8);
+  const fr = Math.pow(f, ROLL_FIRM);
   for (const id of FIRM_SURFS) {
     const b = SURFACES[id];
-    table[id] = { ...b, a0: b.a0 / f, kv: b.kv / f, crater: b.crater * Math.pow(f, -CRATER_FIRM) };
+    table[id] = { ...b, a0: b.a0 / fr, kv: b.kv / fr, crater: b.crater * Math.pow(f, -CRATER_FIRM) };
   }
   const fw = table[SURF.FAIRWAY];
-  fw.e = clampN(fw.e + (f - 1) * 0.25, 0.8, 1.2);
+  fw.e = clampN(fw.e + (f - 1) * FIRM_E, 0.8, 1.2);
   const k = clampN(stimp / STIMP_REF_FT, 0.6, 1.5);
   const g = SURFACES[SURF.GREEN];
-  table[SURF.GREEN] = { ...g, a0: g.a0 / k, kv: g.kv / k };
+  const gr = { ...g, a0: g.a0 / k, kv: g.kv / k };
+  if (f > 1) {
+    // Firm greens: a shallower pitch mark, less grab and less spin-back, so approaches release.
+    const gf = f - 1;
+    gr.crater = g.crater * Math.pow(f, -GREEN_CRATER_FIRM);
+    gr.spinKeep = g.spinKeep * (1 - GREEN_SPIN_FIRM * gf);
+    gr.maxBack = g.maxBack * Math.max(0, 1 - GREEN_BACK_FIRM * gf);
+  }
+  table[SURF.GREEN] = gr;
   _tables.set(terrain, { key, table });
   return table;
 }
@@ -917,9 +976,17 @@ export function simulateShot(terrain, launch, opts = {}) {
   };
 
   // Ball meets the ground at the current state (z already seated on gz + R).
+  // Contact parameters here (gs, p and the normal nz): bunkers have revetted faces and pot sand.
+  const contactSurf = (nz) => {
+    const base = surfOf(gs);
+    if (gs !== SURF.BUNKER) return base;
+    if (nz < REVET_NZ) return revetParams(base);
+    return terrain.potAt && terrain.potAt(p.x, p.y) ? potSandParams(base) : base;
+  };
+
   const impact = () => {
-    const surf = surfOf(gs);
     n = terrain.normalAt(p.x, p.y);
+    const surf = contactSurf(n.z);
     const vnIn = -(v.x * n.x + v.y * n.y + v.z * n.z);
     const vh = Math.hypot(v.x, v.y);
     // A rolled launch (putt) never "lands": a hop off a crest is just a bounce.
@@ -1033,8 +1100,8 @@ export function simulateShot(terrain, launch, opts = {}) {
     }
 
     // ---- ground ----
-    const surf = surfOf(gs);
     n = terrain.normalAt(p.x, p.y);
+    const surf = contactSurf(n.z);
     const skidding = rollStep(s, n, surf, DT_GROUND);
     const sp = speed();
     if (!skidding && sp < REST_V) {
@@ -1084,7 +1151,18 @@ export function simulateShot(terrain, launch, opts = {}) {
       p.z = gz + R;
       const n1 = terrain.normalAt(p.x, p.y);
       const d = v.x * n1.x + v.y * n1.y + v.z * n1.z;
-      if (sp > 0) {
+      if (gs === SURF.BUNKER && n1.z < REVET_NZ && d < -LAND_VN) {
+        // Ran into a revetted face (a pot bunker's sod wall): that is an impact, not a smooth
+        // climb (the speed-keeping re-seat below would carry it up the wall and out).
+        const out = bounceImpulse(v, w, n1, revetParams(surfOf(gs)));
+        if (out > LAND_VN) mode = 'air';
+        else {
+          const d2 = v.x * n1.x + v.y * n1.y + v.z * n1.z;
+          v.x -= d2 * n1.x;
+          v.y -= d2 * n1.y;
+          v.z -= d2 * n1.z;
+        }
+      } else if (sp > 0) {
         v.x -= d * n1.x;
         v.y -= d * n1.y;
         v.z -= d * n1.z;
