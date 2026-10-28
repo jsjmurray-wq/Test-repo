@@ -231,9 +231,15 @@ async function smoke(browser, base, path, vp, gl) {
       check(st.putt, 'putter selected on the green');
       await shot(page, tag, 'putt');
     }
-    const p = await page.evaluate(() => ({ pad: window.__golf.debug.padRect(), range: window.__golf.game.puttRange, d: window.__golf.game.distanceToCup() }));
-    const power = (p.d + 0.35) / p.range;
-    await swipePutt(page, p.pad.x + p.pad.w * 0.5, p.pad.y + p.pad.h * 0.25, power * 0.3 * p.pad.h);
+    const p = await page.evaluate(() => {
+      const g = window.__golf.game;
+      const dbg = window.__golf.debug;
+      const power = (g.distanceToCup() + 0.35) / g.puttRange;
+      // The putt travel comes from the page (input.js depthForPower); older builds used 0.3 x pad.
+      const depth = dbg.depthForPower ? dbg.depthForPower(power, 'putt') : power * 0.3 * dbg.padRect().h;
+      return { pad: dbg.padRect(), depth };
+    });
+    await swipePutt(page, p.pad.x + p.pad.w * 0.5, p.pad.y + p.pad.h * 0.25, p.depth);
     await waitFor(page, () => window.__golf.game.phase === 'flight', 3000);
     await waitFor(page, () => window.__golf.game.phase !== 'flight', 15000);
     holed = await page.evaluate(() => ['holed', 'scorecard'].includes(window.__golf.game.phase));

@@ -32,9 +32,15 @@
 //       units: 'yd' | 'm' (defaults to the units setting).
 //   ui.setClub({name, carry, total, sub?})       carry/total in metres (numbers) or strings;
 //       sub overrides the second line (e.g. 'Range 30 ft' for the putter).
-//   ui.setPower({power, overswing, carryText} | null)   live swing gauge; null = idle (hint).
-//       power 0..1.1 (above 1 = overswing, drawn red); carryText like '158 yd' or '12 ft'.
-//   ui.setHint(text | null)                       pad hint (null = default for full/putt)
+//   ui.setPower({power, overswing, full?, carryText, target?} | null)   live swing gauge;
+//       null = idle (hint). power 0..1.1 (above 1 = overswing, drawn red); full: in the full-power
+//       detent (the 100% tick lights up); carryText like '158 yd' or '12 ft'. target (optional,
+//       0..1.1 or null) moves the target notch, see setTarget; the notch glows and the readout
+//       says "On target" while |power - target| <= TARGET_GLOW (3%).
+//   ui.setTarget(power | null)   the target notch on the arc (the power that reaches the pin or
+//       the aim point, from main.js); it shows dimmed while idle too. null hides it.
+//   ui.setHint(text | null)                       pad hint (null = default for full/putt and the
+//       swing control: swipe 'Drag down, then swipe up', tap 'Tap to start · tap again to hit')
 //   ui.setControls({phase, putt, canRead, read, map, puttRange})   all optional, merge:
 //       phase: game phase; club picker, tools and swing pad show only in 'address'.
 //       putt: bool (putt hint, putt range control). canRead: Read button (default = putt).
@@ -53,7 +59,8 @@
 //       The first option is the default (primary). Resolves with the chosen id.
 //   ui.settings (copy)  ui.getSetting(k)  ui.setSetting(k, v)  ui.onChange(fn) -> unsubscribe
 //       {units:'yd'|'m', wind:'off'|'light'|'breezy', difficulty:'easy'|'normal'|'pro',
-//        handed:'R'|'L', sound:bool, quality:'auto'|'low'}  persisted in golf.settings.v1.
+//        handed:'R'|'L', sound:bool, quality:'auto'|'low', swing:'swipe'|'tap'}  persisted in
+//       golf.settings.v1 (swing: Settings "Swing control: Swipe / Tap meter").
 //   UI.DEFAULT_SETTINGS
 //
 // DOM contract (index.html): canvas#gl, #hud (#topbar, #pause-btn, #infocard, #tools, #club,
@@ -61,10 +68,10 @@
 // #scorecard, #decision, #loading, #nogl. Values live in [data-f="..."] elements.
 
 import { fmtDist, fmtWind, mToYd, SURF_NAMES } from './constants.js';
-import { padRectFor, readSafeInsets, layoutMode } from './input.js';
+import { padRectFor, readSafeInsets, layoutMode, onTarget, MAX_POWER } from './input.js';
 
 const SETTINGS_KEY = 'golf.settings.v1';
-const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto' });
+const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto', swing: 'swipe' });
 const CHOICES = {
   units: ['yd', 'm'],
   wind: ['off', 'light', 'breezy'],
@@ -72,9 +79,12 @@ const CHOICES = {
   handed: ['R', 'L'],
   sound: [true, false],
   quality: ['auto', 'low'],
+  swing: ['swipe', 'tap'],
 };
-const HINT_FULL = 'Drag down, then swipe up';
-const HINT_PUTT = 'Drag down, release · slide back to cancel';
+const HINTS = {
+  swipe: { full: 'Drag down, then swipe up', putt: 'Drag down, release · slide back to cancel' },
+  tap: { full: 'Tap to start · tap again to hit', putt: 'Tap to start · tap again to putt' },
+};
 const TOAST_MS = 2600;
 const TOAST_MAX = 2;
 
@@ -88,6 +98,7 @@ const arcPt = (deg, r = ARC_R) => {
   const a = (deg * Math.PI) / 180;
   return [120 + r * Math.cos(a), 120 + r * Math.sin(a)];
 };
+const arcDeg = (power) => ARC_START + ARC_SWEEP * ((power * 100) / 110);
 
 const DECISION_LABELS = {
   drop: { label: 'Drop', detail: '+1 stroke · relief near where it went in' },
@@ -152,6 +163,7 @@ export class UI {
     this._controls = { phase: 'address', putt: false, canRead: null, read: false, map: false };
     this._canResume = false;
     this._decision = null;
+    this._target = null;
     this.padRect = { x: 0, y: 0, w: 1, h: 1 };
 
     this._buildArc();
@@ -402,29 +414,50 @@ export class UI {
 
   setPower(p) {
     const pad = this.el.pad;
+    if (p && 'target' in p) this.setTarget(p.target);
     if (!p) {
       pad.dataset.state = 'idle';
       pad.dataset.over = '0';
+      pad.dataset.full = '0';
+      pad.dataset.hit = '0';
       this._arcFill.style.strokeDasharray = '0 400';
       this._arcOver.style.strokeDasharray = '0 400';
+      this._arcTarget.classList.remove('hit');
       return;
     }
-    const power = Math.max(0, Math.min(1.1, p.power || 0));
+    const power = Math.max(0, Math.min(MAX_POWER, p.power || 0));
     const over = p.overswing ?? power > 1;
+    const full = !over && (p.full ?? (power === 1 && !this._controls.putt));
+    const hit = this._target != null && onTarget(power, this._target);
     pad.dataset.state = 'swing';
     pad.dataset.over = over ? '1' : '0';
+    pad.dataset.full = full ? '1' : '0';
+    pad.dataset.hit = hit ? '1' : '0';
+    this._arcTarget.classList.toggle('hit', hit);
     this._arcFill.style.strokeDasharray = `${Math.min(power, 1) * 100} 400`;
     this._arcOver.style.strokeDasharray = power > 1 ? `0 100 ${(power - 1) * 100} 400` : '0 400';
     const text = p.carryText || '';
     const m = text.match(/^([\d.,]+)\s*(.*)$/);
     this.f.carryNum.textContent = m ? m[1] : text;
     this.f.carryUnit.textContent = m ? `${m[2]} ${this._controls.putt ? 'roll' : 'carry'}` : '';
-    this.f.powerPct.textContent = over ? `Overswing ${Math.round(power * 100)}%` : `${Math.round(power * 100)}%`;
+    const pct = `${Math.round(power * 100)}%`;
+    this.f.powerPct.textContent = over ? `Overswing ${pct}` : hit ? `On target · ${pct}` : full ? `Full · ${pct}` : pct;
+  }
+
+  // Target notch on the power arc: the power that reaches the target (null hides it).
+  setTarget(power) {
+    const t = Number.isFinite(power) && power > 0 && power <= MAX_POWER ? power : null;
+    this._target = t;
+    const g = this._arcTarget;
+    g.style.display = t == null ? 'none' : '';
+    if (t != null) g.setAttribute('transform', `rotate(${arcDeg(t).toFixed(2)} 120 120)`);
+    if (t == null) g.classList.remove('hit');
   }
 
   setHint(text) {
     this._hint = text || null;
-    this.f.hint.textContent = this._hint || (this._controls.putt ? HINT_PUTT : HINT_FULL);
+    const h = HINTS[this._settings.swing] || HINTS.swipe;
+    this.f.hint.textContent = this._hint || (this._controls.putt ? h.putt : h.full);
   }
 
   setControls(c = {}) {
@@ -627,6 +660,7 @@ export class UI {
     }
     this._syncSettingsUI();
     if (k === 'units') this.setHud({});
+    if (k === 'swing') this.setHint(this._hint);
     this.emit('settings-changed', this.settings, k);
   }
 
@@ -654,7 +688,7 @@ export class UI {
     // Notches across the track at 25/50/75%, and a longer white mark at full power where the
     // red overswing zone starts.
     for (const pw of [0.25, 0.5, 0.75, 1]) {
-      const deg = ARC_START + ARC_SWEEP * ((pw * 100) / 110);
+      const deg = arcDeg(pw);
       const [ax, ay] = arcPt(deg, ARC_R - (pw === 1 ? 10 : 5));
       const [bx, by] = arcPt(deg, ARC_R + (pw === 1 ? 10 : 5));
       const ln = this.doc.createElementNS(NS, 'line');
@@ -667,6 +701,22 @@ export class UI {
     }
     this._arcFill = svg.querySelector('.arc-fill');
     this._arcOver = svg.querySelector('.arc-over');
+    // Target notch, drawn at angle 0 (pointing along +x from the centre) and rotated into place
+    // by setTarget: a bar across the track and a small pointer just outside it.
+    const tg = this.doc.createElementNS(NS, 'g');
+    tg.setAttribute('class', 'arc-target');
+    const bar = this.doc.createElementNS(NS, 'line');
+    bar.setAttribute('x1', String(120 + ARC_R - 11));
+    bar.setAttribute('y1', '120');
+    bar.setAttribute('x2', String(120 + ARC_R + 11));
+    bar.setAttribute('y2', '120');
+    const tip = this.doc.createElementNS(NS, 'path');
+    const r0 = 120 + ARC_R + 14;
+    tip.setAttribute('d', `M ${r0} 120 L ${r0 + 9} 114 L ${r0 + 9} 126 Z`);
+    tg.append(bar, tip);
+    svg.appendChild(tg);
+    this._arcTarget = tg;
+    this.setTarget(null);
   }
 }
 

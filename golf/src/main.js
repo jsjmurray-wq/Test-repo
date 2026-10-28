@@ -8,6 +8,12 @@
 // round). The round is saved on every shot, hole and phase change (golf.save.v1, with an
 // in-memory fallback when storage is blocked) so it survives Safari being closed.
 //
+// Swing (architecture.md section 8.1): with settings.swing = 'swipe' the pad gesture goes through
+// input.js (live gauge) and interpretSwing; with 'tap' the pad runs a tap meter here (first tap
+// starts it, the second hits). Either way the power arc carries a target notch: the power that
+// reaches the pin (or the aim point when the pin is out of reach), from the inverse of the
+// caddie's power curve; Easy snaps a power within 5% onto it.
+//
 // URL parameters
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
@@ -24,14 +30,15 @@ import { COURSE, coursePar } from './course.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
 import { CameraRig, FLYOVER_T, fovForAspect } from './camera.js';
-import { InputController, readSafeInsets } from './input.js';
+import { InputController, readSafeInsets, snapPower, meterPower, depthForPower, MAX_POWER } from './input.js';
 import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
-import { interpretSwing, swingLabel } from './swing.js';
+import { interpretSwing, swingLabel, powerForDistance } from './swing.js';
+import { RELEASE_K } from './caddie.js';
 import { playBotShot, botDecide } from './bot.js';
 import { CLUBS, clubById } from './clubs.js';
 import { SURF, fmtDist, mToFt } from './constants.js';
-import { clamp } from './vec3.js';
+import { clamp, DEG } from './vec3.js';
 
 const SAVE_KEY = 'golf.save.v1';
 const BEST_KEY = 'golf.best.v1';
@@ -41,6 +48,8 @@ const BOT_THINK_S = 0.6; // autoplay pause before each shot (game time)
 const CUT_DIST = 60; // m: camera moves longer than this are hard cuts, not swoops
 const PIN_ATTEND_M = 9; // m: putts longer than this keep the flagstick in (attended) at address
 const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
+const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
+const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
 const flag = (k) => params.has(k) && params.get(k) !== '0';
@@ -108,6 +117,8 @@ const app = {
   mapExitT: -1,
   introT: 0,
   swingPower: null, // live power while a swing is being drawn (moves the aim ring)
+  targetPower: null, // power that reaches the pin / aim point (the arc's target notch), or null
+  meter: null, // tap meter while it runs: {t0 (ms, event clock), kind:'full'|'putt'}
   trail: { data: new Float32Array(3 * 1024), count: 0 },
   hudDirty: false,
   hudT: 0,
@@ -359,7 +370,38 @@ function refreshClub() {
     const info = g.clubInfo();
     app.ui.setClub({ name: c.name, carry: info.carry, total: info.total });
   }
+  app.targetPower = targetPower(g);
+  app.ui.setTarget(app.targetPower);
   syncControls();
+}
+
+// Power that reaches the target from here with the selected club: the pin, or the aim point when
+// the pin is out of reach at full power; null when neither is (or for a tap-in). Full swings use
+// the inverse of the caddie's power curve on the "expected finish" (carry plus most of the
+// release, as the caddie picks clubs), with the height difference over the club's descent angle
+// added like the plays-like distance (the curve already has the wind). Putts: the flat-roll pace
+// that dies PUTT_PAST_M past the cup.
+function targetPower(g) {
+  if (!g || g.phase !== 'address' || !g.terrain) return null;
+  if (g.isPutt) {
+    const p = (g.distanceToCup() + PUTT_PAST_M) / g.puttRange;
+    return p >= MIN_TARGET && p <= MAX_POWER ? p : null;
+  }
+  const t = g.terrain;
+  const b = g.state.hole.ball;
+  const row = g.table.find((r) => r.id === g.club.id);
+  const tanDescent = Math.tan(Math.max(20, row ? row.landAngle : 45) * DEG);
+  const finish = (p) => {
+    const d = g.carryForPower(p);
+    return d.carry + RELEASE_K * Math.max(0, d.total - d.carry);
+  };
+  const zBall = t.heightAt(b.x, b.y);
+  for (const target of [t.cup, t.aimPoint(b)]) {
+    const dist = Math.hypot(target.x - b.x, target.y - b.y) + (t.heightAt(target.x, target.y) - zBall) / tanDescent;
+    const p = powerForDistance(finish, dist, 1);
+    if (p != null) return p >= MIN_TARGET ? p : null;
+  }
+  return null;
 }
 
 function syncControls() {
@@ -412,6 +454,7 @@ function setView(v) {
   const g = app.game;
   if (!g || g.phase !== 'address') return;
   const prev = app.view;
+  cancelMeter();
   app.view = v;
   app.viewT = 0;
   app.mapExitT = -1;
@@ -441,6 +484,7 @@ function enterAddress() {
   app.view = 'play';
   app.mapExitT = -1;
   app.swingPower = null;
+  app.meter = null;
   app.ui.hideIntro();
   camMode(g.isPutt ? 'putt' : 'address');
   // Warm the caddie's power curve now (8 short simulations) so the first move of the swing
@@ -456,6 +500,7 @@ function changeClub(dir) {
   const ids = CLUBS.map((c) => c.id);
   const i = clamp(ids.indexOf(g.state.clubId) + dir, 0, ids.length - 1);
   if (ids[i] === g.state.clubId) return;
+  cancelMeter();
   const wasPutt = g.isPutt;
   g.setClub(ids[i]);
   if (g.isPutt !== wasPutt) setView('play'); // putt camera <-> address camera, pad mode
@@ -556,6 +601,7 @@ function setPaused(on) {
   app.drewPaused = false;
   app.lastTime = 0;
   if (on) {
+    app.meter = null;
     app.ui.setPower(null);
     saveGame();
   }
@@ -581,6 +627,7 @@ function onPhase(phase, prev) {
   const g = app.game;
   const ui = app.ui;
   app.swingPower = null;
+  app.meter = null;
   switch (phase) {
     case 'intro':
       app.view = 'play';
@@ -725,13 +772,21 @@ function onAim(dyaw) {
   app.hudDirty = true;
 }
 
+// Live gauge: the arc, the carry (or roll) readout and the aim ring at this power. On Easy a power
+// within 5% of the target notch snaps onto it, here and in the struck swing alike.
+function showPower(rawPower) {
+  const g = app.game;
+  const power = snapPower(rawPower, app.targetPower, app.ui.getSetting('difficulty'));
+  app.swingPower = power;
+  const d = g.carryForPower(power);
+  const carryText = g.isPutt ? fmtPutt(d.total) : fmtLong(d.carry);
+  app.ui.setPower({ power, overswing: power > 1, full: !g.isPutt && power === 1, carryText, target: app.targetPower });
+}
+
 function onSwingProgress(p) {
   const g = app.game;
   if (!g || g.phase !== 'address') return;
-  app.swingPower = p.power;
-  const d = g.carryForPower(p.power);
-  const carryText = g.isPutt ? fmtPutt(d.total) : fmtLong(d.carry);
-  app.ui.setPower({ power: p.power, overswing: p.overswing, carryText });
+  showPower(p.power);
 }
 
 function onSwing(samples) {
@@ -746,15 +801,84 @@ function onSwing(samples) {
     difficulty: s.difficulty,
     handed: s.handed,
     club: g.club,
+    target: app.targetPower,
+    padRect: app.input.padRect,
   });
   if (TEST) app.lastSwing = { samples, sw, padRefH: app.input.padRefH };
   if (!sw.ok) {
-    if (sw.reason === 'tooSlow') setHint('Too slow · swipe up faster', 2200);
-    else if (sw.reason === 'cancel') setHint(g.isPutt ? 'Putt cancelled' : 'Swing cancelled · swipe up through the start', 2200);
+    if (sw.reason === 'cancel') {
+      if (g.isPutt) setHint('Putt cancelled', 2200);
+      else app.ui.toast('Swing cancelled — swipe up to hit', 2200);
+    }
     return;
   }
+  strike(g, sw);
+}
+
+function strike(g, sw) {
   if (sw.kind === 'full') app.audio.handle({ type: 'swing', power: sw.power });
   g.swing(sw);
+}
+
+// The swipe was abandoned before the release: dragged out of the pad sideways, or the system
+// took the touch (pointercancel). A mode change also ends up here, silently.
+function onSwingCancel(reason) {
+  app.swingPower = null;
+  app.ui.setPower(null);
+  const g = app.game;
+  if ((reason === 'dragOut' || reason === 'pointercancel') && g && g.phase === 'address' && !app.paused) {
+    if (g.isPutt) setHint('Putt cancelled', 2200);
+    else app.ui.toast('Swing cancelled', 1800);
+  }
+}
+
+// ------------------------------------------------------------------ tap meter
+// settings.swing = 'tap': the first tap in the pad starts a power bar (input.js meterPower: it
+// fills 0 -> 1.1 over 1.4 s, hanging briefly at full power, then falls back); the second tap
+// hits at the bar's power, timed on the events' own clock. Straight: no direction or curve from
+// a tap, but the usual contact scatter applies. Putts use the putt range the same way.
+function onPadTap({ t }) {
+  const g = app.game;
+  if (!g || g.phase !== 'address' || app.paused) return;
+  const nowMs = performance.now();
+  // Event times share performance.now()'s clock in current browsers; fall back if one does not.
+  const at = Number.isFinite(t) && Math.abs(t - nowMs) < 5000 ? t : nowMs;
+  const kind = g.isPutt ? 'putt' : 'full';
+  if (!app.meter || app.meter.kind !== kind) {
+    app.meter = { t0: at, kind };
+    app.ui.setHint(null);
+    tickMeter(nowMs);
+    return;
+  }
+  const raw = meterPower((at - app.meter.t0) / 1000, kind);
+  cancelMeter();
+  if (raw == null) {
+    setHint('Too late · tap to start again', 2200);
+    return;
+  }
+  const power = snapPower(raw, app.targetPower, app.ui.getSetting('difficulty'));
+  const sw = { ok: true, kind, power, overswing: power > 1, startDir: 0, faceToPath: 0, face: 0, path: 0, tempo: 'smooth', tempoErr: 0, label: 'Tap swing' };
+  if (TEST) app.lastSwing = { samples: null, sw, padRefH: app.input.padRefH, tap: true };
+  strike(g, sw);
+}
+
+// Per frame while the meter runs: show its power; once it has fallen back, abandon it.
+function tickMeter(nowMs) {
+  const m = app.meter;
+  const p = meterPower((nowMs - m.t0) / 1000, m.kind);
+  if (p == null) {
+    cancelMeter();
+    setHint('Too late · tap to start again', 2200);
+    return;
+  }
+  showPower(p);
+}
+
+function cancelMeter() {
+  if (!app.meter) return;
+  app.meter = null;
+  app.swingPower = null;
+  app.ui.setPower(null);
 }
 
 function onTap(sx, sy) {
@@ -824,6 +948,7 @@ function tick(dt) {
     }
   }
   g.update(sdt);
+  if (app.meter && app.game === g && g.phase === 'address') tickMeter(performance.now());
   if (AUTOPLAY && app.game === g) tickBot(sdt);
 }
 
@@ -1040,6 +1165,10 @@ function applyQuality(q) {
 function onSettings(s, key) {
   if (key === 'sound') app.audio.setEnabled(s.sound);
   if (key === 'quality') applyQuality(s.quality);
+  if (key === 'swing') {
+    cancelMeter();
+    app.input.swingStyle = s.swing;
+  }
   const g = app.game;
   if (g && ['wind', 'difficulty', 'handed', 'units'].includes(key)) {
     g.setSettings({ [key]: s[key] });
@@ -1081,6 +1210,10 @@ function installDebugHooks() {
       const p = app.input.padRect;
       return { x: r.left + p.x, y: r.top + p.y, w: p.w, h: p.h };
     },
+    // Backswing depth (CSS px) for a swing power on the current pad (e2e swipe helpers).
+    depthForPower(power, kind = 'full') {
+      return depthForPower(power, app.input.padRefH, kind);
+    },
     state() {
       const g = app.game;
       if (!g) return { phase: 'menu' };
@@ -1110,14 +1243,13 @@ function boot() {
     onSwingStart: () => app.ui.setHint(null),
     onSwingProgress,
     onSwing,
-    onSwingCancel: () => {
-      app.swingPower = null;
-      app.ui.setPower(null);
-    },
+    onSwingCancel,
+    onPadTap,
     onOrbit: (dyaw) => app.rig.orbit(dyaw),
     onTap,
     onSkip,
   });
+  app.input.swingStyle = settings.swing;
   if (TEST) installDebugHooks();
 
   ui.on('new-round', newRound);

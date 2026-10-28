@@ -260,6 +260,14 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .arc-over { stroke: var(--red); stroke-width: 13; stroke-dasharray: 0 400; stroke-linecap: butt !important; filter: drop-shadow(0 0 8px rgba(255, 90, 82, 0.8)); }
 .arc-ticks line { stroke: rgba(6, 14, 22, 0.55); stroke-width: 2; }
 .arc-ticks line.max { stroke: #fff; stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.5)); }
+/* Full-power detent: the 100% tick lights up green while the power sits in it. */
+#pad[data-full="1"] .arc-ticks line.max { stroke: var(--green-hi); stroke-width: 4; filter: drop-shadow(0 0 5px rgba(87, 214, 138, 0.95)); }
+/* Target notch (the power that reaches the pin or the aim point): gold, white-hot when the live
+   power is on it. */
+.arc-target line { stroke: var(--gold); stroke-width: 4; stroke-linecap: round; filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6)); }
+.arc-target path { fill: var(--gold); filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6)); }
+.arc-target.hit line { stroke: #fff; stroke-width: 5; filter: drop-shadow(0 0 4px var(--gold)) drop-shadow(0 0 9px var(--gold)); }
+.arc-target.hit path { fill: #fff; filter: drop-shadow(0 0 6px var(--gold)); }
 #pad[data-state="idle"] .arc { opacity: 0.55; }
 #pad .arc { transition: opacity 0.2s; }
 .pad-readout {
@@ -272,6 +280,8 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .pad-num { font-size: 44px; font-weight: 800; letter-spacing: -0.03em; }
 .pad-unit { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255, 255, 255, 0.82); margin-top: 3px; }
 .pad-pct { display: inline-block; font-size: 11.5px; font-weight: 800; margin-top: 6px; padding: 2px 8px; border-radius: 999px; background: rgba(6, 14, 22, 0.45); }
+#pad[data-full="1"] .pad-pct { background: rgba(47, 163, 92, 0.92); }
+#pad[data-hit="1"] .pad-pct { background: var(--gold); color: #1b1606; }
 #pad[data-over="1"] .pad-pct { background: var(--red); }
 #pad[data-over="1"] .pad-num { color: #ffd0cc; }
 .pad-hint {

@@ -1,39 +1,53 @@
 // Swing interpretation (touch trace -> swing parameters) and launch construction (swing + club +
-// lie -> Launch for physics). Pure module (docs/architecture.md section 4).
+// lie -> Launch for physics). Pure module (docs/architecture.md sections 4 and 8.1).
 //
-//   interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty, handed, club?}) -> SwingResult
+//   interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty, handed, club?, target?,
+//                            padRect?}) -> SwingResult
 //   swingToLaunch(club, lie, swing, aimYaw, rng, {pos, puttRange}) -> Launch
+//   powerForDistance(distAt, dist, maxPower = 1) -> power | null   (inverts a power curve)
 //
 // samples: [{t (ms), x, y (CSS px)}] for one pointer, pointerdown to pointerup, exactly as
-// input.js records them. The touchdown y is the impact line; power comes from the deepest point
-// below it, with the same reference travel as the live gauge (input.js FULL_POWER_FRAC /
-// PUTT_POWER_FRAC x padRefH, capped at MAX_POWER).
+// input.js records them. The touchdown y is the start of the swing; power comes from the deepest
+// point below it through input.js powerFromDepth: the same travel (fullPowerPx), full-power detent
+// and overswing as the live gauge. opts.target is the target-notch power: on Easy a power within
+// EASY_SNAP of it snaps onto it (input.js snapPower, as the live gauge does). opts.padRect turns
+// on the drag-out cancel (input.js draggedOut; the live input applies it as well).
 //
-// SwingResult = {ok, reason?:'cancel'|'tooSlow'|'short', kind, power, overswing, startDir,
-//                faceToPath, face, path, tempo:'smooth'|'rushed'|'decel', tempoErr, label}
+// SwingResult = {ok, reason?:'cancel'|'short', kind, power, overswing, startDir, faceToPath, face,
+//                path, tempo:'smooth'|'rushed'|'decel', tempoErr, label}
 //   startDir, faceToPath, face, path are degrees, + = RIGHT of the aim line (screen right is
 //   the golfer's right: the camera looks down the aim line). faceToPath > 0 curves the ball
-//   right (a fade or slice for a right-hander).
+//   right (a fade or slice for a right-hander). Full swings also report strike ('climb' |
+//   'release'), alpha / kappa (raw deg), downswingS and upSpeed (px/s).
 //
-// Full swing gesture
-//   1. Drag down from the touchdown point (backswing); depth sets the power.
-//   2. Swipe up through the touchdown line at >= STRIKE_SPEED px/s: that is the strike. A finger
-//      lifted while still flicking up fast, within LIFT_GRACE_S of the line, also strikes (the
-//      last touch sample of a fast flick often lands just short of the line).
-//      Releasing during the backswing cancels ('cancel'); coming back up too slowly is 'tooSlow';
-//      a press with almost no backswing is 'short'. None of these count as a stroke.
+// Full swing gesture. A thumb on a phone flicks short, often starts slowly, pauses at the bottom
+// and lifts off before it gets back to where it started, so recognition is forgiving:
+//   1. Drag down from the touchdown point (backswing); the deepest point sets the power.
+//   2. Swipe back up. It strikes when, after the bottom of the backswing, the finger has climbed
+//      at least max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC x depth) and has not slid back down to the
+//      bottom by the release (strike 'climb'), or when it is lifted while still moving up at
+//      RELEASE_SPEED px/s or more over the last RELEASE_WINDOW_MS (strike 'release': a short
+//      flick). It never needs to get back to the touchdown line. A clear climb whose first part
+//      averaged under STRIKE_SPEED px/s still strikes, with tempo 'decel'.
+//      Not a stroke: released at the bottom with no real upward move ('cancel', e.g. a hold then
+//      lift, or a few px of wobble), dragged out of the pad sideways during the backswing
+//      ('cancel', with opts.padRect), or a press with almost no backswing ('short').
 //   3. The chord from the bottom of the backswing to the release point sets the start direction;
 //      the bend of the upswing (heading of the last 40% of its length minus that of the first
 //      60%) sets the face-to-path, i.e. the curve. Gains and dead zones depend on difficulty;
 //      left-handed play flips the sign of the bend.
-//   4. Tempo: the downswing (from the moment the finger starts up out of the bottom to the strike)
-//      ideally takes 0.10 + 0.15 x power s, and any brisk flick (up to ~2400 px/s at full power)
-//      is fine. Under RUSHED_FRAC of the ideal is 'rushed': extra face scatter growing from half
-//      to all of RUSHED_FACE the quicker it is (tempoErr 0..1). Over twice the ideal is 'decel'
-//      (ball speed x 0.92). A still pause at the bottom fires no touch events, so the move's start
-//      is extrapolated back from the first samples that leave the bottom.
+//   4. Tempo: the upswing speed v is the climb from the bottom of the final upswing to the
+//      touchdown line (or to the top of the upswing when it stops short) over the time since the
+//      finger started up. A still pause at the bottom fires no touch events, so that start is
+//      extrapolated back from the first samples that leave the bottom. The downswing is timed as
+//      if the travel were TEMPO_REF_PX at full power, T = power x TEMPO_REF_PX / v, against the
+//      ideal 0.10 + 0.15 x power s: under RUSHED_FRAC of it is 'rushed' (extra face scatter growing
+//      from half to all of RUSHED_FACE the quicker it is, tempoErr 0..1; a snap faster than about
+//      3300 px/s at full power, 2400 px/s at half power). A climb whose first max(24 px, 25%)
+//      averaged under STRIKE_SPEED px/s (a slow return, or creeping up before a flick) is 'decel'
+//      (ball speed x DECEL_SPEED). Everything between is 'smooth'.
 //
-// Putt gesture: drag down to set the pace (power = depth / (0.30 padRefH) maps to a flat-roll
+// Putt gesture: drag down to set the pace (power = depth / the putt travel, maps to a flat-roll
 // distance power x puttRange), then release, or flick up through the start line. Sliding back to
 // within 25% of the depth of the start line (and no further), or sliding far sideways, cancels at
 // any speed: that is how a player changes their mind. Presses under PUTT_MIN_DEPTH_PX are slips.
@@ -46,7 +60,7 @@ import { gaussian } from './rng.js';
 import { clubById, dPlane, makeLaunch } from './clubs.js';
 import { puttSpeedForDistance } from './physics.js';
 import { applyLie } from './lie.js';
-import { FULL_POWER_FRAC, PUTT_POWER_FRAC, MAX_POWER } from './input.js';
+import { MAX_POWER, powerFromDepth, snapPower, draggedOut } from './input.js';
 
 // Difficulty: start-direction gain G_s and curve gain G_c (output deg per input deg) and their
 // dead zones on the chord angle (dzA) and the bend (dzK), in degrees.
@@ -56,13 +70,20 @@ export const DIFFICULTY = {
   pro: { gs: 0.35, gc: 0.12, dzA: 0, dzK: 0 },
 };
 
-export const STRIKE_SPEED = 400; // px/s upward through the impact line
+// Strike recognition (full swing), section 8.1.
+export const STRIKE_CLIMB_PX = 24; // the climb after the bottom that strikes...
+export const STRIKE_CLIMB_FRAC = 0.25; // ...or this fraction of the backswing depth, if more
+export const STRIKE_SPEED = 120; // px/s: a climb averaging less than this strikes as 'decel'
+export const RELEASE_SPEED = 150; // px/s: lifted while moving up this fast strikes...
+export const RELEASE_WINDOW_MS = 80; // ...measured over this window before the release
+const MIN_FLICK_PX = 10; // a release strike needs this much climb (not a wobble at the bottom)
+const HOLD_FRAC = 0.5; // a climb strike must still be this fraction of the climb threshold up at release
+const MIN_WINDOW_MS = 16; // floor of the release-speed window (one 60 Hz frame)
+const TEMPO_REF_PX = 150; // nominal full-power travel the downswing is timed over (see tempo)
 export const MAX_START_DIR = 10; // deg
 export const MAX_FACE_TO_PATH = 8; // deg
 export const PUTT_RANGES = [3, 6, 9, 12, 18, 24, 30]; // m, flat-roll distance at power 1
 const MIN_DEPTH_PX = 8; // shallower presses are taps, not swings
-const LIFT_GRACE_S = 0.05; // a flick lifted this close (in time) to the line still strikes
-const SPEED_WINDOW_MS = 50; // strike speed is averaged over this window before the line
 const BOTTOM_TOL_PX = 3; // jitter allowed while the finger rests at the bottom
 const PUTT_DRIFT_MS = 150;
 const PUTT_DRIFT_GAIN = 0.08; // deg per px of sideways drift
@@ -72,14 +93,14 @@ const PUTT_THROUGH_PX = 12; // ...unless it flicks this far through the line (a 
 const PUTT_SIDE_CANCEL_PX = 60; // a putt dragged this far sideways is abandoned, not struck
 export const PUTT_MIN_DEPTH_PX = 20; // shallower putt presses are slips, not strokes
 export const RUSHED_FRAC = 0.18; // downswing under this fraction of the ideal is rushed
-export const DECEL_FRAC = 2; // ...over this multiple is decelerating
+export const DECEL_FRAC = 2; // (version 1 tempo: over this multiple was decelerating; kept for reference)
 
 // Random contact (deg, fraction): the scatter of a good amateur's strike. Overswing doubles it.
 export const SIGMA_DIR = 0.6; // start direction, plus the lie's sdir
 export const SIGMA_FACE = 0.4; // face (curve) scatter of a normal swing
 export const SIGMA_SPEED = 0.015;
 export const RUSHED_FACE = 0.6; // extra face sigma (max) for a rushed tempo
-export const DECEL_SPEED = 0.92;
+export const DECEL_SPEED = 0.95; // ball speed of a decelerating (slow) swing
 export const PUTT_SIGMA_SPEED = 0.01;
 export const PUTT_SIGMA_DIR = 0.3;
 
@@ -109,20 +130,51 @@ function sampleAt(S, t) {
   return { t, x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
 }
 
-// Upward speed (px/s) of the trace over [max(t0, t1 - window), t1] ending at y1.
-function upSpeed(S, tFrom, t1, y1) {
-  const ta = Math.max(tFrom, t1 - SPEED_WINDOW_MS);
-  const dt = t1 - ta;
-  if (dt < 1) {
-    // Degenerate (one jump): fall back to the last segment before t1.
-    let i = S.length - 1;
-    while (i > 0 && S[i].t > t1) i--;
-    const a = S[Math.max(0, i - 1)];
-    const b = S[i];
-    const d = Math.max(1, b.t - a.t);
-    return ((a.y - b.y) / d) * 1000;
+// Time (ms) at which the trace, climbing from sample b to sample e, first gets up to level y
+// (interpolated); the time of e if it never does.
+function timeAtLevel(S, b, e, y) {
+  for (let i = b + 1; i <= e; i++) {
+    if (S[i].y <= y) {
+      const p = S[i - 1];
+      const q = S[i];
+      const f = p.y > q.y ? (p.y - y) / (p.y - q.y) : 1;
+      return p.t + (q.t - p.t) * f;
+    }
   }
-  return ((sampleAt(S, ta).y - y1) / dt) * 1000;
+  return S[e].t;
+}
+
+// Bottom of the upward run that ends at sample `top`: walk back through samples no higher than
+// the run (BOTTOM_TOL_PX of jitter allowed, so a still pause at the bottom belongs to it). Returns
+// b, the last sample still at the bottom (where the move up starts, for timing and the chord),
+// and level, the lowest y of the run (what climbs are measured from: the first sample of a flick
+// may already be a few px up).
+function runBottom(S, top) {
+  let i0 = top;
+  let level = S[top].y;
+  while (i0 > 0 && S[i0 - 1].y >= level - BOTTOM_TOL_PX) {
+    i0--;
+    if (S[i0].y > level) level = S[i0].y;
+  }
+  let b = i0;
+  for (let i = i0; i <= top; i++) if (S[i].y >= level - BOTTOM_TOL_PX) b = i;
+  return { b, level };
+}
+
+// Inverse of a monotone power -> distance function (e.g. the caddie power curve through
+// curveAt): the power in [0, maxPower] whose distance is dist, by bisection; null when even
+// maxPower falls short. main.js uses it for the target notch on the power arc.
+export function powerForDistance(distAt, dist, maxPower = 1) {
+  if (!(dist > 0)) return 0;
+  if (!(distAt(maxPower) >= dist)) return null;
+  let lo = 0;
+  let hi = maxPower;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    if (distAt(m) < dist) lo = m;
+    else hi = m;
+  }
+  return (lo + hi) / 2;
 }
 
 export function swingLabel(startDir, faceToPath, handed = 'R') {
@@ -168,64 +220,75 @@ export function interpretSwing(samples, opts = {}) {
   let maxY = y0;
   for (const s of S) if (s.y > maxY) maxY = s.y;
   const depth = maxY - y0;
-  const frac = kind === 'putt' ? PUTT_POWER_FRAC : FULL_POWER_FRAC;
-  const power = clamp(depth / (frac * H), 0, MAX_POWER);
+  const power = snapPower(powerFromDepth(depth, H, kind), opts.target, opts.difficulty);
   if (depth < (kind === 'putt' ? PUTT_MIN_DEPTH_PX : MIN_DEPTH_PX)) return failed(kind, 'short', power);
-  return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, power, diff, opts);
+  if (opts.padRect && draggedOut(S, opts.padRect)) return failed(kind, 'cancel', power);
+  return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, depth, power, diff, opts);
 }
 
-function interpretFull(S, y0, power, diff, opts) {
+function interpretFull(S, y0, depth, power, diff, opts) {
   const n = S.length;
+  const end = S[n - 1];
   let iMax = 0;
   for (let i = 1; i < n; i++) if (S[i].y > S[iMax].y) iMax = i;
-  // Strike: the first upward crossing of the impact line after the deepest point.
-  let c = -1;
-  for (let i = iMax + 1; i < n; i++) {
-    if (S[i].y <= y0) {
-      c = i;
-      break;
+  const thr = Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth);
+
+  // Strike 'climb': the highest point after the bottom of the backswing is at least thr above the
+  // bottom of its upward run, and the finger has not slid back down to the bottom by the release
+  // (a waggle that ends at the bottom is not a swing).
+  let top = iMax;
+  for (let i = iMax + 1; i < n; i++) if (S[i].y < S[top].y) top = i;
+  let { b, level } = runBottom(S, top);
+  let runEnd = top;
+  let strike = null;
+  if (level - S[top].y >= thr && level - end.y >= HOLD_FRAC * thr) {
+    strike = 'climb';
+  } else {
+    // Strike 'release': a short flick, lifted while still moving up briskly. The speed window
+    // starts no earlier than the moment the finger left the bottom, so a pause there (no touch
+    // events) does not dilute it, and needs MIN_FLICK_PX of climb, so jitter cannot fake it.
+    const re = runBottom(S, n - 1);
+    if (re.level - end.y >= MIN_FLICK_PX) {
+      const ta = Math.max(end.t - RELEASE_WINDOW_MS, moveStart(S, re.b, end.t, end.y));
+      const ya = ta <= S[re.b].t ? re.level : sampleAt(S, ta).y;
+      const v = ((ya - end.y) / Math.max(MIN_WINDOW_MS, end.t - ta)) * 1000;
+      if (v >= RELEASE_SPEED) {
+        strike = 'release';
+        ({ b, level } = re);
+        runEnd = n - 1;
+      }
     }
   }
-  const last = c >= 0 ? c - 1 : n - 1;
-  // Start of the downswing: walk back through the final upward run (and any pause at the
-  // bottom) to the last sample still at the bottom of the backswing.
-  let i0 = last;
-  let runMax = S[last].y;
-  while (i0 > 0 && S[i0 - 1].y >= runMax - BOTTOM_TOL_PX) {
-    i0--;
-    if (S[i0].y > runMax) runMax = S[i0].y;
-  }
-  let b = i0;
-  for (let i = i0; i <= last; i++) if (S[i].y >= runMax - BOTTOM_TOL_PX) b = i;
+  // Held at the bottom and lifted, a few px of wobble, or slid back down: no swing.
+  if (!strike) return failed('full', 'cancel', power);
+
+  // Strike point for the tempo: where the upswing gets back to the touchdown line, else the top
+  // of the upswing (released short of the line).
   const bottom = S[b];
-
-  let tc;
-  let vStrike;
-  if (c >= 0) {
-    const p = S[c - 1];
-    const q = S[c];
-    const f = p.y > q.y ? (p.y - y0) / (p.y - q.y) : 1;
-    tc = p.t + (q.t - p.t) * f;
-    vStrike = upSpeed(S, bottom.t, tc, y0);
-  } else {
-    // No crossing: a fast flick lifted just short of the line still strikes; anything else
-    // (released in the backswing or on the way back up) cancels.
-    const e = S[n - 1];
-    const v = upSpeed(S, bottom.t, e.t, e.y);
-    if (b === n - 1 || v < STRIKE_SPEED || (e.y - y0) / v > LIFT_GRACE_S) return failed('full', 'cancel', power);
-    tc = e.t + ((e.y - y0) / v) * 1000;
-    vStrike = v;
+  let ts = timeAtLevel(S, b, runEnd, y0);
+  let ys = y0;
+  if (S[runEnd].y > y0) {
+    ts = S[runEnd].t;
+    ys = S[runEnd].y;
   }
-  if (vStrike < STRIKE_SPEED) return failed('full', 'tooSlow', power);
-
-  // Tempo of the downswing, from when the finger starts up out of the bottom.
-  const T = Math.max(0, tc - moveStart(S, b, tc, y0)) / 1000;
+  const tm = moveStart(S, b, ts, ys);
+  const climbed = Math.max(0, level - ys);
+  const T = Math.max(0, ts - tm) / 1000;
+  const upSpeed = climbed / Math.max(T, 1e-3);
+  // Average speed over the first thr px of the climb (the whole climb for a short release flick).
+  const tThr = climbed >= thr ? timeAtLevel(S, b, runEnd, level - thr) : ts;
+  const climbSpeed = Math.min(climbed, thr) / Math.max((tThr - tm) / 1000, 1e-3);
   const ideal = 0.1 + 0.15 * power;
-  const tempoErr = T < RUSHED_FRAC * ideal ? 1 - T / (RUSHED_FRAC * ideal) : 0;
-  const tempo = tempoErr > 0 ? 'rushed' : T > DECEL_FRAC * ideal ? 'decel' : 'smooth';
+  const Teq = (power * TEMPO_REF_PX) / Math.max(upSpeed, 1e-3);
+  let tempoErr = 0;
+  let tempo = 'smooth';
+  if (climbSpeed < STRIKE_SPEED) tempo = 'decel';
+  else if (Teq < RUSHED_FRAC * ideal) {
+    tempo = 'rushed';
+    tempoErr = 1 - Teq / (RUSHED_FRAC * ideal);
+  }
 
   // Direction: chord from the bottom of the backswing to the release point.
-  const end = S[n - 1];
   const alpha = heading(bottom, end);
   // Curvature: split the upswing trace at 60% of its arc length.
   let total = 0;
@@ -271,23 +334,25 @@ function interpretFull(S, y0, power, diff, opts) {
     tempo,
     tempoErr,
     label,
+    strike,
     alpha,
     kappa,
     downswingS: T,
+    upSpeed,
   };
 }
 
-// Time (ms) the finger started up out of the bottom sample b, the strike being at (tc, y0). The
+// Time (ms) the finger started up out of the bottom sample b, the strike being at (ts, ys). The
 // first sample clearly above the bottom is traced back at the mean speed of the rest of the
 // upswing, so a motionless pause (no events) or a coarse first sample does not count.
-function moveStart(S, b, tc, y0) {
+function moveStart(S, b, ts, ys) {
   const n = S.length;
   let u = b + 1;
   while (u < n && S[b].y - S[u].y <= BOTTOM_TOL_PX) u++;
   if (u >= n) return S[b].t;
   const q = S[u];
-  const rest = q.y - y0;
-  const dtRest = tc - q.t;
+  const rest = q.y - ys;
+  const dtRest = ts - q.t;
   const v = rest > 1 && dtRest > 1 ? rest / dtRest : (S[b].y - q.y) / Math.max(1, q.t - S[b].t);
   return Math.max(S[b].t, q.t - (S[b].y - q.y) / Math.max(v, 1e-3));
 }

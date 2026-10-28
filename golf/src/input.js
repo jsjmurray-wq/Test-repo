@@ -3,31 +3,65 @@
 // the canvas. No UI knowledge: the HUD only mirrors padRect (ui.js imports padRectFor).
 //
 //   const input = new InputController(canvas, {onAim, onSwingStart, onSwingProgress, onSwing,
-//                                              onSwingCancel, onOrbit, onTap, onSkip});
+//                                              onSwingCancel, onPadTap, onOrbit, onTap, onSkip});
 //   input.mode = 'full'|'putt'|'read'|'map'|'intro'|'watch'|'disabled'   (setMode(m) also works)
+//   input.swingStyle = 'swipe'|'tap'   how the pad is used in full/putt (settings.swing)
 //   input.padRect -> {x, y, w, h}  (CSS px, canvas-relative)   input.padRefH -> padRect.h
 //   input.resize()   recompute padRect (automatic on canvas/window resize)
 //   input.destroy()
 //
 // Gestures by mode
-//   full / putt  press in the aim zone (above padRect) and drag horizontally -> onAim(dyaw).
+//   full / putt  press in the aim zone (outside padRect) and drag horizontally -> onAim(dyaw).
 //                Drag right turns the aim right (clockwise from above), so dyaw < 0.
-//                press in the swing pad -> onSwingStart({x, y}), then every move
-//                onSwingProgress({depth, maxDepth, power, overswing, phase}), and on release
-//                onSwing(samples) with samples [{t (ms), x, y}] from pointerdown to pointerup.
-//                pointercancel -> onSwingCancel().
+//                swipe style: press in the swing pad -> onSwingStart({x, y}), then every move
+//                onSwingProgress({depth, maxDepth, raw, power, overswing, full, phase}), and on
+//                release onSwing(samples) with samples [{t (ms), x, y}] from pointerdown to
+//                pointerup. The canvas captures the pointer, and moves/releases are also heard on
+//                the window, so leaving the pad (or the canvas) never drops a swing.
+//                onSwingCancel(reason) ends a swing without a stroke: 'pointercancel' (the system
+//                took the touch), 'dragOut' (dragged more than SIDE_OUT_PX sideways out of the pad
+//                during the backswing), 'mode' / 'style' (the mode or swing style changed).
+//                tap style: a press in the pad -> onPadTap({x, y, t}) at once (t = the event time
+//                in ms, for meter timing); main.js runs the tap meter.
 //   read         drag anywhere -> onOrbit(dyaw) (grab-the-world: drag right orbits clockwise).
 //   map          tap -> onTap(sx, sy); a horizontal drag still aims (onAim) for fine tuning.
 //   intro/watch  tap anywhere -> onSkip() (not within SKIP_GUARD_MS of entering the mode).
 //   disabled     nothing.
 // Only the first pointer is tracked; extra fingers are ignored until it lifts.
+//
+// Power (architecture.md section 8.1). The touchdown y is the swing's start; the deepest point
+// below it is the backswing. fullPowerPx(padH) is the travel for full power, a comfortable thumb
+// distance, shared by the live gauge (swingProgress) and swing.js (interpretSwing):
+//   raw = maxDepth / fullPowerPx         (putts use their own, slightly shorter travel)
+//   full swing: power = raw up to 0.8 (so 25/50/75% of the travel is 25/50/75% power), then a
+//     slightly steeper ramp to 1.0 at raw 0.95; a detent holds exactly 1.0 from raw 0.95 to 1.12
+//     (0.95-1.06 is the detent proper, 1.06-1.12 its margin), and only past 1.12x the travel does
+//     the swing overswing, up to MAX_POWER = 1.1 at raw 1.22.
+//   putt: power = raw (no detent: pace needs every pixel), capped at MAX_POWER.
 
 import { clamp } from './vec3.js';
 
-// Swing depth (px) for full power, as a fraction of padRefH (see architecture.md section 4).
-export const FULL_POWER_FRAC = 0.32;
-export const PUTT_POWER_FRAC = 0.3;
+// Travel for full power: FRAC x the pad height, clamped to [MIN_PX, MAX_PX] CSS px.
+export const FULL_POWER_FRAC = 0.55;
+export const FULL_POWER_MIN_PX = 140;
+export const FULL_POWER_MAX_PX = 220;
+export const PUTT_POWER_FRAC = 0.5;
+export const PUTT_POWER_MIN_PX = 110;
+export const PUTT_POWER_MAX_PX = 200;
 export const MAX_POWER = 1.1;
+// Full-swing power curve over raw travel (fractions of fullPowerPx).
+export const RAMP_FROM = 0.8; // 1:1 below this
+export const DETENT_LO = 0.95; // full power from here...
+export const DETENT_HI = 1.06; // ...the detent proper ends here...
+export const OVERSWING_FROM = 1.12; // ...and overswing only starts past this
+// Target notch: the gauge glows within TARGET_GLOW of the target power; Easy snaps within EASY_SNAP.
+export const TARGET_GLOW = 0.03;
+export const EASY_SNAP = 0.05;
+// Tap meter: the power fills 0 -> MAX_POWER over METER_FILL_S, then falls back to 0 over the same
+// time; a meter left running past that is abandoned.
+export const METER_FILL_S = 1.4;
+// A swing dragged this far sideways out of the pad during the backswing is abandoned.
+export const SIDE_OUT_PX = 90;
 
 const AIM_RAD_PER_PX = 0.0022; // ~0.13 deg/px for slow, precise drags
 const AIM_FAST_PX_S = 900; // drags faster than this get up to 3x gain for big turns
@@ -53,7 +87,10 @@ export function layoutMode(w, h) {
 }
 
 // The swing pad for a w x h canvas with safe-area insets {top, right, bottom, left}.
-//   portrait / square: the lower 40% of the area above the bottom safe inset, full width.
+//   portrait / square: the lower 45% of the area above the bottom safe inset, full width (the
+//   club and putt-range pickers sit on its bottom edge, below the arc; they are DOM buttons above
+//   the canvas, so a press on them never starts a swing, and with pointer capture a backswing may
+//   run over them).
 //   landscape: the lower 72% of the height on the right 40% of the width (a 40% strip along the
 //   bottom of a 390 px tall screen leaves too little travel for the backswing).
 export function padRectFor(w, h, insets = {}) {
@@ -65,7 +102,7 @@ export function padRectFor(w, h, insets = {}) {
     const ph = Math.round(usableH * 0.72);
     return { x: w - sr - pw, y: usableH - ph, w: pw, h: ph };
   }
-  const ph = Math.round(usableH * 0.4);
+  const ph = Math.round(usableH * 0.45);
   return { x: 0, y: usableH - ph, w, h: ph };
 }
 
@@ -73,20 +110,98 @@ export function inRect(r, x, y) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-// Live swing state from the samples so far. The touchdown y is the impact line; depth is how
-// far below it the finger is now, maxDepth the bottom of the backswing. Power follows maxDepth so
-// the gauge holds the backswing while the finger travels up. phase: 'back' while the finger is
-// still at (or near) its lowest point, 'down' once it climbs back up.
+// Backswing travel (CSS px) for full power with a pad padH px tall.
+export function fullPowerPx(padH, kind = 'full') {
+  const h = Math.max(1, padH || 0);
+  if (kind === 'putt') return clamp(PUTT_POWER_FRAC * h, PUTT_POWER_MIN_PX, PUTT_POWER_MAX_PX);
+  return clamp(FULL_POWER_FRAC * h, FULL_POWER_MIN_PX, FULL_POWER_MAX_PX);
+}
+
+// Power from raw travel (a fraction of fullPowerPx): see the header for the curve.
+export function powerFromRaw(raw, kind = 'full') {
+  const r = Math.max(0, Number.isFinite(raw) ? raw : 0);
+  if (kind === 'putt') return Math.min(r, MAX_POWER);
+  if (r <= RAMP_FROM) return r;
+  // (1e-9: depth / travel round-off must not miss the detent's edge)
+  if (r < DETENT_LO - 1e-9) return RAMP_FROM + ((r - RAMP_FROM) * (1 - RAMP_FROM)) / (DETENT_LO - RAMP_FROM);
+  if (r <= OVERSWING_FROM + 1e-9) return 1;
+  return Math.min(MAX_POWER, 1 + (r - OVERSWING_FROM));
+}
+
+// Power for a backswing depth (px below the touchdown point).
+export function powerFromDepth(depth, padH, kind = 'full') {
+  return powerFromRaw(Math.max(0, depth) / fullPowerPx(padH, kind), kind);
+}
+
+// Inverse of powerFromDepth: the depth (px) that gives `power` (full power: the middle of the
+// detent). Used by tests and the e2e swipe helpers.
+export function depthForPower(power, padH, kind = 'full') {
+  const px = fullPowerPx(padH, kind);
+  const p = clamp(Number.isFinite(power) ? power : 0, 0, MAX_POWER);
+  if (kind === 'putt') return p * px;
+  let raw;
+  if (p <= RAMP_FROM) raw = p;
+  else if (p < 1) raw = RAMP_FROM + ((p - RAMP_FROM) * (DETENT_LO - RAMP_FROM)) / (1 - RAMP_FROM);
+  else if (p === 1) raw = (DETENT_LO + DETENT_HI) / 2;
+  else raw = OVERSWING_FROM + (p - 1);
+  return raw * px;
+}
+
+// Easy difficulty: a power within EASY_SNAP of the target notch snaps onto it.
+export function snapPower(power, target, difficulty) {
+  if (difficulty !== 'easy' || !Number.isFinite(target) || !Number.isFinite(power)) return power;
+  return Math.abs(power - target) <= EASY_SNAP ? target : power;
+}
+
+// The gauge glows when the power is this close to the target notch.
+export function onTarget(power, target) {
+  return Number.isFinite(target) && Number.isFinite(power) && Math.abs(power - target) <= TARGET_GLOW + 1e-9;
+}
+
+// Tap meter: raw travel equivalent elapsedS seconds after the first tap. The power (through
+// powerFromRaw) fills 0 -> MAX_POWER over METER_FILL_S, hanging briefly in the full-power detent
+// on a full swing, then falls back the same way; null once it has fallen back (abandoned).
+export function meterRaw(elapsedS, kind = 'full') {
+  const top = kind === 'putt' ? MAX_POWER : OVERSWING_FROM + (MAX_POWER - 1);
+  const e = Math.max(0, Number.isFinite(elapsedS) ? elapsedS : 0);
+  if (e <= METER_FILL_S) return (top * e) / METER_FILL_S;
+  if (e <= 2 * METER_FILL_S) return top * (2 - e / METER_FILL_S);
+  return null;
+}
+
+export function meterPower(elapsedS, kind = 'full') {
+  const raw = meterRaw(elapsedS, kind);
+  return raw == null ? null : powerFromRaw(raw, kind);
+}
+
+// True when the finger, while still in the backswing (at or near its lowest point so far), was
+// dragged more than SIDE_OUT_PX sideways beyond the pad's left or right edge: the player is
+// abandoning the swing. In portrait the pad spans the screen, so only landscape can trigger it.
+export function draggedOut(samples, padRect) {
+  if (!samples || !samples.length || !padRect) return false;
+  let maxY = -Infinity;
+  for (const s of samples) {
+    if (s.y > maxY) maxY = s.y;
+    if (s.y < maxY - DOWN_SLOP_PX) continue; // on the way up: a wide follow-through is fine
+    if (s.x < padRect.x - SIDE_OUT_PX || s.x > padRect.x + padRect.w + SIDE_OUT_PX) return true;
+  }
+  return false;
+}
+
+// Live swing state from the samples so far. The touchdown y is the start; depth is how far below
+// it the finger is now, maxDepth the bottom of the backswing. Power follows maxDepth so the gauge
+// holds the backswing while the finger travels up. phase: 'back' while the finger is still at (or
+// near) its lowest point, 'down' once it climbs back up. full: in the full-power detent.
 export function swingProgress(samples, padRefH, kind = 'full') {
-  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, power: 0, overswing: false, phase: 'back' };
+  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back' };
   const y0 = samples[0].y;
   let maxDepth = 0;
   for (const s of samples) maxDepth = Math.max(maxDepth, s.y - y0);
   const depth = Math.max(0, samples[samples.length - 1].y - y0);
-  const frac = kind === 'putt' ? PUTT_POWER_FRAC : FULL_POWER_FRAC;
-  const power = clamp(maxDepth / (frac * Math.max(1, padRefH)), 0, MAX_POWER);
+  const raw = maxDepth / fullPowerPx(padRefH, kind);
+  const power = powerFromRaw(raw, kind);
   const phase = maxDepth - depth > DOWN_SLOP_PX ? 'down' : 'back';
-  return { depth, maxDepth, power, overswing: power > 1, phase };
+  return { depth, maxDepth, raw, power, overswing: power > 1, full: kind !== 'putt' && power === 1, phase };
 }
 
 // Aim yaw change for a horizontal drag of dx px over dtMs. Faster drags turn more per pixel.
@@ -121,6 +236,7 @@ export function readSafeInsets() {
 }
 
 const MODES = ['full', 'putt', 'read', 'map', 'intro', 'watch', 'disabled'];
+const STYLES = ['swipe', 'tap'];
 const noop = () => {};
 
 // ------------------------------------------------------------------ controller (DOM)
@@ -133,12 +249,15 @@ export class InputController {
     this.onSwingProgress = callbacks.onSwingProgress || noop;
     this.onSwing = callbacks.onSwing || noop;
     this.onSwingCancel = callbacks.onSwingCancel || noop;
+    this.onPadTap = callbacks.onPadTap || noop;
     this.onOrbit = callbacks.onOrbit || noop;
     this.onTap = callbacks.onTap || noop;
     this.onSkip = callbacks.onSkip || noop;
     this._mode = 'disabled';
+    this._style = 'swipe';
     this.padRect = { x: 0, y: 0, w: 1, h: 1 };
-    this._g = null; // active gesture {id, kind:'aim'|'swing'|'orbit'|'tap', down, last, samples}
+    // active gesture {id, kind:'aim'|'swing'|'padtap'|'void'|'orbit'|'map'|'tap', down, last, samples}
+    this._g = null;
     this._off = [];
 
     const on = (el, type, fn, opts) => {
@@ -146,10 +265,12 @@ export class InputController {
       this._off.push(() => el.removeEventListener(type, fn, opts));
     };
     on(canvas, 'pointerdown', (e) => this._down(e));
-    on(canvas, 'pointermove', (e) => this._move(e));
-    on(canvas, 'pointerup', (e) => this._up(e, false));
-    on(canvas, 'pointercancel', (e) => this._up(e, true));
-    on(canvas, 'lostpointercapture', (e) => this._up(e, true));
+    // Moves and releases are heard on the window: with pointer capture they target the canvas and
+    // bubble up; if the capture is ever lost (iOS), they still arrive from whatever element is
+    // under the finger, so a swing is never dropped or left hanging.
+    on(window, 'pointermove', (e) => this._move(e));
+    on(window, 'pointerup', (e) => this._up(e, false));
+    on(window, 'pointercancel', (e) => this._up(e, true));
     // iOS: stop long-press magnifier / callout and double-tap zoom on the game surface.
     on(canvas, 'contextmenu', (e) => e.preventDefault());
     on(canvas, 'touchstart', (e) => e.preventDefault(), { passive: false });
@@ -175,10 +296,20 @@ export class InputController {
   setMode(m) {
     if (!MODES.includes(m)) throw new Error(`InputController: unknown mode ${m}`);
     if (m === this._mode) return;
-    if (this._g && this._g.kind === 'swing') this.onSwingCancel();
-    this._g = null;
+    this._abandon('mode');
     this._mode = m;
     if (m === 'intro' || m === 'watch') this._skipGuard = now() + SKIP_GUARD_MS;
+  }
+
+  get swingStyle() {
+    return this._style;
+  }
+
+  set swingStyle(s) {
+    if (!STYLES.includes(s)) throw new Error(`InputController: unknown swing style ${s}`);
+    if (s === this._style) return;
+    this._abandon('style');
+    this._style = s;
   }
 
   get padRefH() {
@@ -197,9 +328,14 @@ export class InputController {
     this._g = null;
   }
 
+  _abandon(reason) {
+    if (this._g && this._g.kind === 'swing') this.onSwingCancel(reason);
+    this._g = null;
+  }
+
   _pt(e) {
     const r = this.canvas.getBoundingClientRect();
-    return { t: e.timeStamp || performance.now(), x: e.clientX - r.left, y: e.clientY - r.top };
+    return { t: e.timeStamp || now(), x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
   _down(e) {
@@ -210,7 +346,8 @@ export class InputController {
     switch (this._mode) {
       case 'full':
       case 'putt':
-        kind = inRect(this.padRect, p.x, p.y) ? 'swing' : 'aim';
+        if (!inRect(this.padRect, p.x, p.y)) kind = 'aim';
+        else kind = this._style === 'tap' ? 'padtap' : 'swing';
         break;
       case 'read':
         kind = 'orbit';
@@ -231,6 +368,8 @@ export class InputController {
     if (kind === 'swing') {
       this.onSwingStart({ x: p.x, y: p.y });
       this.onSwingProgress(swingProgress(this._g.samples, this.padRefH, this._mode));
+    } else if (kind === 'padtap') {
+      this.onPadTap({ x: p.x, y: p.y, t: p.t });
     }
     e.preventDefault();
   }
@@ -238,6 +377,7 @@ export class InputController {
   _move(e) {
     const g = this._g;
     if (!g || e.pointerId !== g.id) return;
+    if (g.kind === 'void' || g.kind === 'padtap') return; // abandoned swing / tap meter press
     // Coalesced events give the full 120 Hz touch trace on iOS even when rAF runs at 60 Hz;
     // the swing interpreter needs it for the flick speed and curvature.
     const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : null;
@@ -256,7 +396,16 @@ export class InputController {
       }
       g.last = p;
     }
-    if (g.kind === 'swing') this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode));
+    if (g.kind === 'swing') {
+      if (draggedOut(g.samples, this.padRect)) {
+        // Dragged off to the side in the backswing: abandoned at once (the gauge disappears
+        // while the finger is still down), and the rest of this touch is ignored.
+        g.kind = 'void';
+        this.onSwingCancel('dragOut');
+      } else {
+        this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode));
+      }
+    }
     e.preventDefault();
   }
 
@@ -267,7 +416,7 @@ export class InputController {
     const p = this._pt(e);
     if (g.kind === 'swing') {
       if (cancelled) {
-        this.onSwingCancel();
+        this.onSwingCancel('pointercancel');
         return;
       }
       if (p.t >= g.last.t && (p.x !== g.last.x || p.y !== g.last.y)) g.samples.push(p);
