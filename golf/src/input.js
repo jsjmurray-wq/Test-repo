@@ -38,6 +38,16 @@
 //     (0.95-1.06 is the detent proper, 1.06-1.12 its margin), and only past 1.12x the travel does
 //     the swing overswing, up to MAX_POWER = 1.1 at raw 1.22.
 //   putt: power = raw (no detent: pace needs every pixel), capped at MAX_POWER.
+//
+// Travel from where the thumb lands (swingTravel): a swing started low in the pad (on the ball, say)
+// has less room below it than fullPowerPx, so its travel shrinks to fit: full power (the detent
+// proper) always lies inside the pad, down to a floor of TRAVEL_MIN_PX. Both the gauge and
+// interpretSwing take the pad rect for this.
+//
+// Dialling back (swingSetPoint): the power comes from the set point, the bottom of the backswing,
+// which follows the finger down and also back UP while it moves up slowly (under DIAL_SPEED px/s,
+// once it has risen DIAL_MIN_PX): a player who overshoots the notch eases back to it and the gauge
+// follows. Only a brisker move up is the swing itself (interpretSwing strikes from the set point).
 
 import { clamp } from './vec3.js';
 
@@ -55,13 +65,19 @@ export const DETENT_LO = 0.95; // full power from here...
 export const DETENT_HI = 1.06; // ...the detent proper ends here...
 export const OVERSWING_FROM = 1.12; // ...and overswing only starts past this
 // Target notch: the gauge glows within TARGET_GLOW of the target power; Easy snaps within EASY_SNAP.
-export const TARGET_GLOW = 0.03;
+export const TARGET_GLOW = 0.03; // of the full-power travel (raw), see onTarget
 export const EASY_SNAP = 0.05;
 // Tap meter: the power fills 0 -> MAX_POWER over METER_FILL_S, then falls back to 0 over the same
 // time; a meter left running past that is abandoned.
 export const METER_FILL_S = 1.4;
 // A swing dragged this far sideways out of the pad during the backswing is abandoned.
 export const SIDE_OUT_PX = 90;
+// Travel floor for a swing started near the bottom of the pad.
+export const TRAVEL_MIN_PX = 90;
+// Dialling back: the finger moving up slower than this (px/s, measured once it has risen
+// DIAL_MIN_PX above the set point; then sample by sample) moves the set point up with it.
+export const DIAL_SPEED = 90;
+export const DIAL_MIN_PX = 6;
 
 const AIM_RAD_PER_PX = 0.0022; // ~0.13 deg/px for slow, precise drags
 const AIM_FAST_PX_S = 900; // drags faster than this get up to 3x gain for big turns
@@ -128,23 +144,38 @@ export function powerFromRaw(raw, kind = 'full') {
   return Math.min(MAX_POWER, 1 + (r - OVERSWING_FROM));
 }
 
-// Power for a backswing depth (px below the touchdown point).
-export function powerFromDepth(depth, padH, kind = 'full') {
-  return powerFromRaw(Math.max(0, depth) / fullPowerPx(padH, kind), kind);
+// Travel (px) for full power of a swing that touched down at y0 in padRect: fullPowerPx, or less
+// when the pad's bottom edge is closer than that (full swings keep the detent proper, up to
+// DETENT_HI, inside the pad; putts their full power), never under TRAVEL_MIN_PX. Without a pad
+// rect or y0: fullPowerPx.
+export function swingTravel(padH, kind = 'full', y0 = null, padRect = null) {
+  const px = fullPowerPx(padH, kind);
+  if (!padRect || !Number.isFinite(y0)) return px;
+  const room = padRect.y + padRect.h - y0;
+  return clamp(room / (kind === 'putt' ? 1 : DETENT_HI), Math.min(px, TRAVEL_MIN_PX), px);
+}
+
+// Power for a backswing depth (px below the touchdown point); travel: swingTravel (default
+// fullPowerPx).
+export function powerFromDepth(depth, padH, kind = 'full', travel = null) {
+  return powerFromRaw(Math.max(0, depth) / (travel || fullPowerPx(padH, kind)), kind);
+}
+
+// Raw travel (a fraction of the full-power travel) that gives `power`: the inverse of powerFromRaw
+// (full power: the middle of the detent).
+export function rawForPower(power, kind = 'full') {
+  const p = clamp(Number.isFinite(power) ? power : 0, 0, MAX_POWER);
+  if (kind === 'putt') return p;
+  if (p <= RAMP_FROM) return p;
+  if (p < 1) return RAMP_FROM + ((p - RAMP_FROM) * (DETENT_LO - RAMP_FROM)) / (1 - RAMP_FROM);
+  if (p === 1) return (DETENT_LO + DETENT_HI) / 2;
+  return OVERSWING_FROM + (p - 1);
 }
 
 // Inverse of powerFromDepth: the depth (px) that gives `power` (full power: the middle of the
 // detent). Used by tests and the e2e swipe helpers.
-export function depthForPower(power, padH, kind = 'full') {
-  const px = fullPowerPx(padH, kind);
-  const p = clamp(Number.isFinite(power) ? power : 0, 0, MAX_POWER);
-  if (kind === 'putt') return p * px;
-  let raw;
-  if (p <= RAMP_FROM) raw = p;
-  else if (p < 1) raw = RAMP_FROM + ((p - RAMP_FROM) * (DETENT_LO - RAMP_FROM)) / (1 - RAMP_FROM);
-  else if (p === 1) raw = (DETENT_LO + DETENT_HI) / 2;
-  else raw = OVERSWING_FROM + (p - 1);
-  return raw * px;
+export function depthForPower(power, padH, kind = 'full', travel = null) {
+  return rawForPower(power, kind) * (travel || fullPowerPx(padH, kind));
 }
 
 // Easy difficulty: a power within EASY_SNAP of the target notch snaps onto it.
@@ -153,9 +184,12 @@ export function snapPower(power, target, difficulty) {
   return Math.abs(power - target) <= EASY_SNAP ? target : power;
 }
 
-// The gauge glows when the power is this close to the target notch.
-export function onTarget(power, target) {
-  return Number.isFinite(target) && Number.isFinite(power) && Math.abs(power - target) <= TARGET_GLOW + 1e-9;
+// The gauge glows when the power is this close to the target notch, measured in travel (raw) so the
+// window is the same width under the thumb everywhere on the arc (±TARGET_GLOW of the full-power
+// travel, about ±6 px): in the steeper 80-100% ramp it spans a little more power, and a notch just
+// short of full power reaches into the detent instead of ending a pixel before it.
+export function onTarget(power, target, kind = 'full') {
+  return Number.isFinite(target) && Number.isFinite(power) && Math.abs(rawForPower(power, kind) - rawForPower(target, kind)) <= TARGET_GLOW + 1e-9;
 }
 
 // Tap meter: raw travel equivalent elapsedS seconds after the first tap. The power (through
@@ -188,20 +222,111 @@ export function draggedOut(samples, padRect) {
   return false;
 }
 
+// Set point of a swing trace: the bottom of the backswing the power is read from. It follows the
+// finger down, and while the finger eases back up slowly it follows it up too (dialling back):
+//  - a rise starts at the first sample clearly (CLEAR_PX) above the set point; once it is
+//    DIAL_MIN_PX above and has lasted DIAL_MIN_MS, an average speed from that first sample under
+//    DIAL_SPEED enters dialling (timed from the first sample above, so a pause at the bottom with no
+//    touch events never makes a flick look slow; the minimum time lets an upswing that starts
+//    gently get going);
+//  - while dialling, the set point follows sample by sample as long as the speed over the last
+//    DIAL_WINDOW_MS stays under DIAL_SPEED;
+//  - a rise that has once gone COMMIT_SPEED or faster is the swing: it never dials (a climb that
+//    rests at the top before the lift is still a climb).
+// Returns {i, y}: the sample index and its y. Every later sample is at or above it. Pure and causal,
+// so the live gauge (swingProgress on the trace so far) and interpretSwing (the whole trace) agree.
+// dial false (putts: the stroke is the release, and a thumb relaxing forward before it must not
+// soften the putt): just the deepest point.
+const CLEAR_PX = 3;
+const DIAL_MIN_MS = 100;
+const DIAL_WINDOW_MS = 50;
+const COMMIT_SPEED = 150;
+const GAP_MS = 120; // no events for this long: the thumb was resting
+function windowSpeed(S, i) {
+  const s = S[i];
+  let k = i - 1;
+  while (k > 0 && S[k].t > s.t - DIAL_WINDOW_MS) k--;
+  return ((S[k].y - s.y) / Math.max(8, s.t - S[k].t)) * 1000;
+}
+export function swingSetPoint(samples, dial = true) {
+  if (!samples || !samples.length) return { i: 0, y: 0 };
+  let si = 0;
+  let sy = samples[0].y;
+  if (!dial) {
+    for (let i = 1; i < samples.length; i++) {
+      if (samples[i].y > sy) {
+        si = i;
+        sy = samples[i].y;
+      }
+    }
+    return { i: si, y: sy };
+  }
+  let up = -1; // first sample of the current rise clearly above the set point
+  let dialing = false;
+  let committed = false;
+  for (let i = 1; i < samples.length; i++) {
+    const s = samples[i];
+    if (s.y >= sy) {
+      si = i;
+      sy = s.y;
+      up = -1;
+      committed = false;
+      continue;
+    }
+    if (committed) continue;
+    // A jump after a gap in the events (the thumb rested, then moved: iOS sends nothing while it
+    // is still) starts a new rise however long the gap was: it is never read as slow.
+    const prev = samples[i - 1];
+    if (s.t - prev.t > GAP_MS && prev.y - s.y > CLEAR_PX) {
+      dialing = false;
+      up = i;
+      continue;
+    }
+    if (dialing) {
+      const v = windowSpeed(samples, i);
+      if (v < DIAL_SPEED) {
+        si = i;
+        sy = s.y;
+        continue;
+      }
+      dialing = false;
+      if (v >= COMMIT_SPEED) committed = true;
+      up = sy - s.y > CLEAR_PX ? i : -1;
+      continue;
+    }
+    if (up < 0) {
+      if (sy - s.y > CLEAR_PX) up = i;
+      continue;
+    }
+    const a = samples[up];
+    const v = ((a.y - s.y) / Math.max(1, s.t - a.t)) * 1000;
+    if (v >= COMMIT_SPEED || windowSpeed(samples, i) >= COMMIT_SPEED) committed = true;
+    else if (sy - s.y >= DIAL_MIN_PX && s.t - a.t >= DIAL_MIN_MS && v < DIAL_SPEED) {
+      si = i;
+      sy = s.y;
+      up = -1;
+      dialing = true;
+    }
+  }
+  return { i: si, y: sy };
+}
+
 // Live swing state from the samples so far. The touchdown y is the start; depth is how far below
-// it the finger is now, maxDepth the bottom of the backswing. Power follows maxDepth so the gauge
-// holds the backswing while the finger travels up. phase: 'back' while the finger is still at (or
-// near) its lowest point, 'down' once it climbs back up. full: in the full-power detent.
-export function swingProgress(samples, padRefH, kind = 'full') {
-  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back' };
+// it the finger is now, maxDepth the set point's depth (the bottom of the backswing, dialled back
+// by a slow move up on a full swing: swingSetPoint). Power follows the set point, so the gauge holds the backswing
+// while the finger swings up and follows a slow ease back. phase: 'back' while the finger is still
+// at (or near) the set point, 'down' once it climbs away. full: in the full-power detent. padRect:
+// the pad, for the travel of a swing started low in it (swingTravel); travel is returned.
+export function swingProgress(samples, padRefH, kind = 'full', padRect = null) {
+  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back', travel: fullPowerPx(padRefH, kind) };
   const y0 = samples[0].y;
-  let maxDepth = 0;
-  for (const s of samples) maxDepth = Math.max(maxDepth, s.y - y0);
+  const travel = swingTravel(padRefH, kind, y0, padRect);
+  const maxDepth = Math.max(0, swingSetPoint(samples, kind !== 'putt').y - y0);
   const depth = Math.max(0, samples[samples.length - 1].y - y0);
-  const raw = maxDepth / fullPowerPx(padRefH, kind);
+  const raw = maxDepth / travel;
   const power = powerFromRaw(raw, kind);
   const phase = maxDepth - depth > DOWN_SLOP_PX ? 'down' : 'back';
-  return { depth, maxDepth, raw, power, overswing: power > 1, full: kind !== 'putt' && power === 1, phase };
+  return { depth, maxDepth, raw, power, overswing: power > 1, full: kind !== 'putt' && power === 1, phase, travel };
 }
 
 // Aim yaw change for a horizontal drag of dx px over dtMs. Faster drags turn more per pixel.
@@ -367,7 +492,7 @@ export class InputController {
     this._g = { id: e.pointerId, kind, down: p, last: p, samples: [p] };
     if (kind === 'swing') {
       this.onSwingStart({ x: p.x, y: p.y });
-      this.onSwingProgress(swingProgress(this._g.samples, this.padRefH, this._mode));
+      this.onSwingProgress(swingProgress(this._g.samples, this.padRefH, this._mode, this.padRect));
     } else if (kind === 'padtap') {
       this.onPadTap({ x: p.x, y: p.y, t: p.t });
     }
@@ -403,7 +528,7 @@ export class InputController {
         g.kind = 'void';
         this.onSwingCancel('dragOut');
       } else {
-        this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode));
+        this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode, this.padRect));
       }
     }
     e.preventDefault();

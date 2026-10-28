@@ -120,6 +120,16 @@ test('draw and cut: a 7-iron finishes 6-15 yd left / right of the normal shot; m
     assert.ok(bend > 1.5 && nn.left - hit(id, 'cut').left > 1.5 && bend < prev, `${id} bends ${bend.toFixed(1)} m`);
     prev = bend;
   }
+  // A controlled driver or 3-wood draw / fade bends 10-20 yd (the shape scales with spin loft,
+  // so it is not a 35-yd hook), and starts within a degree of the aim line.
+  for (const id of ['D', '3W']) {
+    const nn = hit(id, 'normal');
+    const dd = hit(id, 'draw');
+    const cc = hit(id, 'cut');
+    assert.ok(yd(dd.left - nn.left) >= 10 && yd(dd.left - nn.left) <= 20, `${id} draw ${yd(dd.left - nn.left).toFixed(1)} yd`);
+    assert.ok(yd(nn.left - cc.left) >= 10 && yd(nn.left - cc.left) <= 20, `${id} cut ${yd(nn.left - cc.left).toFixed(1)} yd`);
+    assert.ok(Math.abs(dd.launch.meta.tiltDeg) < 10 && Math.abs(dd.launch.meta.startDirDeg) < 1, `${id} tilt ${dd.launch.meta.tiltDeg.toFixed(1)}`);
+  }
 });
 
 test("the swipe's own curve adds to a draw's", () => {
@@ -172,17 +182,36 @@ test('flop: lands at 55 deg or steeper and stops within 3 yd on the green', () =
   for (const power of [0.4, 0.6]) assert.ok(Math.abs(yd(hit('LW', 'flop', { land: SURF.GREEN, power }).roll)) <= 3, `LW at ${power}`);
 });
 
-test('bump & run: carry is 25-45% of the total, and far more of it rolls than a normal pitch', () => {
-  for (const id of ['7i', '8i', '9i', 'PW', 'GW', 'SW']) {
-    const b = hit(id, 'bump');
-    const f = b.carry / b.total;
-    assert.ok(f >= 0.25 && f <= 0.45, `${id} carry ${(f * 100).toFixed(0)}% of total`);
-    assert.ok(b.apex < 3, `${id} apex ${b.apex.toFixed(1)}`);
+test('bump & run: at chip distances the carry share grows with loft (1:3 with a 7-iron to 1:1 with the SW)', () => {
+  // Ball 4 m short of a green on fairway; power solved for the total.
+  const T = planeTerrain({ surfaceFn: (x) => (x < 4 ? SURF.FAIRWAY : SURF.GREEN) });
+  const run = (id, shot, power) => simulateShot(T, swingToLaunch(id, teeLie, { ...STOCK, power }, 0, null, { pos: { x: 0, y: 0, z: 0.03 }, shot }), { record: false, pin: false });
+  const chip = (id, want, shot = 'bump') => {
+    let lo = 0;
+    let hi = 1.1;
+    for (let i = 0; i < 26; i++) {
+      const m = (lo + hi) / 2;
+      if (run(id, shot, m).total < want) lo = m;
+      else hi = m;
+    }
+    const p = (lo + hi) / 2;
+    const r = run(id, shot, p);
+    const land = r.events.find((e) => e.type === 'land');
+    return { f: r.carry / r.total, total: r.total, apex: r.apex, angle: land ? land.angle : null, launch: swingToLaunch(id, teeLie, { ...STOCK, power: p }, 0, null, { shot }).meta };
+  };
+  const want = { '7i': [0.12, 0.26], '9i': [0.17, 0.32], PW: [0.3, 0.5], SW: [0.45, 0.65] };
+  for (const total of [15, 25]) {
+    let prev = 0;
+    for (const [id, [lo, hi]] of Object.entries(want)) {
+      const c = chip(id, total);
+      assert.ok(Math.abs(c.total - total) < 0.6, `${id} reaches ${total} m`);
+      assert.ok(c.f >= lo && c.f <= hi && c.f > prev, `${id} at ${total} m: carry ${(c.f * 100).toFixed(0)}% of the total`);
+      assert.ok(c.launch.launchDeg >= 14 && c.launch.launchDeg <= 35 && c.apex > 0.12, `${id} launches ${c.launch.launchDeg.toFixed(0)} deg, apex ${c.apex.toFixed(2)} m`);
+      prev = c.f;
+    }
   }
-  // A 25-yard chip: mostly roll, against a normal pitch that mostly flies.
-  const chip = hit('8i', 'bump', { power: 0.35 });
-  const pitch = hit('SW', 'normal', { power: 0.35 });
-  assert.ok(chip.roll > 2 * chip.carry && pitch.carry > pitch.roll, `${chip.carry}/${chip.roll} vs ${pitch.carry}/${pitch.roll}`);
+  // A bump runs more than the same club's normal pitch over the same distance.
+  for (const id of ['PW', 'SW']) assert.ok(chip(id, 20).f < chip(id, 20, 'normal').f - 0.08, id);
 });
 
 test('contact scatter still applies to a special shot, seeded', () => {

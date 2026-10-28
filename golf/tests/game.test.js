@@ -407,6 +407,13 @@ test('special shots: eligible list, selection, reset after the stroke and on a c
   assert.ok(info.carry < 0.85 * stock.carry && info.landAngle < stock.landAngle, `${info.carry} vs ${stock.carry}`);
   assert.ok(Math.abs(g.carryForPower(1).carry - info.carry) < 1e-6 && g.carryForPower(1).carry < stockCurve.carry);
   assert.ok(g.shotPreview(1).path.length > 10);
+  // The preview is taken to a 2% power step and a quarter-degree aim step and cached: the gauge
+  // and the aim drag ask every frame without a simulation each time.
+  const pv = g.shotPreview(0.703);
+  assert.equal(g.shotPreview(0.708), pv);
+  assert.notEqual(g.shotPreview(0.75), pv);
+  g.setAim(g.aimYaw + 0.0005);
+  assert.equal(g.shotPreview(0.70), pv, 'a hair of aim reuses it');
   assert.equal(g.clubInfo('3W').shot, 'normal', 'other clubs show their normal shot');
   // Changing to a club that can still play it keeps it; one that cannot resets it.
   g.setClub('3W');

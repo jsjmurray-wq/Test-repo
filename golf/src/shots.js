@@ -19,6 +19,11 @@
 //   draw     swing path 3 deg out to the right, face 4 deg closed to it (face 1 deg left of the
 //            target): the ball starts on the aim line (irons; woods a touch left) and curves left.
 //            The closed face delofts it: launch -2.5 deg, spin -8%, so it runs out 3-8 yd further.
+//            Those angles are the 7-iron's (spin loft 31 deg). The curve comes from the spin-axis
+//            tilt, atan(face-to-path / spin loft), so the same 4 deg on a driver (spin loft 13)
+//            tilts it 17 deg: a hook. Path and face-to-path therefore scale with the club's spin
+//            loft (x spinLoft / SHAPE_LOFT), which keeps the tilt near 7 deg and the bend about
+//            the same share of the carry: driver and 3-wood 12-20 yd, 7-iron 6-15 yd.
 //   cut      path 3 deg left, face 4 deg open to it: starts on the line and slides right. The open
 //            face adds loft and glances: launch +1 deg, spin +8%, ball speed x 0.985 (carry -2-4%).
 //   stinger  ball back, hands ahead, held-off finish: launch x 0.5, spin x 0.7, ball speed x 0.97.
@@ -29,8 +34,13 @@
 //            Lands at 55 deg or steeper and stops within 3 yd on the green. The low spin is what a
 //            slow, glancing open-face strike gives: at the stock spin the steep, slow ball zips back
 //            4-6 yd here. Needs grass under the ball (not hardpan).
-//   bump     a putting-style chip with a lofted iron: launch x 0.3, spin x 0.2, speed x 0.8. The
-//            ball lands short and runs: carry is a quarter to under half of the total.
+//   bump     a chip played with the ball back and the hands ahead: the club is delofted (launch
+//            x 0.85, on top of the partial swing's own launch), spin x 0.7, speed x 0.8. At chip
+//            distances (10-35 m) the ball flies low, lands a few metres on and runs: the carry is
+//            ~15-20% of the total with a 7-iron, ~20-25% with a 9-iron, ~35-45% with the PW and
+//            ~50-60% with the SW (the rule-of-thumb 1:3 / 1:2 / 1:1 chips), launching 16-33 deg at
+//            700-3500 rpm. (The earlier x0.3 launch, x0.2 spin made every club a putt along the
+//            ground: 5-12% carry, 2-15 cm apex.) A full-power bump is just a lower, softer shot.
 // releaseK (stinger, punch, bump): these shots are meant to run, so the target notch counts all of
 // their release instead of the caddie's RELEASE_K share.
 //
@@ -52,11 +62,12 @@ export const SHOTS = [
     clubs: ['4H', '5i', '6i', '7i', '8i', '9i', 'PW', 'GW'] },
   { id: 'flop',    name: 'Flop',       blurb: 'Sky-high, stops dead', launchAdd: 18, spin: 0.42, speed: 0.72,
     clubs: ['GW', 'SW', 'LW'], notFrom: [SURF.WASTE, SURF.DESERT] },
-  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Lands short, rolls out', launch: 0.3, spin: 0.2, speed: 0.8, releaseK: 1,
+  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Lands short, rolls out', launch: 0.85, spin: 0.7, speed: 0.8, releaseK: 1,
     clubs: ['7i', '8i', '9i', 'PW', 'GW', 'SW'] },
 ];
 
 export const FLOP_MAX_LAUNCH = 60; // deg: a flop off a short swing (partial-swing wedge loft) is capped here
+export const SHAPE_LOFT = 31; // deg: the spin loft the draw / cut angles are given for (the 7-iron)
 
 const BY_ID = new Map(SHOTS.map((s) => [s.id, s]));
 const clubOf = (club) => (typeof club === 'string' ? clubById(club) : club);
@@ -88,7 +99,7 @@ export function shotIntent(shotId, club, handed = 'R') {
   const s = BY_ID.get(shotId);
   const c = clubOf(club);
   if (!s || !c || !s.faceToPath) return { startDirDeg: 0, faceToPathDeg: 0 };
-  const m = handed === 'L' ? -1 : 1;
+  const m = (handed === 'L' ? -1 : 1) * Math.min(1.3, (c.spinLoft || SHAPE_LOFT) / SHAPE_LOFT);
   const k = dPlane(c, 1, 0).startDirDeg; // start = path + k x faceToPath
   return { startDirDeg: m * (s.path + k * s.faceToPath), faceToPathDeg: m * s.faceToPath };
 }

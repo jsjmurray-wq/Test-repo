@@ -7,9 +7,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   interpretSwing, swingToLaunch, powerForDistance, DIFFICULTY, PUTT_RANGES, PARTIAL_LAUNCH, DECEL_SPEED,
-  STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC,
+  STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC, STRIKE_CLIMB_MAX,
 } from '../src/swing.js';
-import { fullPowerPx, powerFromDepth, depthForPower, padRectFor, MAX_POWER, EASY_SNAP } from '../src/input.js';
+import { fullPowerPx, powerFromDepth, depthForPower, padRectFor, swingProgress, swingTravel, MAX_POWER, EASY_SNAP } from '../src/input.js';
 import { clubById, dPlane } from '../src/clubs.js';
 import { simulateShot, planeTerrain, puttSpeedForDistance } from '../src/physics.js';
 import { mulberry32, gaussian } from '../src/rng.js';
@@ -118,7 +118,7 @@ function phoneSwipe(moves, { x0 = 196, y0 = 520, seed = 1, hz = 60, noise = 0.5,
 const opts = (o = {}) => ({ padRefH: H, kind: 'full', difficulty: 'normal', handed: 'R', ...o });
 const full = (S, o = {}) => interpretSwing(S, opts(o));
 const putt = (S, o = {}) => interpretSwing(S, opts({ kind: 'putt', ...o }));
-const thrFor = (depth) => Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth);
+const thrFor = (depth) => Math.min(STRIKE_CLIMB_MAX, Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth));
 
 // ------------------------------------------------------------------ power
 
@@ -195,11 +195,77 @@ test('slow deliberate swings strike; only a really slow climb is decel', () => {
   const careful = full(phoneSwipe([[700, -4, 180], [300, 0, 0], [900, 6, -250]], { seed: 5 }));
   assert.equal(careful.ok, true);
   assert.equal(careful.tempo, 'smooth', `${careful.upSpeed} px/s`);
-  // Creeping back up 120 px at under 100 px/s: still a stroke, but a decelerating one.
+  // A slow climb (about 105 px/s, faster than a dial back): still a stroke, but a decelerating one.
+  const slow = full(phoneSwipe([[600, 0, 200], [1150, 0, -120, 'linear']], { seed: 6 }));
+  assert.equal(slow.ok, true);
+  assert.equal(slow.tempo, 'decel');
+  assert.ok(slow.label.includes('Decel'));
+  // Creeping back up 120 px at 80 px/s is dialling the power back (input.js swingSetPoint), not a
+  // swing: lifted there, it cancels.
   const creep = full(phoneSwipe([[600, 0, 200], [1500, 0, -120, 'linear']], { seed: 6 }));
-  assert.equal(creep.ok, true);
-  assert.equal(creep.tempo, 'decel');
-  assert.ok(creep.label.includes('Decel'));
+  assert.equal(creep.ok, false);
+  assert.equal(creep.reason, 'cancel');
+});
+
+test('overshoot and ease back: the power follows the finger back up, and the flick strikes at the gauge power', () => {
+  // The reviewer's case: past the notch into overswing (108%), eased back up 4 px at a time (about
+  // 75 px/s), held, then lifted (cancel) or flicked (struck at the eased-back power, not 108%).
+  const deep = depthForPower(1.08, H);
+  const back = (px) => {
+    const S = [{ t: 1000, x: 200, y: 400 }];
+    let t = 1000;
+    for (let k = 1; k <= 20; k++) S.push({ t: (t += 18), x: 200, y: 400 + (deep * k) / 20 });
+    for (let y = 4; y <= px; y += 4) S.push({ t: (t += 53), x: 200, y: 400 + deep - y });
+    return { S, t };
+  };
+  for (const px of [30, 50, 70, 90]) {
+    const { S, t } = back(px);
+    const gauge = swingProgress(S, H, 'full');
+    const want = powerFromDepth(deep - px, H);
+    assert.ok(Math.abs(gauge.power - want) < 0.03, `gauge after ${px} px: ${gauge.power.toFixed(3)} vs ${want.toFixed(3)}`);
+    // Held 400 ms and lifted: no swing.
+    const lift = full([...S, { t: t + 400, x: 200, y: S[S.length - 1].y }]);
+    assert.equal(lift.ok, false, `held after easing back ${px} px struck (${lift.strike}, ${lift.power})`);
+    // Flicked from there: struck at the eased-back power, smooth.
+    const y1 = S[S.length - 1].y;
+    const flick = [...S, ...[1, 2, 3, 4, 5, 6].map((k) => ({ t: t + 400 + 16 * k, x: 200, y: y1 - 35 * k }))];
+    const r = full(flick);
+    assert.equal(r.ok, true, `${px}: ${r.reason}`);
+    assert.ok(Math.abs(r.power - gauge.power) < 1e-9, `${px}: struck ${r.power} vs gauge ${gauge.power}`);
+    assert.ok(r.power < 1.08 - 0.05 && r.tempo !== 'decel', `${px}: ${r.power} ${r.tempo}`);
+  }
+});
+
+test('a swing started low in the pad still reaches full power inside it (the travel fits the room)', () => {
+  const pad = padRectFor(393, 852, { bottom: 34 });
+  const bottom = pad.y + pad.h;
+  // Touchdown 120 px above the pad's bottom edge (on the ball): 120 px of room, not 202.
+  const y0 = bottom - 120;
+  const S = [{ t: 0, x: 196, y: y0 }];
+  for (let k = 1; k <= 12; k++) S.push({ t: 25 * k, x: 196, y: y0 + k * 9.5 }); // 114 px down, inside the pad
+  const gauge = swingProgress(S, pad.h, 'full', pad);
+  assert.equal(gauge.power, 1, `gauge ${gauge.power}`);
+  assert.ok(gauge.travel < FULL && gauge.travel >= 90);
+  const r = full([...S, ...[1, 2, 3, 4].map((k) => ({ t: 300 + 16 * k, x: 196, y: S[12].y - 40 * k }))], { padRect: pad });
+  assert.equal(r.ok, true);
+  assert.equal(r.power, 1);
+  // Started high in the pad, the travel is the usual fullPowerPx.
+  assert.equal(swingTravel(pad.h, 'full', pad.y + 10, pad), FULL);
+  // Never under TRAVEL_MIN_PX.
+  assert.equal(swingTravel(pad.h, 'full', bottom - 20, pad), 90);
+});
+
+test('a short upswing that eases to a stop after a deep backswing still strikes (the climb threshold is capped)', () => {
+  // 90% backswing, then a 35 px flick that eases to a stop over 120 ms and is held before the lift.
+  const d = depthForPower(0.9, H);
+  const S = [{ t: 0, x: 200, y: 400 }];
+  for (let k = 1; k <= 15; k++) S.push({ t: 25 * k, x: 200, y: 400 + (d * k) / 15 });
+  const ease = (f) => 1 - (1 - f) * (1 - f);
+  for (let k = 1; k <= 8; k++) S.push({ t: 375 + 15 * k, x: 200, y: 400 + d - 35 * ease(k / 8) });
+  S.push({ t: 375 + 120 + 200, x: 200, y: 400 + d - 35 });
+  const r = full(S);
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.strike, 'climb');
 });
 
 test('a pause at the bottom (no touch events) does not spoil the flick', () => {
@@ -289,7 +355,13 @@ test('fuzz: 300 human swings all strike, 300 hold-and-lift aborts all cancel', (
     const S = phoneSwipe(moves, { seed: 100 + i, hz: rng() < 0.3 ? 120 : 60, restJitter: rng() < 0.5, liftMoves: rng() < 0.5 });
     const r = full(S);
     assert.equal(r.ok, true, `swing ${i}: ${JSON.stringify(moves.map((m) => m.map((v) => (typeof v === 'number' ? Math.round(v) : v))))} -> ${r.reason}`);
-    assert.ok(Math.abs(r.power - powerFromDepth(depth, H)) < 0.035, `swing ${i}: power ${r.power}`);
+    // The struck power is the live gauge's at the moment the upswing began (dial-back aware);
+    // a brisk upswing keeps the whole backswing, a slow-starting one may have dialled a few px.
+    // (brisk: up to the dial speed, 0.09 px/ms, within 60 ms of leaving the bottom)
+    const [T, , L, ease] = moves[moves.length - 1][2] === 0 ? moves[moves.length - 2] : moves[moves.length - 1];
+    const tReach = ease === 'in' ? (0.045 * T * T) / -L : ease === 'inout' ? (0.0182 * T * T) / -L : 0;
+    const brisk = tReach <= 60;
+    assert.ok(Math.abs(r.power - powerFromDepth(depth, H)) < (brisk ? 0.035 : 0.1), `swing ${i}: power ${r.power}`);
   }
   for (let i = 0; i < 300; i++) {
     const depth = U(30, 260);

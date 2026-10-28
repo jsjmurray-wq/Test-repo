@@ -178,9 +178,17 @@ export function predictShot(terrain, pos, lie, wind, clubId, aimYaw, power = 1, 
 // The intended flight of a shot at a power over flat fairway at the ball's height (with the wind),
 // recorded for the aim preview: main.js drapes path [t, x, y, z]* onto the hole to draw where a
 // draw or cut bends. landing / final are world {x, y, z}.
+// The flat plane is kept per terrain and height (the preview is asked for every frame the gauge or
+// the aim moves: a new plane each time also built a new surface table).
+const _previewPlanes = new WeakMap();
 export function shotPreview(terrain, pos, lie, wind, clubId, aimYaw, opts = {}) {
   const z = terrain.heightAt(pos.x, pos.y);
-  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions: terrain.conditions || null });
+  let pc = _previewPlanes.get(terrain);
+  if (!pc || pc.z !== z) {
+    pc = { z, plane: planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions: terrain.conditions || null }) };
+    _previewPlanes.set(terrain, pc);
+  }
+  const plane = pc.plane;
   const so = shotOpts(typeof clubId === 'string' ? clubById(clubId) : clubId, lie, opts);
   const power = opts.power ?? 1;
   const launch = swingToLaunch(clubId, lie, { ...STOCK, power }, aimYaw, null, { pos: { x: pos.x, y: pos.y, z: z + BALL_R }, ...so });

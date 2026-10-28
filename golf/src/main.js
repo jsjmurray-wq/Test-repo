@@ -51,7 +51,7 @@ import { shotById, shotIntent } from './shots.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
 import { CameraRig, FLYOVER_T, fovForAspect } from './camera.js';
-import { InputController, readSafeInsets, snapPower, meterPower, depthForPower, MAX_POWER } from './input.js';
+import { InputController, readSafeInsets, snapPower, meterPower, depthForPower, swingTravel, MAX_POWER } from './input.js';
 import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
 import { interpretSwing, swingLabel, powerForDistance } from './swing.js';
@@ -74,7 +74,11 @@ const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
 const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
 const FULL_SLACK = 0.03; // a target this little past full power is shown at full
-const AIM_STEP = 0.04; // the aim-point notch moves up in steps this big until its shot finishes in play
+const AIM_STEP = 0.02; // a notch whose shot is not safely in play moves in steps this big
+const AIM_SEARCH = 0.16; // ...at most this far from where it started (down as well as up)
+const PIN_SEARCH = 0.06; // (a pin notch moves at most this far: it is still the pin)
+const SCATTER_P = 0.03; // power either side of the notch that must be in play too (~2 sigma of contact)
+const SAFE_MARGIN = 3; // m: an aim-point notch's rest keeps this clear of trouble
 const CARRY_HAZARDS = new Set([SURF.WATER, SURF.OOB, SURF.BUNKER, SURF.DESERT, SURF.FESCUE]); // no landing there
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
@@ -464,34 +468,61 @@ function targetPower(g) {
   const zBall = t.heightAt(b.x, b.y);
   const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
   let p = powerForDistance(finish, need(t.cup), MAX_POWER);
-  if (p == null) p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1));
+  if (p != null) {
+    if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
+    if (p >= MIN_TARGET && p <= 1) p = playablePower(g, p, { margin: 0, max: 1, search: PIN_SEARCH });
+  } else p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1), { margin: SAFE_MARGIN, max: 1 });
   if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
   return p >= MIN_TARGET ? p : null;
 }
 
-// The aim point is where the hole bends, often just past a forced carry (a wash, the desert, a
-// lagoon). A notch that reaches it on the "expected finish" (carry plus most of the release) can
-// land in the carry, which gives no release: Red Mesa's 3rd sent a 64% driver into the desert
-// 7 m short of the fairway. So the notch's own shot is played on the real hole (the caddie's
-// predictShot: no scatter, with the wind and the selected shot), and when it would not land and
-// finish in play (not water, OB, sand, desert scrub or fescue) the notch moves up toward full power
-// to the first power that does, plus one AIM_STEP of margin when that is in play too (a thumb is
-// a few percent out either way). Full power is the caddie's own check of the club.
-function playablePower(g, p) {
+// The notch's own shot is played on the real hole (the caddie's predictShot: no scatter, with the
+// wind and the selected shot). The aim point is where the hole bends, often just past a forced
+// carry (a wash, the desert, a lagoon): a notch that reaches it on the "expected finish" (carry plus
+// most of the release) can land in the carry, which gives no release (Red Mesa's 3rd sent a 64%
+// driver into the desert 7 m short of the fairway); and a notch whose shot only just stays in play
+// puts an ordinary strike in trouble (Red Mesa's 8th: an on-target 3-wood rested 0.5 m from the
+// scrub, and contact scatter put it in). So a notch must be safely in play: at its power and at
+// SCATTER_P either side (about two sigma of contact) the shot lands clear of water, OB, sand, scrub
+// and fescue and rests out of them, and for an aim-point notch its rest is SAFE_MARGIN m clear of
+// them too. When it is not, the notch moves to the nearest power that is, AIM_STEP at a time, down
+// as well as up, within AIM_SEARCH (never past full power for the aim point); when nothing near is,
+// it stays (full power is the caddie's own check of the club). Pin notches get the same check with
+// no margin (a pin tucked by a bunker is still the target), and at most a few steps.
+function playablePower(g, p, { margin = SAFE_MARGIN, max = 1, search = AIM_SEARCH } = {}) {
   const t = g.terrain;
   const b = g.state.hole.ball;
   const opts = { shot: g.shotType, handed: app.ui.getSetting('handed') };
-  const inPlay = (q) => {
-    const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
-    return isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y)));
+  const memo = new Map();
+  const clear = (x, y) => {
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      if (CARRY_HAZARDS.has(t.surfaceAt(x + margin * Math.cos(a), y + margin * Math.sin(a)))) return false;
+    }
+    return true;
   };
-  if (p >= 1 || inPlay(p)) return p;
-  for (let q = p + AIM_STEP; q < 1; q += AIM_STEP) {
-    if (!inPlay(q)) continue;
-    const m = Math.min(1, q + AIM_STEP);
-    return inPlay(m) ? m : q;
+  const inPlay = (q) => {
+    const key = Math.round(q * 1000);
+    if (!memo.has(key)) {
+      const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
+      const ok = isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y))) && (margin <= 0 || clear(r.final.x, r.final.y));
+      memo.set(key, ok);
+    }
+    return memo.get(key);
+  };
+  const safe = (q) => inPlay(q) && inPlay(Math.max(0.05, q - SCATTER_P)) && inPlay(Math.min(MAX_POWER, q + SCATTER_P));
+  if (safe(p)) return p;
+  const lo = Math.max(MIN_TARGET, p - search);
+  const hi = Math.min(max, p + search);
+  for (let d = AIM_STEP; d <= search + 1e-9; d += AIM_STEP) {
+    // Nearest first; on a tie the longer one (short of the target is where forced carries bite).
+    if (p + d <= hi && safe(p + d)) return p + d;
+    if (p - d >= lo && safe(p - d)) return p - d;
   }
-  return 1;
+  // Nothing safely in play near: at least a power whose own shot is in play (the old rule).
+  if (inPlay(p)) return p;
+  for (let q = p + AIM_STEP; q <= hi; q += AIM_STEP) if (inPlay(q)) return q;
+  return max >= 1 && margin > 0 ? 1 : p;
 }
 
 function syncControls() {
@@ -1440,9 +1471,12 @@ function installDebugHooks() {
       const p = app.input.padRect;
       return { x: r.left + p.x, y: r.top + p.y, w: p.w, h: p.h };
     },
-    // Backswing depth (CSS px) for a swing power on the current pad (e2e swipe helpers).
-    depthForPower(power, kind = 'full') {
-      return depthForPower(power, app.input.padRefH, kind);
+    // Backswing depth (CSS px) for a swing power on the current pad (e2e swipe helpers). y0: the
+    // touchdown y in page px (a swing started low in the pad has a shorter travel: swingTravel).
+    depthForPower(power, kind = 'full', y0 = null) {
+      const r = app.renderer.canvas ? app.renderer.canvas.getBoundingClientRect() : { top: 0 };
+      const travel = y0 == null ? null : swingTravel(app.input.padRefH, kind, y0 - r.top, app.input.padRect);
+      return depthForPower(power, app.input.padRefH, kind, travel);
     },
     state() {
       const g = app.game;

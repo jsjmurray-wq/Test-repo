@@ -61,7 +61,7 @@ import { clubById, dPlane, makeLaunch } from './clubs.js';
 import { puttSpeedForDistance } from './physics.js';
 import { applyLie } from './lie.js';
 import { applyShot } from './shots.js';
-import { MAX_POWER, powerFromDepth, snapPower, draggedOut } from './input.js';
+import { MAX_POWER, powerFromDepth, snapPower, draggedOut, swingSetPoint, swingTravel } from './input.js';
 
 // Difficulty: start-direction gain G_s and curve gain G_c (output deg per input deg) and their
 // dead zones on the chord angle (dzA) and the bend (dzK), in degrees.
@@ -73,7 +73,8 @@ export const DIFFICULTY = {
 
 // Strike recognition (full swing), section 8.1.
 export const STRIKE_CLIMB_PX = 24; // the climb after the bottom that strikes...
-export const STRIKE_CLIMB_FRAC = 0.25; // ...or this fraction of the backswing depth, if more
+export const STRIKE_CLIMB_FRAC = 0.25; // ...or this fraction of the backswing depth, if more...
+export const STRIKE_CLIMB_MAX = 32; // ...but never more than this (a short flick off a deep backswing)
 export const STRIKE_SPEED = 120; // px/s: a climb averaging less than this strikes as 'decel'
 export const RELEASE_SPEED = 150; // px/s: lifted while moving up this fast strikes...
 export const RELEASE_WINDOW_MS = 80; // ...measured over this window before the release
@@ -218,13 +219,17 @@ export function interpretSwing(samples, opts = {}) {
   const H = Math.max(1, opts.padRefH || 300);
   const diff = DIFFICULTY[opts.difficulty] || DIFFICULTY.normal;
   const y0 = S[0].y;
-  let maxY = y0;
-  for (const s of S) if (s.y > maxY) maxY = s.y;
-  const depth = maxY - y0;
-  const power = snapPower(powerFromDepth(depth, H, kind), opts.target, opts.difficulty);
+  // The set point (input.js swingSetPoint): the bottom of the backswing, dialled back by a slow
+  // ease up, exactly as the live gauge reads it; the swing is read from there on. The travel
+  // shrinks for a swing started low in the pad (swingTravel), as on the gauge.
+  const set = swingSetPoint(S, kind !== 'putt');
+  const depth = set.y - y0;
+  const travel = swingTravel(H, kind, y0, opts.padRect || null);
+  const power = snapPower(powerFromDepth(depth, H, kind, travel), opts.target, opts.difficulty);
   if (depth < (kind === 'putt' ? PUTT_MIN_DEPTH_PX : MIN_DEPTH_PX)) return failed(kind, 'short', power);
   if (opts.padRect && draggedOut(S, opts.padRect)) return failed(kind, 'cancel', power);
-  return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, depth, power, diff, opts);
+  const T = set.i > 0 && kind !== 'putt' ? [S[0], ...S.slice(set.i)] : S;
+  return kind === 'putt' ? interpretPutt(T, y0, depth, power, diff, opts) : interpretFull(T, y0, depth, power, diff, opts);
 }
 
 function interpretFull(S, y0, depth, power, diff, opts) {
@@ -232,7 +237,7 @@ function interpretFull(S, y0, depth, power, diff, opts) {
   const end = S[n - 1];
   let iMax = 0;
   for (let i = 1; i < n; i++) if (S[i].y > S[iMax].y) iMax = i;
-  const thr = Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth);
+  const thr = Math.min(STRIKE_CLIMB_MAX, Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth));
 
   // Strike 'climb': the highest point after the bottom of the backswing is at least thr above the
   // bottom of its upward run, and the finger has not slid back down to the bottom by the release

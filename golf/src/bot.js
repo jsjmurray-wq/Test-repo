@@ -53,7 +53,7 @@ export const BOT_SKILL = {
   puttPacePerM: 0.004,
 };
 
-const NOISE_SAMPLES = 6;
+const NOISE_SAMPLES = 8; // seeded misses scored per shortlisted candidate (a line with trouble in reach of an ordinary miss scores worse)
 const PENALTY_FEAR = 0.3; // extra strokes a penalty "costs" in the bot's mind: it plays away from trouble
 const SHORTLIST = 4;
 const PUTT_PAST = 0.35; // m: putts are paced to die this far past the cup

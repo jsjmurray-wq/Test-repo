@@ -164,7 +164,11 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   align-items: stretch;
   gap: 12px;
   padding: 10px 14px 10px 14px;
+  /* Clear of the tools column (56 px at 10 px from the right edge) with an 8 px gap: a long lie
+     ('Waste area · Ball above feet') wraps inside the chip instead of running under Map/Flyover. */
+  max-width: calc(100vw - var(--sal) - var(--sar) - 10px - 56px - 10px - 8px);
 }
+.ic-side { min-width: 0; }
 .ic-main { display: flex; flex-direction: column; justify-content: center; }
 .ic-dist { display: flex; align-items: baseline; gap: 3px; line-height: 0.95; }
 .ic-num { font-size: 38px; font-weight: 800; letter-spacing: -0.03em; }
@@ -177,10 +181,10 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .lie-chip {
   align-self: flex-start;
   font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
-  padding: 3px 8px; border-radius: 999px;
+  padding: 3px 8px; border-radius: 10px; /* a pill on one line, a rounded box when it wraps */
   background: rgba(87, 214, 138, 0.2); color: #b9f5cf;
   box-shadow: inset 0 0 0 1px rgba(87, 214, 138, 0.45);
-  white-space: nowrap;
+  max-width: 100%;
 }
 .lie-chip[data-surf="rough"], .lie-chip[data-surf="oob"] { background: rgba(140, 170, 70, 0.22); color: #dbe9a8; box-shadow: inset 0 0 0 1px rgba(170, 200, 90, 0.45); }
 .lie-chip[data-surf="bunker"] { background: rgba(232, 210, 154, 0.22); color: #f6e7bf; box-shadow: inset 0 0 0 1px rgba(232, 210, 154, 0.5); }
@@ -715,9 +719,12 @@ body[data-layout="landscape"] .shot-opt { min-height: 44px; padding: 3px 12px 3p
 body[data-layout="landscape"] #putt-range { left: calc(var(--sal) + 10px); top: auto; bottom: calc(var(--sab) + 76px); transform: none; }
 body[data-layout="landscape"] #toast { left: calc(var(--sal) + 10px); transform: none; top: auto; bottom: calc(var(--sab) + 80px); align-items: flex-start; max-width: 56vw; }
 body[data-layout="landscape"] #hud[data-phase="address"] #toast { bottom: calc(var(--sab) + 130px); }
-body[data-layout="landscape"] #pad .arc { top: 44%; }
+/* Landscape: the camera puts the target line up the pad's middle, so the arc sits low (round the
+   ball, its top below the target and landing ring) and the live readout sits left of the arc, off
+   the line from the ball to the target. */
+body[data-layout="landscape"] #pad .arc { top: 57%; }
 body[data-layout="landscape"] .pad-hint { top: auto; bottom: max(10px, calc(var(--pad-h) * 0.06)); transform: translateX(-50%); font-size: 13px; padding: 7px 14px; }
-body[data-layout="landscape"] .pad-readout { top: calc(44% - var(--arc, 260px) * 0.2); }
+body[data-layout="landscape"] .pad-readout { top: 57%; left: calc(50% - var(--arc, 260px) * 0.5 - 58px); }
 body[data-layout="landscape"] .pad-num { font-size: 40px; }
 body[data-layout="landscape"] #banner { top: 30%; }
 body[data-layout="landscape"] #intro { right: auto; width: min(520px, 70vw); }

@@ -45,7 +45,8 @@
 //       null = idle (hint). power 0..1.1 (above 1 = overswing, drawn red); full: in the full-power
 //       detent (the 100% tick lights up); carryText like '158 yd' or '12 ft'. target (optional,
 //       0..1.1 or null) moves the target notch, see setTarget; the notch glows and the readout
-//       says "On target" while |power - target| <= TARGET_GLOW (3%).
+//       says "On target" while the power is within TARGET_GLOW (3%) of the full-power travel of it
+//       (input.js onTarget: the same width under the thumb anywhere on the arc).
 //   ui.setTarget(power | null)   the target notch on the arc (the power that reaches the pin or
 //       the aim point, from main.js); it shows dimmed while idle too. null hides it.
 //   ui.setHint(text | null)                       pad hint (null = default for full/putt and the
@@ -365,7 +366,9 @@ export class UI {
       st.setProperty('--pad-w', `${r.w}px`);
       st.setProperty('--pad-h', `${r.h}px`);
     }
-    const arc = Math.round(Math.min(r.w * 0.82, r.h * 0.78, 300));
+    // (Landscape: a little smaller, centred low in the pad, so its top stays under the target.)
+    const land = this.doc.body.dataset.layout === 'landscape';
+    const arc = Math.round(Math.min(r.w * 0.82, r.h * (land ? 0.7 : 0.78), 300));
     s.setProperty('--arc', `${arc}px`);
   }
 
@@ -560,7 +563,7 @@ export class UI {
     const power = Math.max(0, Math.min(MAX_POWER, p.power || 0));
     const over = p.overswing ?? power > 1;
     const full = !over && (p.full ?? (power === 1 && !this._controls.putt));
-    const hit = this._target != null && onTarget(power, this._target);
+    const hit = this._target != null && onTarget(power, this._target, this._controls.putt ? 'putt' : 'full');
     pad.dataset.state = 'swing';
     pad.dataset.over = over ? '1' : '0';
     pad.dataset.full = full ? '1' : '0';

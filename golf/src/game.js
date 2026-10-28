@@ -69,6 +69,9 @@ export const HOLED_HOLD = 2.5; // s in 'holed' before the scorecard
 export const TREE_SEED = 1; // the course looks the same every round; pins and wind vary
 export const WIND_RANGES = { off: [0, 0], light: [0, 4], breezy: [3, 8] }; // m/s at 10 m
 export const DEFAULT_SETTINGS = Object.freeze({ wind: 'light', difficulty: 'normal', units: 'yd', handed: 'R' });
+export const PREVIEW_POWER_STEP = 0.02; // shot preview: power resolution...
+export const PREVIEW_AIM_STEP = 0.25 * (Math.PI / 180); // ...aim resolution (rad)...
+const PREVIEW_CACHE = 48; // ...and previews kept per spot
 
 const RESTORABLE = ['intro', 'address', 'decision', 'holed', 'scorecard', 'roundOver'];
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -431,21 +434,34 @@ export class Game {
 
   // Intended flight of the selected club and shot at a power along the current aim, over flat
   // ground with the wind (caddie.shotPreview: {path [t,x,y,z]*, carry, total, landing, final}), for
-  // the curved aim preview of a draw or cut. null for the putter. Cached per spot, club, shot, aim
-  // and power (to 0.01).
+  // the curved aim preview of a draw or cut. null for the putter. The power is taken to
+  // PREVIEW_POWER_STEP and the aim to PREVIEW_AIM_STEP, and up to PREVIEW_CACHE previews are kept per
+  // spot, club and shot: the gauge filling or the aim being dragged asks every frame, and each new
+  // preview is a recorded flight simulation.
   shotPreview(power = 1) {
     const c = this.club;
     if (!c || c.kind === 'putter') return null;
     const b = this.state.hole.ball;
     const w = this.state.wind;
     const st = this.state;
-    const p = Math.round(power * 100) / 100;
-    const key = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${st.settings.handed},${st.aimYaw},${p}`;
-    if (!this._preview || this._previewKey !== key) {
-      this._preview = shotPreview(this.terrain, b, this.lie, w, c.id, st.aimYaw, { power: p, shot: this.shotType, handed: st.settings.handed });
-      this._previewKey = key;
+    const spot = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${st.settings.handed}`;
+    if (!this._preview || this._previewKey !== spot) {
+      this._preview = new Map();
+      this._previewKey = spot;
     }
-    return this._preview;
+    const p = Math.round(power / PREVIEW_POWER_STEP) * PREVIEW_POWER_STEP;
+    const yaw = Math.round(st.aimYaw / PREVIEW_AIM_STEP) * PREVIEW_AIM_STEP;
+    const k = `${p.toFixed(3)},${yaw.toFixed(5)}`;
+    const cache = this._preview;
+    let pv = cache.get(k);
+    if (pv) {
+      cache.delete(k); // most recently used last
+    } else {
+      pv = shotPreview(this.terrain, b, this.lie, w, c.id, yaw, { power: p, shot: this.shotType, handed: st.settings.handed });
+      while (cache.size >= PREVIEW_CACHE) cache.delete(cache.keys().next().value);
+    }
+    cache.set(k, pv);
+    return pv;
   }
 
   suggestClub() {

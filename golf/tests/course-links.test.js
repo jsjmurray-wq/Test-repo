@@ -378,13 +378,16 @@ test('greens are open to the running shot: a bump & run from 25 m short of the g
     let res = null;
     for (let k = 0; k < 16; k++) {
       const m = (lo + hi) / 2;
-      res = simulateShot(t, swingToLaunch(club, lie, swing(m), yaw, null, { pos, shot: 'bump' }), { record: false });
+      // (Flagstick out: a bump flown at the pin would ricochet off it and break the bisection.)
+      res = simulateShot(t, swingToLaunch(club, lie, swing(m), yaw, null, { pos, shot: 'bump' }), { record: false, pin: false });
       if (res.final.outcome === 'holed') break;
       const along = (res.final.x - pos.x) * Math.cos(yaw) + (res.final.y - pos.y) * Math.sin(yaw);
       if (along < d) lo = m;
       else hi = m;
     }
-    assert.ok(res.carry < 0.5 * res.total, `${t.n}: a runner (carry ${res.carry.toFixed(1)} of ${res.total.toFixed(1)} m)`);
+    // (A runner: on the flat an 8-iron bump carries about a fifth of its total; over the 9th's Valley
+    // of Sin it has to carry the hollow, about half.)
+    assert.ok(res.carry < 0.55 * res.total, `${t.n}: a runner (carry ${res.carry.toFixed(1)} of ${res.total.toFixed(1)} m)`);
     const f = res.final;
     assert.ok(f.outcome === 'holed' || f.surface === SURF.GREEN, `${t.n}: bump finished on ${f.surface}`);
     assert.ok(Math.hypot(f.x - t.cup.x, f.y - t.cup.y) < 5, `${t.n}: bump ${Math.hypot(f.x - t.cup.x, f.y - t.cup.y).toFixed(1)} m from the cup`);
