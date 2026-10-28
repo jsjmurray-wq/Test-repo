@@ -1,8 +1,10 @@
 // End-to-end smoke tests in Chromium with iPhone-like viewports (Playwright, no test runner).
 // Usage: node tests/e2e.spec.mjs [--shots] [--soak]
 //   --shots  save screenshots to golf/screenshots/ (gitignored) for visual review
-//   --soak   also play a full 9-hole autoplay round (?autoplay=1&fast=20) on the dev and
-//            single-file builds
+//   --soak   also play a full 9-hole autoplay round (?autoplay=1&fast=20) on every course
+//            (?course=pines|desert|water|links; --courses=a,b for a subset) on the dev and
+//            single-file builds, with the renderer's peak draw calls and triangles
+//   --soak-only  skip the UI flow (soak rounds only)
 // WebGL comes from SwiftShader when available (renderer checks run); otherwise the flow runs
 // logic-only with ?nogl=1. Exits non-zero on any failure.
 
@@ -24,7 +26,10 @@ try {
 
 const args = new Set(process.argv.slice(2));
 const SHOTS = args.has('--shots');
-const SOAK = args.has('--soak');
+const SOAK = args.has('--soak') || args.has('--soak-only');
+// --soak plays a full autoplay round on every course (or --courses=desert,links only).
+const coursesArg = process.argv.find((a) => a.startsWith('--courses='));
+const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links'];
 const shotDir = join(root, 'screenshots');
 const CHROME = '/opt/pw-browsers/chromium';
 const GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
@@ -412,27 +417,112 @@ async function coursesAndShots(page, tag, vpw, vph) {
   await page.goto(url.toString());
   check(await waitFor(page, () => !document.getElementById('menu').hidden, 15000), 'menu after ?course=links');
   const sel = await page.evaluate(() => ({ links: document.querySelector('#menu [data-course="links"]').getAttribute('aria-checked'), sub: document.querySelector('[data-f="resumeSub"]').textContent }));
-  check(sel.links === 'true', '?course=links selects Gorse Point');
+  check(sel.links === 'true', '?course=links selects Kittiwake Links');
   check(/Red Mesa/.test(sel.sub), `resume names the saved course ("${sel.sub}")`);
   await page.locator('#menu [data-act="resume"]').tap();
   check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === 'desert', 8000), 'resume restores the desert round');
   await page.waitForTimeout(300);
+
+  // The other two new courses: a round on each with a special shot, saved, reloaded and resumed.
+  await courseRound(page, tag, vpw, vph, { id: 'water', name: 'Coral Cay', theme: 'tropical', shot: 'draw' });
+  await courseRound(page, tag, vpw, vph, { id: 'links', name: 'Kittiwake Links', theme: 'links', shot: 'cut' });
 }
 
-async function soak(browser, base, path, gl) {
-  const query = `?autoplay=1&fast=20${gl ? '&quality=low' : '&nogl=1'}`;
+// Menu -> pick a course -> new round -> tee shot with a special shot picked on the sheet (a draw
+// or cut shows its curved preview) -> toast names it -> reload -> Resume restores that course's
+// round (same hole, strokes, theme).
+async function courseRound(page, tag, vpw, vph, c) {
+  await page.locator('#pause-btn').tap();
+  await page.waitForTimeout(400);
+  await page.locator('#pause [data-act="quit"]').tap();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 5000), `quit to the menu (${c.id})`);
+  await page.locator(`#menu [data-course="${c.id}"]`).tap();
+  await page.waitForTimeout(400);
+  const title = await page.evaluate(() => document.querySelector('[data-f="courseName"]').textContent);
+  check(title === c.name, `course card selects ${c.name} ("${title}")`);
+  await page.locator('#menu [data-act="new-round"]').tap();
+  check(await waitFor(page, (id) => window.__golf.game && window.__golf.game.phase === 'intro' && window.__golf.game.course.id === id, 8000, c.id), `new round on ${c.name}`);
+  const intro = await page.evaluate(() => document.querySelector('[data-f="introCourse"]').textContent);
+  check(intro === c.name, `hole intro names ${c.name} ("${intro}")`);
+  await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 5000), `address on ${c.name} hole 1`);
+  await page.waitForTimeout(400);
+  const theme = await page.evaluate(() => ({ terrain: window.__golf.game.terrain.theme, renderer: window.__golf.renderer.theme && window.__golf.renderer.theme.id }));
+  check(theme.terrain === c.theme && (theme.renderer === undefined || theme.renderer === c.theme), `${c.name} plays and renders the ${c.theme} theme (${theme.terrain}/${theme.renderer})`);
+
+  await page.locator('#shot').tap();
+  await waitFor(page, () => !document.getElementById('shots').hidden, 3000);
+  await page.waitForTimeout(600);
+  await page.locator(`#shots [data-shot="${c.shot}"]`).tap();
+  check(await waitFor(page, (s) => document.getElementById('shots').hidden && window.__golf.game.shotType === s, 3000, c.shot), `${c.shot} selected from the sheet`);
+  await page.waitForTimeout(500);
+  const pv = await page.evaluate(() => {
+    const s = window.__golf.lastScene;
+    return { trail: !!(s && s.trail && s.trail.count > 2), ring: !!(s && s.aim && s.aim.ring) };
+  });
+  check(pv.trail && pv.ring, `${c.shot}: curved aim preview with a landing ring`);
+  await shot(page, tag, `${c.id}-${c.shot}`);
+  const pad = await page.evaluate(() => window.__golf.debug.padRect());
+  const p = await page.evaluate(() => Math.min(1, window.__golf.targetPower ?? 1));
+  const depth = await page.evaluate((pw) => window.__golf.debug.depthForPower(pw, 'full'), p);
+  await flickSwing(page, pad.x + pad.w * 0.5, pad.y + pad.h * 0.2, Math.min(depth, pad.h * 0.7));
+  check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), `${c.shot} struck with a short flick`);
+  const sw = await page.evaluate(() => window.__golf.game.shot.swing.shot);
+  check(sw === c.shot, `the swing plays the ${c.shot} (${sw})`);
+  check(await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 20000), `${c.shot} resolved`);
+  const toast = await page.evaluate(() => document.getElementById('toast').textContent);
+  const shotName = c.shot[0].toUpperCase() + c.shot.slice(1);
+  check(new RegExp(` ${shotName} ·`).test(toast), `toast names the ${c.shot} ("${toast}")`);
+  await shot(page, tag, `${c.id}-after-${c.shot}`);
+  if ((await state(page)).phase === 'decision') {
+    await page.locator('#decision [data-dec="drop"]').tap();
+    await waitFor(page, () => window.__golf.game.phase === 'address', 3000);
+  }
+  await page.waitForTimeout(300);
+
+  const before = await state(page);
+  await page.reload();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 15000), `menu after reload (${c.id})`);
+  const sub = await page.evaluate(() => document.querySelector('[data-f="resumeSub"]').textContent);
+  check(sub.startsWith(c.name), `resume names ${c.name} ("${sub}")`);
+  await page.locator('#menu [data-act="resume"]').tap();
+  check(await waitFor(page, (id) => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === id, 8000, c.id), `resume restores the ${c.id} round`);
+  const after = await state(page);
+  const th = await page.evaluate(() => window.__golf.game.terrain.theme);
+  check(after.hole === before.hole && after.strokes === before.strokes && th === c.theme, `${c.name} resumes on hole ${after.hole + 1} with ${after.strokes} stroke(s), ${th} theme`);
+  await page.waitForTimeout(300);
+}
+
+// A full autoplay round on one course (?course=ID); the renderer's draw calls and triangles are
+// sampled every half second (the most seen is reported against the 30-draw budget).
+async function soak(browser, base, path, gl, courseId) {
+  const query = `?autoplay=1&fast=20&course=${courseId}${gl ? '&quality=low' : '&nogl=1'}`;
   console.log(`\n[soak] ${path}${query}`);
   const context = await browser.newContext({ ...VIEWPORTS[0] });
   const page = await context.newPage();
   const errors = collectErrors(page);
   const t0 = Date.now();
   await page.goto(`${base}/${path}${query}`);
-  const done = await waitFor(page, () => !!globalThis.__golfDone, 600000);
+  await page.evaluate(() => {
+    const m = (window.__golfPerf = { draws: 0, tris: 0, holes: new Set() });
+    setInterval(() => {
+      const a = window.__golf;
+      if (!a || !a.game || !a.renderer) return;
+      const s = a.renderer.stats();
+      m.draws = Math.max(m.draws, s.drawCalls);
+      m.tris = Math.max(m.tris, s.tris);
+      m.holes.add(a.game.state.holeIndex);
+    }, 500);
+  });
+  const done = await waitFor(page, () => !!globalThis.__golfDone, 900000);
   const info = await page.evaluate(() => globalThis.__golfDone || (window.__golf.game && window.__golf.game.phase));
-  check(done && info.played === 9, `autoplay finished 9 holes (${JSON.stringify(info)}, ${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+  const secs = ((Date.now() - t0) / 1000).toFixed(0);
+  check(done && info.played === 9 && info.course === courseId, `autoplay finished 9 holes on ${courseId} (${JSON.stringify(info)}, ${secs} s)`);
+  const perf = await page.evaluate(() => ({ draws: window.__golfPerf.draws, tris: window.__golfPerf.tris, holes: window.__golfPerf.holes.size }));
+  if (gl) check(perf.draws > 5 && perf.draws <= 30, `${courseId}: at most ${perf.draws} draw calls (budget 30), ${Math.round(perf.tris / 1000)}k tris at most, over ${perf.holes} holes`);
   await page.waitForTimeout(500);
-  if (SHOTS) await page.screenshot({ path: join(shotDir, `soak-${path.replace(/\W+/g, '_')}.png`) });
-  check(errors.length === 0, `no errors during soak${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+  if (SHOTS) await page.screenshot({ path: join(shotDir, `soak-${courseId}-${path.replace(/\W+/g, '_')}.png`) });
+  check(errors.length === 0, `no errors during the ${courseId} soak${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await context.close();
 }
 
@@ -445,8 +535,8 @@ try {
   console.log(gl ? 'WebGL available (SwiftShader): full renderer checks' : 'WebGL unavailable: logic-only run with ?nogl=1');
   const targets = ['index.html'];
   if (existsSync(join(root, 'dist/golf.html'))) targets.push('dist/golf.html');
-  for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
-  if (SOAK) for (const t of targets) await soak(browser, base, t, gl);
+  if (!args.has('--soak-only')) for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
+  if (SOAK) for (const t of targets) for (const id of SOAK_COURSES) await soak(browser, base, t, gl, id);
 } finally {
   await browser.close();
   server.close();

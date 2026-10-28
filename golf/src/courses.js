@@ -24,12 +24,13 @@ export function courseById(id) {
   return COURSES.find((c) => c.id === id) || COURSES[0];
 }
 
-// Card data for a course: par and length (the centreline spline lengths, as the scorecard).
+// Card data for a course: par and length (the centreline spline lengths rounded to the metre per
+// hole, as scoring.newCard does, so the menu card and the scorecard's Out total agree).
 export function courseSummary(course) {
   let lengthM = 0;
   let par = 0;
   for (const h of course.holes) {
-    lengthM += buildPath(h.path).length;
+    lengthM += Math.round(buildPath(h.path).length);
     par += h.par;
   }
   return {

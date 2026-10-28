@@ -4,7 +4,8 @@ A realistic 3D golf game for iPhone Safari (and any modern browser). It is built
 ES modules and a custom WebGL renderer, with no dependencies and no external assets. It lives
 entirely in `golf/` and imports nothing from the pool game in the repository root.
 
-The game has 9 hand-designed holes (par 36) and is solo stroke play. You swing by swiping.
+The game has four hand-designed nine-hole courses (par 36 each; version 1 shipped Hollow Pines alone,
+section 8 adds the other three) and is solo stroke play. You swing by swiping (or with a tap meter).
 
 **Module style rule** (needed by `golf/scripts/build-single.mjs`, which inlines every module into
 one HTML file, each wrapped in its own function scope):
@@ -193,6 +194,7 @@ Use `terrain.treesNear(x, y, r)` to find them.
 simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, record = true}) -> {
   path: Float32Array,  // [t,x,y,z]* at RECORD_HZ, for playback, trail and camera
   events: [{type:'launch'|'land'|'bounce'|'tree'|'lipout'|'cup'|'water'|'rest'|'pin', t, x,y,z, surface, v}],
+                       // 'tree' events also carry obj: the object's kind ('pine', 'rock', 'gorse', ...)
   final: {x,y,z, surface, outcome:'rest'|'holed'|'water'|'ob'},
   carry, total, apex, landing:{x,y,z}|null, waterEntry:{x,y}|null, lastDry:{x,y}|null, t
 }
@@ -256,7 +258,10 @@ too.
   bounds:{margin:70} }
 ```
 
-### The nine holes (par 36, about 3300 yd)
+### The nine holes of Hollow Pines (par 36, about 3300 yd)
+
+(The other courses' holes are listed in the header comments of `course-desert.js`, `course-water.js` and
+`course-links.js`; README.md has a summary.)
 
 | # | Par | m (yd) | Character |
 |---|---|---|---|
@@ -765,7 +770,9 @@ input.resize(); input.destroy()
 
 `new AudioFX()`: `unlock()` (call on every pointerup; idempotent), `setEnabled(on)`, `suspend()`,
 `resume()`, `setWind(mps)` (ambient loop), `whoosh(power)`, `impact(kind, power)` (club kind or
-`'driver'`), `land(surface, v)`, `tree(v)`, `pin(v)`, `lipout(v)`, `cup(v)`, `applause(strength)`,
+`'driver'`), `land(surface, v)` (version 2: also waste, desert and fescue), `tree(v, obj?)` (physics `tree` events
+carry `obj`, the object's kind: a rock clacks, a saguaro thuds, shrubs and gorse crackle), `pin(v)`, `lipout(v)`,
+`cup(v)`, `applause(strength)`,
 and `handle(eventOrEvents)` for shot events `{type, surface, v, kind?}` (`launch` → impact with
 `ev.kind` or `ev.club.kind`, else guessed from speed; `land`/`bounce`/`tree`/`pin`/`lipout`/`cup`/
 `water`; also synthetic `{type:'swing', power}` and `{type:'applause', strength}`).
@@ -851,7 +858,10 @@ Players reported two problems on a real phone:
   The distance is the horizontal distance plus Δz / tan(the club's descent angle), as in plays-like.
   The pin first, up to 1.1 (a notch in the red zone says the pin needs an overswing or more club;
   up to 3% over full reads as full); when the pin is out of reach even then, the course aim point,
-  never more than full power. Putts: (distance + 0.35 m) / putt range (the pace that dies a foot
+  never more than full power, checked on the real hole (integration, 8.6: `playablePower`): when the caddie's
+  `predictShot` at that power would land or finish out of play (water, OB, sand, desert, fescue: a forced carry
+  short of a dogleg corner gives no release), the notch moves up in 4% steps to the first power that is in play,
+  plus one step of margin. Putts: (distance + 0.35 m) / putt range (the pace that dies a foot
   past on the flat). No notch for a tap-in (< 4%).
 - **Strike recognition** (`interpretSwing`, full swings): after the deepest point, strike
   `'climb'` when the highest point reached is at least max(`STRIKE_CLIMB_PX` = 24,
@@ -966,8 +976,10 @@ export const DEFAULT_COURSE_ID = 'pines';
 missing id → Hollow Pines) and `courseSummary(course) -> {id, name, tagline, theme, holes, par, lengthM, yards,
 conditions}` for menu cards. `constants.js` adds `DEFAULT_CONDITIONS = {firm: 1, greenStimpFt: 10.5, wind:
 'normal'}`, `STIMP_REF_FT = 10.5`, `WINDY_EXTRA = 3` and `STONE_E`. `course-desert.js` (`DESERT`, "Red Mesa"),
-`course-water.js` (`WATER`, "Coral Cay") and `course-links.js` (`LINKS`, "Gorse Point") hold **placeholder** holes
-(par 36 each) that use every feature below; the course designers replace the holes.
+`course-water.js` (`WATER`, "Coral Cay") and `course-links.js` (`LINKS`, "Kittiwake Links") started as placeholder
+holes; the course designers have since replaced them with nine designed holes each (par 36; Red Mesa 3,344 yd, Coral Cay
+3,269 yd, Kittiwake Links 3,343 yd as the menu and scorecard total them; the hole-by-hole notes are the header comments of each file, and each course has its
+own test file, `tests/course-*.test.js`).
 
 **Conditions** (`physics.js`): `surfaceTable(terrain)` → the whole table, `surfaceParams(terrain, surfId)` → one
 entry (unknown ids play as rough). No conditions, or default ones, return `SURFACES` itself (Hollow Pines is
@@ -981,9 +993,9 @@ and the caddie's flat planes (`planeTerrain({..., conditions})`) all read it.
   roll-out on the green by exactly k. **Deviation:** 10.5 is the *nominal* rating of the shipped green, whose
   closed-form Stimp is 10.2 ft; so `stimpDistance(1.83)` is 0.97 × greenStimpFt ft on every course (exact
   match would have changed Hollow Pines).
-- Putt pacing: `lieAt()` returns `lie.puttSurf = surfaceParams(terrain, SURF.GREEN)`. `swing.js` still paces putts
-  with `SURFACES[GREEN]`, so on a non-10.5 green the gauge's flat-roll distance is off by k until the swing stage
-  uses `puttSpeedForDistance(D, lie.puttSurf || SURFACES[SURF.GREEN])` (the bot reads putts by simulation either way).
+- Putt pacing: `lieAt()` returns `lie.puttSurf = surfaceParams(terrain, SURF.GREEN)`, and `swingToLaunch` paces putts
+  with `puttSpeedForDistance(D, lie.puttSurf || SURFACES[SURF.GREEN])` (since 8.4 as built), so the gauge's flat-roll
+  distance holds on every course's green speed (the bot reads putts by simulation either way).
 
 **New surfaces** (`SURFACES`): WASTE e 0.4, plough 0.25, a0 3.4 / kv 1.6 (a driver releases ~3 m instead of 17);
 DESERT e 0.45, plough 0.35, a0 4.5 / kv 2, plus `erratic` 0.22 rad (Rayleigh tilt of the impact normal, shot rng)
@@ -994,8 +1006,10 @@ FESCUE like sand (a tee shot is not planned into them). Lie labels come from `SU
 
 **Objects** (`terrain.trees`, `physics.js`): `shrub`/`gorse` canopies reach 0.25 m into the ground; a ball in the
 air **or rolling** through one is caught with p = 1 − exp(−len/0.5 m) and keeps 3–12% of its speed (dropping at
-0.4–1.2 m/s). A trunk hit uses e 0.5 and keeps 85% for `hard` objects (rocks), else e 0.4 / 80% (trees, saguaro
-columns). A ball dropping onto a rock's top bounces (e 0.5) off a dome normal that leans out with the distance from
+0.4–1.2 m/s). A shot played from inside a bush (the ball stopped in it) is not caught by that bush again on the way
+out (integration: otherwise nearly every shot from there dropped dead in the same bush); other bushes still catch it,
+and the lie underneath (desert, fescue, rough) costs the distance. A trunk hit uses e 0.5 and keeps 85% for `hard`
+objects (rocks), else e 0.4 / 80% (trees, saguaro columns). A ball dropping onto a rock's top bounces (e 0.5) off a dome normal that leans out with the distance from
 the axis and always runs off sideways at ≥ 0.6 m/s (no perching). `treeHit`'s cap result adds `q` (distance from
 the axis / (trunkR + R)); hard objects also count trunk hits down to `base − R − rr` (a wide rock on a slope).
 Each new-kind entry also has `scale` and `variant` (0–1, for visual variety). Dimensions: palm trunkR 0.18, trunkH
@@ -1037,7 +1051,8 @@ course})`; `restore(json, {course?})` takes the course from `courseId` (none →
 `windFor(seed, hole, setting, conditions?)`: a `'windy'` course adds `WINDY_EXTRA` to both ends of the Light and
 Breezy ranges (same direction draw; Off stays calm). `holeInfo()` adds `courseId` and `theme`.
 
-**Known gaps for other stages:** `bot.js` `expectedAt` reads `tr.canopy.rx` and crashes on canopy-null objects
+**Known gaps for other stages** (all closed since: the bot fix in 8.4 as built, the cache key in 8.5 as built, the
+renderer in 8.3 as built): `bot.js` `expectedAt` reads `tr.canopy.rx` and crashes on canopy-null objects
 (desert); use `tr.canopy ? tr.canopy.rx : tr.trunkR`, and it should value DESERT/FESCUE rests like rough or worse.
 `main.js`'s terrain cache key (`n:pin:seed`) must include the course id. (The renderer now draws the new surfaces and objects: §8.3 as built.)
 
@@ -1247,7 +1262,7 @@ the label is the swipe's own shape with the shot's intent taken out).
 
 - **Picker:** `ui.showMenu({canResume, courses:[{...courseSummary(c), best}], selected, resumeSub})` builds
   `.course-pick`: 2 × 2 cards (thumbnail on top in portrait, on the left in landscape) with a CSS-gradient theme
-  thumbnail (`data-theme`), the best score on it, name, tagline and "Par 36 · 3,314 yd"; the selected card has a gold
+  thumbnail (`data-theme`), the best score on it, name, tagline and "Par 36 · 3,315 yd"; the selected card has a gold
   ring and check, and the title above shows its name and "9 holes · Par 36 · Best 38 (+2)". A tap emits `'course'`
   (id); `ui.selectedCourse`. The choice is stored in `golf.course.v1`; `?course=` overrides it for the visit (not
   stored). The menu backdrop flies over the selected course's first hole (rebuilt 30 ms after a pick).
@@ -1265,5 +1280,35 @@ the label is the swipe's own shape with the shot's intent taken out).
 - `?autoplay` reports `__golfDone.course`; `app.debug.state()` adds `courseId` and `shotType`.
 - **e2e:** after the version 1 flow, quit to the menu, pick Red Mesa, check the intro, open the shot sheet (driver:
   normal, draw, cut, stinger; panel clear of the pad), play a stinger with a flick (apex < 15 m, shot resets), check
-  the toast "Driver Stinger", then `?course=links` selects Gorse Point and Resume (sub-line "Red Mesa · Hole 1")
-  restores the desert round. Builds without the picker (a stale `dist/`) skip it.
+  the toast "Driver Stinger", then `?course=links` selects Kittiwake Links and Resume (sub-line "Red Mesa · Hole 1")
+  restores the desert round. Then Coral Cay (a draw) and Kittiwake Links (a cut) the same way: picked on the menu,
+  intro, theme, the shot sheet, the curved preview, a flick, the toast, reload and resume (8.6). Builds without the
+  picker (a stale `dist/`) skip it.
+
+### 8.6 Integration (as built)
+
+All four courses run end to end in the real game (dev and single-file builds), with the version 2 swing, the special
+shots, the course picker, per-course saves and best rounds.
+
+- **Physics (bushes):** a shot played from inside a shrub or gorse bush (the ball ran in and stopped there) is not caught
+  by that bush again on the way out; other bushes still catch it (8.2 as built, Objects). The course designers had kept
+  bushes out of play because of this; a ball that does reach one is now playable.
+- **Events and audio:** physics `tree` events carry `obj` (the object's kind); the audio plays a rock clack, a saguaro
+  thud and a bush crackle for them, and its own landing sounds for waste/beach sand (gritty crunch), desert scrub
+  (stony click) and fescue (soft swish).
+- **Target notch (aim point):** found in the play-test: on Red Mesa's 3rd the aim point is the dogleg corner 7 m
+  past the start of the first fairway island, and the notch (expected finish, carry plus release) asked for a 64%
+  driver that carried into the desert short of it. The aim-point notch is now checked on the real hole (8.1 as built,
+  Target). Over 80 aim-point notches in bot rounds on all four courses (breezy) it moved 4 (Red Mesa 3rd and 8th tee
+  shots, 0.65 → 0.77 and 0.68 → 0.80; a hybrid from a Kittiwake pot to full), at most 10 ms of simulation.
+- **Menu and card yardage:** `courseSummary` sums the per-hole lengths rounded to the metre, like `newCard`, so the
+  course card and the scorecard's Out total agree (Hollow Pines 3,315 yd on both).
+- **HUD:** in putt mode (portrait and square) the result toast sits left-aligned under the info card and stops short of
+  the tool buttons (Read / Map / Flyover reach down past it), wrapping instead of running under them.
+- **Course report:** `npm run course [id]` reports every course (or one) with the new surfaces.
+- **e2e** (`tests/e2e.spec.mjs`): the version 1 flow (a short flick that never returns to the start line, a hold-and-lift
+  cancel, a tap-meter shot, putts, pause, reload and resume), then the course picker, a Red Mesa stinger, `?course=`,
+  the desert resume, and a round each on Coral Cay (a draw) and Kittiwake Links (a cut): card, intro, theme (terrain and
+  renderer), shot sheet, curved preview and landing ring, flick, toast, reload and resume on the same hole and stroke.
+  `--soak` plays a full autoplay round on every course on both builds (`--courses=` for some, `--soak-only` without the
+  UI flow) and checks the peak draw calls against the 30-call budget.

@@ -8,12 +8,16 @@
 //   audio.impact(kind, power)             kind: club kind 'wood'|'hybrid'|'iron'|'wedge'|'putter'
 //                                         or 'driver'; power 0..1.1
 //   audio.land(surface, v)                SURF id or name ('green','fairway','rough','bunker',
-//                                         'water','tee','fringe','oob'); v = impact speed m/s
-//   audio.tree(v)  audio.pin(v)  audio.cup(v)  audio.lipout(v)  audio.applause(strength 0..1)
+//                                         'water','tee','fringe','oob','waste','desert','fescue');
+//                                         v = impact speed m/s
+//   audio.tree(v, obj?)                   obj: the object's kind (physics 'tree' events carry it):
+//                                         trees and palms rustle, rocks clack, a saguaro thuds,
+//                                         shrubs and gorse crackle
+//   audio.pin(v)  audio.cup(v)  audio.lipout(v)  audio.applause(strength 0..1)
 //   audio.setWind(mps)                    ambient wind loop; gain grows with wind speed
 //   audio.handle(event | events)          maps physics shot events {type, surface, v, kind?}:
 //       launch -> impact (kind from ev.kind / ev.club.kind, else guessed from v)
-//       land / bounce -> land(surface)  tree -> rustle+clack  pin -> flagstick clank
+//       land / bounce -> land(surface)  tree -> tree(v, ev.obj)  pin -> flagstick clank
 //       lipout -> rattle  cup -> rattle + plunk  water -> splash  rest -> nothing
 //       swing -> whoosh(ev.power)  applause -> applause(ev.strength)
 
@@ -24,6 +28,7 @@ const MAX_VOICES = 16;
 const SURF_BY_NAME = {
   tee: SURF.TEE, fairway: SURF.FAIRWAY, rough: SURF.ROUGH, fringe: SURF.FRINGE, green: SURF.GREEN,
   bunker: SURF.BUNKER, sand: SURF.BUNKER, water: SURF.WATER, oob: SURF.OOB,
+  waste: SURF.WASTE, desert: SURF.DESERT, fescue: SURF.FESCUE,
 };
 
 function surfId(s) {
@@ -124,7 +129,7 @@ export class AudioFX {
           this.land(ev.surface, v * 0.6);
           break;
         case 'tree':
-          this.tree(v);
+          this.tree(v, ev.obj);
           break;
         case 'pin':
           this.pin(v);
@@ -262,6 +267,22 @@ export class AudioFX {
         this._noiseBurst(now, { freq: 1200, q: 0.8, peak: 0.28 * k, attack: 0.003, decay: 0.09 });
         this._tone(now, { freq: 100, freqEnd: 65, peak: 0.25 * k, attack: 0.003, decay: 0.06 });
         break;
+      case SURF.FESCUE:
+        // Long links grass: a soft swish that swallows the ball, hardly any thump.
+        this._noiseBurst(now, { freq: 2200, freqEnd: 1100, q: 0.6, peak: 0.24 * k, attack: 0.008, decay: 0.14 });
+        this._tone(now, { freq: 90, freqEnd: 60, peak: 0.12 * k, attack: 0.004, decay: 0.05 });
+        break;
+      case SURF.WASTE:
+        // Hardpan or beach sand: a gritty crunch over a firm knock.
+        this._tone(now, { freq: 130, freqEnd: 75, peak: 0.4 * k, attack: 0.002, decay: 0.06 });
+        this._noiseBurst(now, { freq: 3200, freqEnd: 1500, q: 0.9, peak: 0.24 * k, attack: 0.002, decay: 0.08 });
+        break;
+      case SURF.DESERT:
+        // Stony scrub: a sharp click off the stones, then grit.
+        this._tone(now, { freq: 1900, freqEnd: 1300, peak: 0.16 * k, attack: 0.0008, decay: 0.03, type: 'triangle' });
+        this._noiseBurst(now, { freq: 2800, q: 1.1, peak: 0.26 * k, attack: 0.001, decay: 0.07 });
+        this._tone(now, { freq: 120, freqEnd: 70, peak: 0.3 * k, attack: 0.002, decay: 0.05 });
+        break;
       default:
         // Fairway / tee: a heavier thump.
         this._tone(now, { freq: 115, freqEnd: 62, peak: 0.6 * k, attack: 0.002, decay: 0.09 });
@@ -278,11 +299,28 @@ export class AudioFX {
     this._noiseBurst(now + 0.12, { freq: 3200, q: 0.8, peak: 0.12 * k, attack: 0.05, decay: 0.45 }); // droplets
   }
 
-  // Leaves rustle, then (if it was a hard hit) a woody clack off a branch.
-  tree(v = 10) {
+  // Leaves rustle, then (if it was a hard hit) a woody clack off a branch. obj (the object's kind)
+  // picks another sound for the desert and links objects: a rock clacks, a saguaro thuds and a
+  // shrub or gorse bush crackles.
+  tree(v = 10, obj = null) {
     if (!this._ready() || !this._voice(0.6)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.3 + v / 30);
+    if (obj === 'rock') {
+      this._tone(now, { freq: 2300, freqEnd: 1700, peak: 0.32 * k, attack: 0.0006, decay: 0.05, type: 'triangle' });
+      this._noiseBurst(now, { freq: 3800, q: 2, peak: 0.3 * k, attack: 0.0006, decay: 0.03 });
+      return;
+    }
+    if (obj === 'saguaro') {
+      this._tone(now, { freq: 150, freqEnd: 90, peak: 0.45 * k, attack: 0.002, decay: 0.08 });
+      this._noiseBurst(now, { freq: 900, q: 1.2, peak: 0.15 * k, attack: 0.002, decay: 0.05 });
+      return;
+    }
+    if (obj === 'shrub' || obj === 'gorse') {
+      this._noiseBurst(now, { freq: 3400, q: 1.1, peak: 0.26 * k, attack: 0.005, decay: 0.18 });
+      for (let i = 0; i < 3; i++) this._noiseBurst(now + 0.02 + i * 0.035, { freq: 1800 + 900 * i, q: 3, peak: 0.1 * k, attack: 0.001, decay: 0.02 });
+      return;
+    }
     this._noiseBurst(now, { freq: 4200, q: 0.7, peak: 0.3 * k, attack: 0.02, decay: 0.4 });
     this._noiseBurst(now + 0.05, { freq: 2600, q: 0.9, peak: 0.18 * k, attack: 0.05, decay: 0.3 });
     if (v > 8) {

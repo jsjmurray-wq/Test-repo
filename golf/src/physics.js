@@ -635,6 +635,15 @@ export function simulateShot(terrain, launch, opts = {}) {
   let cupInside = false;
   let pinInside = false;
   const canopyInside = new Set();
+  // A ball played from inside a bush (it ran in and stopped there) is hacked out of it: the bush it
+  // lies in does not catch it again on the way out (otherwise nearly every shot from there would
+  // drop dead in the same bush, and there is no unplayable rule). The lie of the ground under it
+  // (desert, fescue or rough) already costs the distance. Other bushes catch it as usual.
+  if (hasTrees) {
+    for (const tr of terrain.treesNear(p.x, p.y, TREE_QUERY_R)) {
+      if (isLow(tr) && treeHit(tr, p, p)) canopyInside.add(tr);
+    }
+  }
   let n = terrain.normalAt(p.x, p.y);
   // Slope (dz per horizontal metre) the ball actually followed on its last ground step.
   let slopeAct = 0;
@@ -769,7 +778,7 @@ export function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.5;
         w.y *= 0.5;
         w.z *= 0.5;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
         continue;
       }
@@ -787,7 +796,7 @@ export function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.5;
         w.y *= 0.5;
         w.z *= 0.5;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
         continue;
       }
@@ -826,7 +835,7 @@ export function simulateShot(terrain, launch, opts = {}) {
           w.x *= 0.5;
           w.y *= 0.5;
           w.z *= 0.5;
-          emit('tree', gs);
+          emit('tree', gs, speed(), { obj: tr.kind });
           changed = true;
         }
         continue;
@@ -847,7 +856,7 @@ export function simulateShot(terrain, launch, opts = {}) {
           w.x *= 0.1;
           w.y *= 0.1;
           w.z *= 0.1;
-          emit('tree', gs);
+          emit('tree', gs, speed(), { obj: tr.kind });
           changed = true;
         }
         continue;
@@ -888,7 +897,7 @@ export function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.3;
         w.y *= 0.3;
         w.z *= 0.3;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
       }
     }

@@ -323,7 +323,13 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
    result toasts go to the top, under the info card. */
 body:not([data-layout="landscape"]) #hud[data-putt="1"] .pad-hint { top: 57%; }
 #hud[data-putt="1"][data-hinted="1"] .pad-hint { opacity: 0; }
-body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(--sat) + 158px); }
+/* Left-aligned under the info card and clear of the tool buttons on the right (Read / Map /
+   Flyover reach down past it), so a long "LW · 15/22 yd · Straight → push fade" wraps instead. */
+body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {
+  top: calc(var(--sat) + 158px);
+  left: calc(var(--sal) + 10px); transform: none; align-items: flex-start;
+  max-width: calc(100vw - var(--sal) - var(--sar) - 86px);
+}
 @keyframes pulse { 50% { opacity: 0.3; transform: scale(0.7); } }
 
 /* ---------------- phases ---------------- */

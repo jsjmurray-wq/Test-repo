@@ -178,6 +178,29 @@ test('shrub and gorse: a ball running or flying into one is caught and drops nea
   }
 });
 
+test('a ball lying inside a bush is played out of it (that bush does not catch it again)', () => {
+  for (const kind of ['shrub', 'gorse']) {
+    const bush = { kind, x: 0.4, y: 0, trunkR: 0, trunkH: 0, canopy: { cz: 0.6, rx: 1.5, rz: 0.85 } };
+    const other = { ...bush, x: 14 };
+    const p = { pos: { x: 0, y: 0, z: BALL_R }, vel: { x: 9, y: 0, z: 6 }, spin: { x: 0, y: -100, z: 0 }, mode: 'air' };
+    for (let seed = 1; seed <= 10; seed++) {
+      const out = simulateShot(flat(SURF.ROUGH, null, { trees: [bush] }), p, { record: false, seed });
+      assert.ok(!out.events.some((e) => e.type === 'tree'), `${kind}: re-caught by its own bush (seed ${seed})`);
+      assert.ok(out.carry > 8, `${kind}: hacked out ${out.carry.toFixed(1)} m`);
+      // A rolling ball leaves it too.
+      const run = simulateShot(flat(SURF.FAIRWAY, null, { trees: [bush] }), rolled(4), { record: false, seed });
+      assert.ok(run.final.x > 2, `${kind}: rolled out to ${run.final.x.toFixed(2)}`);
+    }
+    // Another bush in the way still catches it.
+    let caught = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const q = simulateShot(flat(SURF.ROUGH, null, { trees: [bush, other] }), p, { record: false, seed });
+      if (q.events.some((e) => e.type === 'tree')) caught++;
+    }
+    assert.ok(caught >= 15, `${kind}: the next bush caught ${caught}/20`);
+  }
+});
+
 test('rock: hard face (e 0.5) bounces a runner back; its rounded top throws a ball off', () => {
   const rock = { kind: 'rock', x: 10, y: 0, trunkR: 0.8, trunkH: 0.6, canopy: null, hard: true };
   const t = flat(SURF.FAIRWAY, null, { trees: [rock] });

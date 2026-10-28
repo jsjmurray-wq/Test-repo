@@ -1,26 +1,59 @@
 # Hollow Pines Golf
 
-A realistic 3D golf game for iPhone Safari (and any modern browser): nine hand-designed holes,
-par 36, solo stroke play. Vanilla JavaScript ES modules and a custom WebGL renderer with no
-dependencies and no external assets. Every sound is synthesised and every texture is baked at
-load. It lives entirely in `golf/` and shares no code with the pool game in the repository root.
+A realistic 3D golf game for iPhone Safari (and any modern browser): four hand-designed nine-hole
+courses (par 36 each), solo stroke play, special shots and a forgiving swipe swing. Vanilla
+JavaScript ES modules and a custom WebGL renderer with no dependencies and no external assets.
+Every sound is synthesised and every texture is baked at load. It lives entirely in `golf/` and
+shares no code with the pool game in the repository root.
+
+## Courses
+
+Pick a course on the main menu before starting a new round. Each course keeps its own best round,
+and the saved round remembers its course.
+
+| Course | Style | Conditions | Holes |
+|---|---|---|---|
+| **Hollow Pines** | Tree-lined parkland in rolling hills: ponds, a creek, elevated greens | Standard turf, 10.5 ft greens | First Light, Mirror Pond, Serpent, The Climb, Lakeside, Eyrie, Long Drop, Temptation, Homeward |
+| **Red Mesa** | Target golf through the high desert: forced carries over washes and arroyos, waste areas, saguaros, red buttes on the horizon | Firm (more bounce and roll), quick 11 ft greens. Desert scrub is a tough lie with erratic bounces | Trailhead, Canyon, Long Arroyo, Sidewinder, Coyote (drivable), Sundial, Red Rock, Sidewash, Oasis |
+| **Coral Cay** | Lagoons and the ocean: an island green, a split fairway, a peninsula green and a spit out into the surf; palms and white beaches | Soft and lush, 10.5 ft greens. Beaches play as waste sand (no penalty) | Palm Walk, The Fork, The Island, Mangroves, Peninsula, Shell Beach, Breakers, Reef Run, Sunset |
+| **Kittiwake Links** | Seaside links: dunes, deep revetted pot bunkers, a burn, gorse, a blind drive and a Valley of Sin | Very firm and fast-running, slower 9.5 ft greens, 3 m/s windier than the wind setting (unless wind is off). Fescue beyond the rough stops the ball dead and is hard to escape | Kittiwake, Sandhills, Postage, Hell, Burnside, Whins, Haar, Strand, Home |
 
 ## Controls
 
 | Action | How |
 |---|---|
+| Choose a course | Tap a course card on the main menu, then **New round** |
 | Aim | Drag left or right on the upper part of the screen (faster drags turn further) |
-| Swing | On the lower pad: drag **down** to take the club back (the arc shows power), then flick **up** briskly through your starting point (only a frantic snap counts as *Rushed*) |
-| Shape the shot | A straight swipe flies straight; curving the swipe draws or fades the ball |
-| Overswing | Pulling past the end of the arc (red zone) gives more power but doubles the dispersion |
-| Putt | Drag down to set the pace (the readout shows the flat-roll distance), then release; slide back up to the start (or off to the side) to cancel |
+| Swing (swipe, the default) | On the lower pad: drag **down** to take the club back, then flick **up**. A short, quick flick is enough: you do not need to get back to where you started, and a slow but clear upswing still hits (a little shorter, *Decel*) |
+| Power | 25/50/75% of the travel is 25/50/75% power (ticks on the arc). Full power clicks into place: the 100% tick lights up green over a generous stretch of travel |
+| Target notch | The gold notch on the arc is the power that reaches the pin (or the course's target when the pin is out of reach); it glows when you are on it. On Easy, a power within 5% of it snaps onto it |
+| Overswing | Pulling well past full (the red zone) gives up to 10% more power but doubles the dispersion |
+| Shape the shot | A straight swipe flies straight; curving the swipe draws or fades the ball. Only a frantic snap counts as *Rushed* |
+| Cancel a swing | Hold still at the bottom and lift your finger (in landscape, dragging well off the side of the pad also cancels). A cancelled swing is not a stroke |
+| Tap meter (optional) | Settings → **Swing control: Tap meter**. Tap the pad to start the power bar, tap again to hit (it fills, hangs briefly at full, then falls back). The shot flies straight; contact scatter still applies |
+| Special shot | Tap **Shot** beside the club picker and pick one (see below). It lasts one stroke |
+| Putt | Drag down to set the pace (the readout shows the flat-roll distance; the notch is the pace that finishes just past the cup), then release. Slide back up to the start, or off to the side, to cancel |
 | Putt range | **−** / **+** next to the putter |
 | Read the green | **Read**, then drag to look around (slope grid on the green) |
 | Map | **Map**, then tap a point on the course to aim straight at it |
 | Flyover | **Flyover** replays the hole preview |
 | Change club | ◀ / ▶ on the club picker (the caddie picks one for every new lie) |
 | Skip intro / flight | Tap anywhere |
-| Pause | ❙❙ top right (Esc on a keyboard) |
+| Pause | ❙❙ top right (Esc on a keyboard); Restart round or Quit to menu from there |
+
+## Special shots
+
+| Shot | Clubs | What it does |
+|---|---|---|
+| Draw | Any full-swing club | Starts on the line and bends left (right for a left-hander), runs out a few yards more. The aim preview shows the curved flight and where it lands |
+| Cut | Any full-swing club | Starts on the line and slides right (left for a left-hander), lands a little softer and shorter |
+| Stinger | Driver, woods, 4 hybrid, 5–6 iron (not from sand or fescue) | Low bullet: a driver stays under 15 m high, carries about a fifth less and runs three to four times as far. Great into the wind on firm ground |
+| Punch | 4 hybrid, irons, PW, GW | Low knock-down under branches or the wind: carries 80–90% and the wind costs far less |
+| Flop | GW, SW, LW (not from hardpan or beach sand) | Sky-high, lands at 55° or steeper and stops within a few yards on the green |
+| Bump & run | 7 iron to SW | Lands short and rolls: carry is a third to under half of the total |
+
+The club readout, power arc, target notch and toast all follow the selected shot
+("7i Stinger · 140/178 yd · Straight").
 
 ## Rules
 
@@ -28,35 +61,42 @@ Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out o
 and distance. From water you choose **Drop (+1)** near where the ball went in (red: within two club
 lengths, no nearer the hole, on ground that holds the ball, or back on the line to level ground when
 the bank is steep all round; yellow: back on the line from the hole) or **Replay (+1)** from the
-previous spot. The dialog marks where the ball went in and both spots. You pick up at double par. The scorecard tracks fairways hit, greens in regulation
-and putts; birdies or better are circled, bogeys or worse are boxed.
+previous spot. The dialog marks where the ball went in and both spots. Waste areas, beaches, desert
+scrub and fescue are not penalty areas: play the ball as it lies. You pick up at double par. The
+scorecard tracks fairways hit, greens in regulation and putts; birdies or better are circled, bogeys
+or worse are boxed.
 
-Settings (persisted on the device): units (yards or metres), wind (off, light, breezy),
-difficulty (easy, normal, pro: how much the shape of your swipe affects the ball), left- or
-right-handed, sound, and graphics quality.
+Settings (persisted on the device): units (yards or metres), wind (off, light, breezy; the links
+adds more), swing control (swipe or tap meter), difficulty (easy, normal, pro: how much the shape of
+your swipe affects the ball; Easy also snaps power onto the target notch), left- or right-handed,
+sound, and graphics quality.
 
 ## Running
 
 ```sh
 cd golf
-npm test          # unit tests (node --test): physics, course, swing, rules, input ...
+npm test          # unit tests (node --test): physics, courses, swing, shots, rules, input ...
 npm run e2e       # Playwright end-to-end run in headless Chromium
 npm run build     # dist/golf.html (single self-contained file) + dist/golf-artifact.html
 npm run serve     # http-server on :8081 (or any static server)
 npm run lint      # eslint src tests scripts
 npm run calibrate # re-solve club ball speeds against target carries
-npm run course    # per-hole report (length, par, hazards)
+npm run course    # per-hole report for every course (length, par, surfaces, objects); add a course id for one
 npm run icons     # regenerate icons/icon-180.png and icon-512.png (needs Playwright)
 ```
 
 ES modules need HTTP, so open `http://localhost:8081/` rather than `index.html` from disk; the
-single-file build in `dist/golf.html` works from anywhere. URL options: `?hole=N` (start a round
-at hole N), `?autoplay=1` (the bot plays the round), `?fast=N` (playback speed), `?seed=N`,
-`?quality=low`, `?debug=1` (fps overlay), `?nogl=1` (logic without WebGL), `?test=1` (e2e hooks).
+single-file build in `dist/golf.html` works from anywhere. URL options: `?course=ID` (`pines`,
+`desert`, `water` or `links`: the course for new rounds), `?hole=N` (start a round at hole N),
+`?autoplay=1` (the bot plays the round), `?fast=N` (playback speed), `?seed=N`, `?quality=low`,
+`?debug=1` (fps and draw-call overlay), `?nogl=1` (logic without WebGL), `?test=1` (e2e hooks).
 
 `npm run e2e` drives the real UI with touch events on iPhone portrait/landscape and foldable
-viewports, on both `index.html` and `dist/golf.html` (`--shots` saves screenshots to
-`screenshots/`, `--soak` adds a full autoplay round).
+viewports, on both `index.html` and `dist/golf.html`: a Hollow Pines hole with a short-flick swing,
+a cancelled swing, a tap-meter shot, pause and resume, then the course picker and a round on each
+new course with a special shot from the shot sheet, reload and resume. `--shots` saves screenshots
+to `screenshots/`; `--soak` adds a full autoplay round on every course (`--courses=desert,links` for
+some; `--soak-only` skips the UI flow) and checks the renderer stays within its draw-call budget.
 
 ## Hosting
 
@@ -69,13 +109,14 @@ resume after closing Safari.
 
 | Path | Contents |
 |---|---|
-| `docs/architecture.md` | The binding contract: coordinate frame, module style, every public API |
-| `src/constants.js`, `vec3.js`, `rng.js` | Shared constants, surfaces, unit helpers, vector maths, seeded RNG |
-| `src/clubs.js`, `aero.js`, `physics.js` | Club table, drag/lift and wind profile, flight/bounce/roll/cup simulation |
-| `src/noise.js`, `spline.js`, `terrain.js`, `course.js` | The nine holes as data and their procedural terrain |
-| `src/lie.js`, `swing.js`, `caddie.js`, `rules.js`, `scoring.js`, `game.js`, `bot.js` | Gameplay: lies, swipe interpretation, club suggestions, rules, scorecard, state machine, autoplay bot |
-| `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js` | WebGL renderer and camera rig |
-| `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures, DOM HUD and menus, synthesised audio, boot and loop |
+| `docs/architecture.md` | The binding contract: coordinate frame, module style, every public API (section 8: version 2) |
+| `src/constants.js`, `vec3.js`, `rng.js` | Shared constants, surfaces and course conditions, unit helpers, vector maths, seeded RNG |
+| `src/clubs.js`, `aero.js`, `physics.js` | Club table, drag/lift and wind profile, flight/bounce/roll/cup simulation (firmness and green speed per course) |
+| `src/noise.js`, `spline.js`, `terrain.js` | Procedural terrain from the hole data: corridors, desert/fescue/waste, pot bunkers, island and sea water, themed objects |
+| `src/course.js`, `course-desert.js`, `course-water.js`, `course-links.js`, `courses.js` | The four courses as data (Hollow Pines, Red Mesa, Coral Cay, Kittiwake Links) and the course registry |
+| `src/lie.js`, `swing.js`, `shots.js`, `caddie.js`, `rules.js`, `scoring.js`, `game.js`, `bot.js` | Gameplay: lies, swipe interpretation, special shots, club suggestions, rules, scorecard, state machine, autoplay bot |
+| `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js`, `themes.js` | WebGL renderer, per-course looks (parkland, desert, tropical, links) and camera rig |
+| `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures and tap meter, DOM HUD and menus, synthesised audio, boot and loop |
 | `index.html`, `style.css` | Shell and broadcast-style HUD (portrait, landscape and square layouts) |
 | `scripts/` | Single-file build, icon renderer, calibration and course report |
 | `tests/` | `node --test` unit tests and the Playwright e2e spec |

@@ -11,8 +11,9 @@
 // Swing (architecture.md section 8.1): with settings.swing = 'swipe' the pad gesture goes through
 // input.js (live gauge) and interpretSwing; with 'tap' the pad runs a tap meter here (first tap
 // starts it, the second hits). Either way the power arc carries a target notch: the power that
-// reaches the pin (or the aim point when the pin is out of reach), from the inverse of the
-// caddie's power curve; Easy snaps a power within 5% onto it.
+// reaches the pin (or the aim point when the pin is out of reach, moved up until the caddie's
+// predicted shot lands in play), from the inverse of the caddie's power curve; Easy snaps a power
+// within 5% onto it.
 //
 // Courses (section 8.5): the main menu's course picker chooses the course of a new round (the
 // choice is remembered in golf.course.v1; ?course= overrides it); the menu backdrop flies over the
@@ -48,7 +49,7 @@ import { InputController, readSafeInsets, snapPower, meterPower, depthForPower, 
 import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
 import { interpretSwing, swingLabel, powerForDistance } from './swing.js';
-import { releaseK } from './caddie.js';
+import { releaseK, predictShot, isSafeRest } from './caddie.js';
 import { playBotShot, botDecide } from './bot.js';
 import { CLUBS, clubById } from './clubs.js';
 import { SURF, fmtDist, mToFt } from './constants.js';
@@ -67,6 +68,8 @@ const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
 const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
 const FULL_SLACK = 0.03; // a target this little past full power is shown at full
+const AIM_STEP = 0.04; // the aim-point notch moves up in steps this big until its shot finishes in play
+const CARRY_HAZARDS = new Set([SURF.WATER, SURF.OOB, SURF.BUNKER, SURF.DESERT, SURF.FESCUE]); // no landing there
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
 const flag = (k) => params.has(k) && params.get(k) !== '0';
@@ -433,8 +436,9 @@ function refreshClub() {
 // the "expected finish" (carry plus most of the release, as the caddie picks clubs), with the
 // height difference over the club's descent angle added like the plays-like distance (the curve
 // already has the wind). A pin that needs at most FULL_SLACK more than full power reads as full
-// (the detent): a 3% overswing for a few yards would double the scatter. Putts: the flat-roll pace
-// that dies PUTT_PAST_M past the cup. null for a tap-in.
+// (the detent): a 3% overswing for a few yards would double the scatter. The aim-point notch is
+// checked on the real hole (playablePower). Putts: the flat-roll pace that dies PUTT_PAST_M past
+// the cup. null for a tap-in.
 function targetPower(g) {
   if (!g || g.phase !== 'address' || !g.terrain) return null;
   if (g.isPutt) {
@@ -454,9 +458,34 @@ function targetPower(g) {
   const zBall = t.heightAt(b.x, b.y);
   const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
   let p = powerForDistance(finish, need(t.cup), MAX_POWER);
-  if (p == null) p = Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1);
+  if (p == null) p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1));
   if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
   return p >= MIN_TARGET ? p : null;
+}
+
+// The aim point is where the hole bends, often just past a forced carry (a wash, the desert, a
+// lagoon). A notch that reaches it on the "expected finish" (carry plus most of the release) can
+// land in the carry, which gives no release: Red Mesa's 3rd sent a 64% driver into the desert
+// 7 m short of the fairway. So the notch's own shot is played on the real hole (the caddie's
+// predictShot: no scatter, with the wind and the selected shot), and when it would not land and
+// finish in play (not water, OB, sand, desert scrub or fescue) the notch moves up toward full power
+// to the first power that does, plus one AIM_STEP of margin when that is in play too (a thumb is
+// a few percent out either way). Full power is the caddie's own check of the club.
+function playablePower(g, p) {
+  const t = g.terrain;
+  const b = g.state.hole.ball;
+  const opts = { shot: g.shotType, handed: app.ui.getSetting('handed') };
+  const inPlay = (q) => {
+    const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
+    return isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y)));
+  };
+  if (p >= 1 || inPlay(p)) return p;
+  for (let q = p + AIM_STEP; q < 1; q += AIM_STEP) {
+    if (!inPlay(q)) continue;
+    const m = Math.min(1, q + AIM_STEP);
+    return inPlay(m) ? m : q;
+  }
+  return 1;
 }
 
 function syncControls() {
