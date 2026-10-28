@@ -49,8 +49,10 @@ metres). Wind shows in mph (or km/h).
 | `clubs.js` | `CLUBS` (array, longest first), `clubById(id)`, `stockLaunch(club, opts)`, `makeLaunch(...)`, `dPlane(club, face, path)`, `PUTTER_ID = 'P'` |
 | `aero.js` | `dragCoeff(S)`, `liftCoeff(S)`, `windAt(wind10, zAgl, out?)` (log profile), `windFactor(zAgl)`, `flightAccel(state:{v,w,zAgl}, wind10, out)` |
 | `course.js` | `COURSE = {name, holes: [HoleDef × 9]}` (pure data), `holePar(i)`, `coursePar()` |
-| `terrain.js` | `buildHole(def, {pinIndex, seed}) -> HoleTerrain` (see below) |
-| `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`. Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
+| `terrain.js` | `buildHole(def, {pinIndex, seed, course}) -> HoleTerrain` (see below and §8.2) |
+| `courses.js` | `COURSES`, `courseById(id)`, `DEFAULT_COURSE_ID`, `courseSummary(course)` (§8.2) |
+| `themes.js` | `THEMES`, `themeFor(id)`: per-theme palettes, data only (§8.3) |
+| `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`, `surfaceParams(terrain, surfId)` / `surfaceTable(terrain)` (SURFACES with the course conditions, §8.2). Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
 | `lie.js` | `lieAt(terrain, pos, aimYaw, {handed}) -> Lie`, `applyLie(launchParams, lie, club)` |
 | `swing.js` | `interpretSwing(samples, opts) -> SwingResult`, `swingToLaunch(club, lie, swing, aimYaw, rng, opts) -> Launch` |
 | `caddie.js` | `clubTable(terrain, pos, lie, wind)`, `suggestClub(...)`, `playsLike(...)`, `puttRange(dist)` |
@@ -876,6 +878,87 @@ export const DEFAULT_COURSE_ID = 'pines';
 - **grass:** dune grass tufts, visual only. Leave them out of `trees`, or give them `trunkR: 0` and `canopy: null`.
 - Physics must accept `trunkR: 0` and `canopy: null`.
 
+#### 8.2 as built (course platform)
+
+**Registry** (`courses.js`): `PINES` (= `COURSE`), `COURSES`, `DEFAULT_COURSE_ID`, `courseById(id)` (unknown or
+missing id → Hollow Pines) and `courseSummary(course) -> {id, name, tagline, theme, holes, par, lengthM, yards,
+conditions}` for menu cards. `constants.js` adds `DEFAULT_CONDITIONS = {firm: 1, greenStimpFt: 10.5, wind:
+'normal'}`, `STIMP_REF_FT = 10.5`, `WINDY_EXTRA = 3` and `STONE_E`. `course-desert.js` (`DESERT`, "Red Mesa"),
+`course-water.js` (`WATER`, "Coral Cay") and `course-links.js` (`LINKS`, "Gorse Point") hold **placeholder** holes
+(par 36 each) that use every feature below; the course designers replace the holes.
+
+**Conditions** (`physics.js`): `surfaceTable(terrain)` → the whole table, `surfaceParams(terrain, surfId)` → one
+entry (unknown ids play as rough). No conditions, or default ones, return `SURFACES` itself (Hollow Pines is
+bit-for-bit unchanged); otherwise a derived table is cached per terrain (WeakMap). `simulateShot`, `rules.holdsBall`
+and the caddie's flat planes (`planeTerrain({..., conditions})`) all read it.
+- `firm` (clamped 0.6–1.8): `a0`, `kv` ÷ firm on fairway, tee, rough **and OOB** (OOB plays as rough), fairway
+  `e` + (firm − 1)·0.25 (clamped 0.8–1.2), and **deviation:** crater tilt × firm^−0.12 on the same surfaces. The
+  roll terms alone gave a links 7-iron only +13% release (backspin checks it at the bounce); firm turf dents less,
+  and with the crater term it releases +44% (driver +22%).
+- `greenStimpFt` (ratio clamped 0.6–1.5): green `a0` and `kv` ÷ k with k = greenStimpFt / 10.5, which scales every
+  roll-out on the green by exactly k. **Deviation:** 10.5 is the *nominal* rating of the shipped green, whose
+  closed-form Stimp is 10.2 ft; so `stimpDistance(1.83)` is 0.97 × greenStimpFt ft on every course (exact
+  match would have changed Hollow Pines).
+- Putt pacing: `lieAt()` returns `lie.puttSurf = surfaceParams(terrain, SURF.GREEN)`. `swing.js` still paces putts
+  with `SURFACES[GREEN]`, so on a non-10.5 green the gauge's flat-roll distance is off by k until the swing stage
+  uses `puttSpeedForDistance(D, lie.puttSurf || SURFACES[SURF.GREEN])` (the bot reads putts by simulation either way).
+
+**New surfaces** (`SURFACES`): WASTE e 0.4, plough 0.25, a0 3.4 / kv 1.6 (a driver releases ~3 m instead of 17);
+DESERT e 0.45, plough 0.35, a0 4.5 / kv 2, plus `erratic` 0.22 rad (Rayleigh tilt of the impact normal, shot rng)
+and `stone` 0.18 (chance per bounce of a stone: tilt 14–34°, e × `STONE_E` 1.6, little friction): mostly dead,
+now and then a 5–10 m kick, sideways too; FESCUE e 0.25, crater 2.4, plough 0.75, a0 9 / kv 4 (a 7-iron stops within
+0.3 m and holds on any slope). `rules.isDropOk` allows all three; the caddie's `isSafeRest` treats DESERT and
+FESCUE like sand (a tee shot is not planned into them). Lie labels come from `SURF_NAMES`.
+
+**Objects** (`terrain.trees`, `physics.js`): `shrub`/`gorse` canopies reach 0.25 m into the ground; a ball in the
+air **or rolling** through one is caught with p = 1 − exp(−len/0.5 m) and keeps 3–12% of its speed (dropping at
+0.4–1.2 m/s). A trunk hit uses e 0.5 and keeps 85% for `hard` objects (rocks), else e 0.4 / 80% (trees, saguaro
+columns). A ball dropping onto a rock's top bounces (e 0.5) off a dome normal that leans out with the distance from
+the axis and always runs off sideways at ≥ 0.6 m/s (no perching). `treeHit`'s cap result adds `q` (distance from
+the axis / (trunkR + R)); hard objects also count trunk hits down to `base − R − rr` (a wide rock on a slope).
+Each new-kind entry also has `scale` and `variant` (0–1, for visual variety). Dimensions: palm trunkR 0.18, trunkH
+8–12, canopy rx 3–4.4, rz 1.3–1.9 centred 0.2·rz above the trunk top; saguaro 0.25 × 4–9 m; shrub rx 1–2, height
+0.9–1.5 (cz = height/2); gorse rx 1.2–2.2, height 1.0–1.6; rock radius 0.35–1.35, height 0.5–1 × radius.
+`terrain.decor` holds the grass tufts `{kind:'grass', x, y, z, scale}`; physics never sees them.
+`treesNear(x, y, r)` returns objects whose axis is within r + reach (canopy rx, or trunkR without a canopy).
+
+**HoleDef extensions** (`terrain.js` header is the reference). `buildHole(def, {pinIndex, seed, course})`;
+HoleTerrain adds `courseId` ('pines' by default), `theme` ('parkland'), `conditions` ({...DEFAULT_CONDITIONS,
+...course.conditions}) and `decor`.
+- **Corridor:** `outside` applies beyond `rough.w` (default 18 m) of rough round the fairways, `rough.tee` (default
+  min(w, 8)) round the tee box and `rough.green` (default w) round green + fringe; the edge wanders by
+  `rough.wobble` (2.5 m) and `rough.relief` (desert 0.3, fescue 0.5, waste 0.1 m) roughens the ground outside it.
+  The fairway distance is an exact Euclidean distance transform of the fairway mask on the 1 m grid (continuous
+  round doglegs); between the tee band and the first fairway is `outside` too (a forced carry).
+- **Surface priority:** OOB > water (polygons, then flood) > bunker > green > fringe > tee > areas (later over
+  earlier) > fairway > rough band > outside.
+- **areas:** `{surface:'waste'|'desert'|'fescue'|'bunker'|'rough'|'fairway', shape (+ s/off or g) | poly ([s, off])
+  | xy, dz?, ease? (3 m)}`.
+- **Flood:** water entries with `fill:'outside'` together form an archipelago (a point is water when it is outside
+  *all* their polygons, so a tee island and a green island make an island par 3); the first one gives kind, level
+  (relative, as other water), depth, bank and sea. `outside:'water'` floods everything outside the corridor and its
+  areas to `outsideWater {kind:'red', level:-1.2 (relative to the lowest centreline elevation), depth:2, bank:8,
+  sea:false}`. `terrain.waters` entries gain `sea` and `fill:'inside'|'outside'`; the one flood entry has `poly` =
+  the bounds rectangle (draw one plane; the land above the level hides it) and `islands` (the dry polygons).
+  `waterAt` and red/yellow relief work unchanged (island tee shots that come up short drop back on the tee island).
+- **Pot bunkers:** `{..., pot:true, r?}` (shape defaults to a circle of r = 2.4): depth clamped 1.2–1.8 (default
+  1.5), the face toward the green (down the hole when the green is > 80 m away) ramps over 0.35 m (≈ 55° on the
+  1 m grid), the back over min(2.2, 0.9·r) m, lip 0.06 m.
+- **objects:** rows `{kind, from, to, off, gap, jitter}`, clusters `{kind, s, off | g:[r, f], cluster, spread}`
+  and area scatter `{kind, area, density}` with `area` a surface name (`'desert'`, `'fescue'`, `'waste'`,
+  `'rough'`, `'outside'`) or an index into `areas`, and `density` in objects per 100 m² (jittered grid).
+  `kind` may be a weight map. `forest.kind` gives the background woodland a kind or weight map. Caps: 5000
+  objects, 8000 decor per hole. Objects keep off fairway, tee, green, fringe, water and bunkers.
+
+**Game** (`game.js`): `state.courseId` (serialized); `loadHole`/`restore` call `buildHole(def, {pinIndex, seed,
+course})`; `restore(json, {course?})` takes the course from `courseId` (none → Hollow Pines).
+`windFor(seed, hole, setting, conditions?)`: a `'windy'` course adds `WINDY_EXTRA` to both ends of the Light and
+Breezy ranges (same direction draw; Off stays calm). `holeInfo()` adds `courseId` and `theme`.
+
+**Known gaps for other stages:** `bot.js` `expectedAt` reads `tr.canopy.rx` and crashes on canopy-null objects
+(desert); use `tr.canopy ? tr.canopy.rx : tr.trunkR`, and it should value DESERT/FESCUE rests like rough or worse.
+`main.js`'s terrain cache key (`n:pin:seed`) must include the course id. `bake.js` paints unknown surfaces as rough.
+
 ### 8.3 Themes (`themes.js` data, consumed by `render.js`/`bake.js`/`shaders.js`)
 
 ```js
@@ -891,6 +974,14 @@ export const THEMES = { parkland, desert, tropical, links };
 - **desert:** hot pale sky, terracotta and tan desert floor, emerald fairways, red mesas and mountains, saguaro, rocks, shrubs.
 - **tropical:** deep blue sky, turquoise water with a sandy shallow edge, palms, white beaches (WASTE), lush green.
 - **links:** grey-blue overcast sky, a sea horizon, tawny fescue, firm yellow-green fairways, pot bunkers, gorse, dune grass, almost no trees.
+
+**As built (`themes.js`, data only):** `THEMES` and `themeFor(id)` (unknown → parkland). Sky, sun, fog and ambient
+colours are linear (as the shaders use them); surface and water-bed colours are albedos like `SURFACES[].color`.
+`sky.haze` is the tint `fogCol` applies to the sky just above the horizon (`[0.9, 0.93, 0.95]` shipped);
+`fog = {color: null (derive from the sky, as shipped) | rgb, density, aerial}` (aerial = the 0.8 far-haze
+strength); `water.deep` is the shader's deep colour, `water.shallow` the bake's shallow-bed colour. Extra fields:
+`ridges {far, near}` (horizon silhouettes), `skirt {near, far}` (ground beyond the hole) and `tints` per object kind.
+`parkland` copies the shipped constants of `render.js`, `shaders.js` and `bake.js` (and `SURFACES` colours).
 
 ### 8.4 Special shots (`shots.js`; hooks in `swing.js`, `caddie.js`, `game.js`, `ui.js`, `main.js`)
 

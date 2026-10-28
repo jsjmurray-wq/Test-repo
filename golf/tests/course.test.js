@@ -24,6 +24,15 @@ function insideDist(green, p) {
 
 const slope = (t, x, y) => Math.hypot(...Object.values(t.gradAt(x, y)));
 
+test('Hollow Pines course object: id, theme and conditions (version 2 contract)', () => {
+  assert.equal(COURSE.id, 'pines');
+  assert.equal(COURSE.theme, 'parkland');
+  assert.ok(COURSE.tagline.length > 10);
+  assert.deepEqual(COURSE.conditions, { firm: 1, greenStimpFt: 10.5, wind: 'normal' });
+  // Hollow Pines uses none of the version 2 hole features.
+  for (const h of COURSE.holes) assert.ok(!h.outside && !h.areas && !h.objects && !(h.water || []).some((w) => w.fill || w.sea));
+});
+
 test('nine holes, par 36, about 3300 yd', () => {
   assert.equal(COURSE.holes.length, 9);
   assert.equal(coursePar(), 36);

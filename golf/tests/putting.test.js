@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stockLaunch } from '../src/clubs.js';
-import { simulateShot, cupCheck, stimpDistance, puttSpeedForDistance } from '../src/physics.js';
-import { SURF, SURFACES, CUP_R, BALL_R, G } from '../src/constants.js';
+import { simulateShot, cupCheck, stimpDistance, puttSpeedForDistance, surfaceParams } from '../src/physics.js';
+import { SURF, SURFACES, CUP_R, BALL_R, G, STIMP_REF_FT } from '../src/constants.js';
 
 const GREEN = SURFACES[SURF.GREEN];
 
@@ -145,6 +145,19 @@ test('a ball coming to rest over the hole drops', () => {
   const t = green({ cup: { x: 1, y: 0 } });
   const r = putt(t, 0.0, { x: 1.01, y: 0 });
   assert.equal(r.final.outcome, 'holed');
+});
+
+test('green speed: greenStimpFt scales every roll-out on the green by greenStimpFt / 10.5', () => {
+  const fast = surfaceParams({ conditions: { firm: 1, greenStimpFt: 13 } }, SURF.GREEN);
+  const k = 13 / STIMP_REF_FT;
+  for (const v0 of [0.5, 1.2, 1.83, 3, 5]) assert.ok(Math.abs(stimpDistance(v0, fast) / stimpDistance(v0, GREEN) - k) < 1e-9);
+  // The pace for a given distance falls on the faster green, and inverts exactly.
+  const v = puttSpeedForDistance(6, fast);
+  assert.ok(v < puttSpeedForDistance(6, GREEN));
+  assert.ok(Math.abs(stimpDistance(v, fast) - 6) < 1e-6);
+  // A 4 m putt paced on the fast green's own numbers is holed on it.
+  const t = { ...green({ cup: { x: 4, y: 0 } }), conditions: { firm: 1, greenStimpFt: 13 } };
+  assert.equal(putt(t, puttSpeedForDistance(4.3, fast)).final.outcome, 'holed');
 });
 
 test('performance: a 30 m putt simulates in under 15 ms', () => {

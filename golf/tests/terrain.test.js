@@ -237,6 +237,23 @@ test('treesNear matches brute force and trees are well formed', () => {
   }
 });
 
+test('course context: theme, conditions and courseId default to Hollow Pines', () => {
+  assert.equal(hole1.theme, 'parkland');
+  assert.equal(hole1.courseId, 'pines');
+  assert.deepEqual(hole1.conditions, { firm: 1, greenStimpFt: 10.5, wind: 'normal' });
+  assert.deepEqual(hole1.decor, []);
+  for (const w of hole3.waters) assert.ok(w.fill === 'inside' && w.sea === false);
+  const course = { id: 'test', theme: 'links', conditions: { firm: 1.4, wind: 'windy' } };
+  const t = buildHole(COURSE.holes[1], { course });
+  assert.equal(t.theme, 'links');
+  assert.equal(t.courseId, 'test');
+  assert.deepEqual(t.conditions, { firm: 1.4, greenStimpFt: 10.5, wind: 'windy' });
+  // The ground itself does not depend on the course context.
+  const t0 = buildHole(COURSE.holes[1]);
+  assert.equal(t.grid.heights[777], t0.grid.heights[777]);
+  assert.equal(t.trees.length, t0.trees.length);
+});
+
 test('OOB stakes run along the OB line about 12 m apart', () => {
   const t = hole1;
   assert.ok(t.stakes.length > 20);

@@ -324,6 +324,19 @@ test('planeTerrain satisfies the contract simulateShot needs', () => {
   assert.equal(r.final.outcome, 'rest');
 });
 
+test('treeHit: objects without a trunk (trunkR 0) or without a canopy (null)', () => {
+  const bush = { x: 0, y: 0, z: 0, trunkR: 0, trunkH: 0, canopy: { cz: 0.6, rx: 1.5, rz: 0.85 } };
+  assert.equal(treeHit(bush, { x: -3, y: 0, z: 0.3 }, { x: -2, y: 0, z: 0.3 }), null);
+  assert.equal(treeHit(bush, { x: -1.5, y: 0, z: 0.3 }, { x: -1, y: 0, z: 0.3 }).kind, 'canopy');
+  const column = { x: 0, y: 0, z: 0, trunkR: 0.25, trunkH: 6, canopy: null };
+  assert.equal(treeHit(column, { x: -1, y: 0, z: 2 }, { x: 1, y: 0, z: 2 }).kind, 'trunk');
+  assert.equal(treeHit(column, { x: -1, y: 0, z: 7 }, { x: 1, y: 0, z: 7 }), null);
+  const cap = treeHit({ ...column, hard: true }, { x: 0.1, y: 0, z: 6.5 }, { x: 0.1, y: 0, z: 5.9 });
+  assert.equal(cap.kind, 'cap');
+  assert.ok(Math.abs(cap.q - 0.1 / (0.25 + BALL_R)) < 1e-9);
+  assert.equal(treeHit({ x: 0, y: 0, z: 0, trunkR: 0, trunkH: 0, canopy: null }, { x: -1, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }), null);
+});
+
 test('performance: driver < 20 ms, 30 m putt < 15 ms', () => {
   const g = flat(SURF.GREEN);
   for (let i = 0; i < 3; i++) shot('D');
