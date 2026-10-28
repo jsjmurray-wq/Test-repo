@@ -86,8 +86,9 @@ test('a drivable par 4 and a par 3 over a canyon', () => {
   assert.ok(canyon, 'no canyon par 3');
 });
 
-test('every hole builds in < 300 ms (best of three: the test files run in parallel)', () => {
+test('every hole builds in < 300 ms (warmed up, best of three: the test files run in parallel)', () => {
   for (const def of course.holes) {
+    buildHole(def, { pinIndex: 0, seed: TREE_SEED, course });
     let best = Infinity;
     for (let k = 0; k < 3; k++) {
       const t0 = performance.now();

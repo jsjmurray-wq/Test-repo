@@ -29,7 +29,7 @@ const SHOTS = args.has('--shots');
 const SOAK = args.has('--soak') || args.has('--soak-only');
 // --soak plays a full autoplay round on every course (or --courses=desert,links only).
 const coursesArg = process.argv.find((a) => a.startsWith('--courses='));
-const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links'];
+const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links', 'mixed'];
 const shotDir = join(root, 'screenshots');
 const CHROME = '/opt/pw-browsers/chromium';
 const GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
@@ -98,6 +98,18 @@ async function touchPath(page, pts) {
   T += 0.008;
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [], timestamp: T });
   await cdp.detach();
+}
+
+// A tap with an explicit event time (seconds, the CDP clock): the tap meter times its two taps on
+// the events' own clock, so under a loaded SwiftShader (frames of a second) the gap between them
+// must not depend on how long the page took. Returns the time used.
+async function cdpTap(page, x, y, T = Date.now() / 1000) {
+  const cdp = await page.context().newCDPSession(page);
+  const tp = [{ x, y, id: 1, radiusX: 4, radiusY: 4, force: 1 }];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: tp, timestamp: T });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [], timestamp: T + 0.04 });
+  await cdp.detach();
+  return T;
 }
 
 // Full swing: down `depth` px over 300 ms, a short hold at the top, then a smooth fast swipe up
@@ -244,7 +256,7 @@ async function smoke(browser, base, path, vp, gl) {
   check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), `${v2 ? 'short flick' : 'swipe'} swings: the ball is in flight`);
   await page.waitForTimeout(350);
   await shot(page, tag, 'flight');
-  const ended = await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000);
+  const ended = await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 45000);
   let st = await state(page);
   check(ended && st.strokes >= 1, `shot resolved back to ${st.phase} with ${st.strokes} stroke(s)`);
   if (st.phase === 'decision') {
@@ -306,16 +318,17 @@ async function smoke(browser, base, path, vp, gl) {
     check(/Tap to start/.test(hint), `tap meter hint ("${hint}")`);
     const tx = p2.x + p2.w * 0.5;
     const ty = p2.y + p2.h * 0.3;
-    await page.touchscreen.tap(tx, ty);
-    await page.waitForTimeout(700);
-    const running = await page.evaluate(() => ({ state: document.getElementById('pad').dataset.state, power: window.__golf.swingPower }));
-    check(running.state === 'swing' && running.power > 0.1, `tap meter fills (power ${running.power && running.power.toFixed(2)})`);
-    await page.touchscreen.tap(tx, ty);
-    check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'second tap hits: the ball is in flight');
+    // Both taps carry explicit event times 600 ms apart (the meter's clock), so the struck power
+    // (from the event times, lastSwing) is the same however slowly the frames come.
+    const T0 = await cdpTap(page, tx, ty);
+    // The gauge fills on the next rendered frame(s): poll instead of sampling once after a sleep.
+    check(await waitFor(page, () => document.getElementById('pad').dataset.state === 'swing' && window.__golf.swingPower > 0.1, 2200), 'tap meter fills');
+    await cdpTap(page, tx, ty, T0 + 0.6);
+    check(await waitFor(page, () => window.__golf.game.phase === 'flight', 5000), 'second tap hits: the ball is in flight');
     const ls = await page.evaluate(() => window.__golf.lastSwing && window.__golf.lastSwing.sw);
-    check(ls && ls.label === 'Tap swing' && ls.power > 0.3 && ls.startDir === 0, `tap swing (power ${ls && ls.power.toFixed(2)})`);
+    check(ls && ls.label === 'Tap swing' && ls.power > 0.42 && ls.power < 0.62 && ls.startDir === 0, `tap swing 0.6 s after the first tap (power ${ls && ls.power.toFixed(2)})`);
     await page.evaluate(() => window.__golf.ui.setSetting('swing', 'swipe'));
-    check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000), 'tap shot resolved');
+    check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 45000), 'tap shot resolved');
     if ((await state(page)).phase === 'decision') {
       await page.locator('#decision [data-dec="drop"]').tap();
       await waitFor(page, () => window.__golf.game.phase === 'address', 3000);
@@ -361,7 +374,8 @@ async function coursesAndShots(page, tag, vpw, vph) {
   await page.waitForTimeout(400);
   await page.locator('#pause [data-act="quit"]').tap();
   check(await waitFor(page, () => !document.getElementById('menu').hidden, 5000), 'quit to the menu');
-  check((await page.locator('#menu [data-course]').count()) === 4, 'menu shows four course cards');
+  const cards = await page.locator('#menu [data-course]').count();
+  check(cards === 5, `menu shows the four course cards and Mixed Nine (${cards})`);
   await page.locator('#menu [data-course="desert"]').tap();
   await page.waitForTimeout(600);
   const picked = await page.evaluate(() => ({
@@ -375,7 +389,7 @@ async function coursesAndShots(page, tag, vpw, vph) {
   const intro = await page.evaluate(() => document.querySelector('[data-f="introCourse"]').textContent);
   check(intro === 'Red Mesa', `hole intro names the course ("${intro}")`);
   await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
-  check(await waitFor(page, () => window.__golf.game.phase === 'address', 5000), 'address on Red Mesa hole 1');
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 12000), 'address on Red Mesa hole 1');
   await page.waitForTimeout(400);
 
   // Shot chip -> sheet of the driver's shots -> Stinger.
@@ -402,7 +416,8 @@ async function coursesAndShots(page, tag, vpw, vph) {
   check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'the stinger is struck');
   const flight = await page.evaluate(() => ({ shot: window.__golf.game.shot.swing.shot, apex: window.__golf.game.shot.result.apex, after: window.__golf.game.shotType }));
   check(flight.shot === 'stinger' && flight.apex < 15 && flight.after === 'normal', `stinger flies low (apex ${flight.apex.toFixed(1)} m) and the shot resets`);
-  check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000), 'stinger resolved');
+  // (Generous: SwiftShader on a loaded machine draws a frame a second; the flight plays in real time.)
+  check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 45000), 'stinger resolved');
   const toast = await page.evaluate(() => document.getElementById('toast').textContent);
   check(/Driver Stinger/.test(toast), `toast names the shot ("${toast}")`);
   await shot(page, tag, 'after-stinger');
@@ -426,6 +441,79 @@ async function coursesAndShots(page, tag, vpw, vph) {
   // The other two new courses: a round on each with a special shot, saved, reloaded and resumed.
   await courseRound(page, tag, vpw, vph, { id: 'water', name: 'Coral Cay', theme: 'tropical', shot: 'draw' });
   await courseRound(page, tag, vpw, vph, { id: 'links', name: 'Kittiwake Links', theme: 'links', shot: 'cut' });
+  // The mixed round: nine random holes across the courses (builds without the card skip it).
+  await mixedRound(page, tag, vpw, vph);
+}
+
+// Menu -> the Mixed Nine card -> new round: the hole is one of the four courses' (the intro names
+// it, the theme is its course's), the card has a Course row, a flick plays the tee shot, and a
+// reload resumes the same nine holes on the same hole.
+async function mixedRound(page, tag, vpw, vph) {
+  await page.locator('#pause-btn').tap();
+  await page.waitForTimeout(400);
+  await page.locator('#pause [data-act="quit"]').tap();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 5000), 'quit to the menu (mixed)');
+  const card = page.locator('#menu [data-course="mixed"]');
+  if (!(await card.count())) {
+    console.log('  (no Mixed Nine card in this build: skipped)');
+    return;
+  }
+  await card.tap();
+  await page.waitForTimeout(400);
+  const menu = await page.evaluate(() => ({ title: document.querySelector('[data-f="courseName"]').textContent, meta: document.querySelector('#menu [data-course="mixed"] .cc-meta').textContent }));
+  check(menu.title === 'Mixed Nine' && /Par 36/.test(menu.meta), `the Mixed Nine card is selected ("${menu.title}", "${menu.meta}")`);
+  await shot(page, tag, 'menu-mixed');
+  await page.locator('#menu [data-act="new-round"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase === 'intro' && window.__golf.game.course.id === 'mixed', 8000), 'new mixed round');
+  const m = await page.evaluate(() => {
+    const g = window.__golf.game;
+    const names = { pines: 'Hollow Pines', desert: 'Red Mesa', water: 'Coral Cay', links: 'Kittiwake Links' };
+    return {
+      intro: document.querySelector('[data-f="introCourse"]').textContent,
+      hole: document.querySelector('[data-f="introHole"]').textContent,
+      src: names[g.courseOf(0).id],
+      srcN: g.terrain.n,
+      courses: [...new Set(g.state.mix.map((p) => p.courseId))].length,
+      par: g.state.card.holes.reduce((a, h) => a + h.par, 0),
+    };
+  });
+  check(m.intro === `${m.src} · No. ${m.srcN}` && m.hole === '1', `the intro names the hole's own course ("${m.intro}", hole ${m.hole})`);
+  check(m.courses === 4 && m.par === 36, `the nine come from all four courses, par ${m.par}`);
+  await shot(page, tag, 'mixed-intro');
+  await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 12000), 'address on the mixed hole 1');
+  await page.waitForTimeout(400);
+  const th = await page.evaluate(() => ({ terrain: window.__golf.game.terrain.theme, want: window.__golf.game.courseOf().theme, renderer: window.__golf.renderer.theme && window.__golf.renderer.theme.id }));
+  check(th.terrain === th.want && (th.renderer === undefined || th.renderer === th.want), `the mixed hole plays and renders its course's theme (${th.terrain}/${th.renderer})`);
+  const chips = await page.evaluate(() => {
+    const a = window.__golf;
+    a.ui.showScorecard(a.game.state.card, { current: 0 });
+    const n = document.querySelectorAll('#scorecard .from-chip').length;
+    a.ui.hideScorecard();
+    return n;
+  });
+  check(chips === 9, `the scorecard shows each hole's course (${chips} chips)`);
+  const pad = await page.evaluate(() => window.__golf.debug.padRect());
+  const p = await page.evaluate(() => Math.min(1, window.__golf.targetPower ?? 1));
+  const depth = await page.evaluate((pw) => window.__golf.debug.depthForPower(pw, 'full'), p);
+  await flickSwing(page, pad.x + pad.w * 0.5, pad.y + pad.h * 0.2, Math.min(depth, pad.h * 0.7));
+  check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'mixed tee shot struck');
+  check(await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 45000), 'mixed tee shot resolved');
+  if ((await state(page)).phase === 'decision') {
+    await page.locator('#decision [data-dec="drop"]').tap();
+    await waitFor(page, () => window.__golf.game.phase === 'address', 3000);
+  }
+  await page.waitForTimeout(300);
+  const before = await page.evaluate(() => ({ ...window.__golf.debug.state(), mix: JSON.stringify(window.__golf.game.state.mix) }));
+  await page.reload();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 15000), 'menu after reload (mixed)');
+  const sub = await page.evaluate(() => document.querySelector('[data-f="resumeSub"]').textContent);
+  check(sub.startsWith('Mixed Nine'), `resume names the mixed round ("${sub}")`);
+  await page.locator('#menu [data-act="resume"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === 'mixed', 8000), 'resume restores the mixed round');
+  const after = await page.evaluate(() => ({ ...window.__golf.debug.state(), mix: JSON.stringify(window.__golf.game.state.mix) }));
+  check(after.mix === before.mix && after.hole === before.hole && after.strokes === before.strokes && after.theme === before.theme, `the same nine holes resume on hole ${after.hole + 1} with ${after.strokes} stroke(s) (${after.holeCourseId})`);
+  await page.waitForTimeout(300);
 }
 
 // Menu -> pick a course -> new round -> tee shot with a special shot picked on the sheet (a draw
@@ -445,7 +533,7 @@ async function courseRound(page, tag, vpw, vph, c) {
   const intro = await page.evaluate(() => document.querySelector('[data-f="introCourse"]').textContent);
   check(intro === c.name, `hole intro names ${c.name} ("${intro}")`);
   await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
-  check(await waitFor(page, () => window.__golf.game.phase === 'address', 5000), `address on ${c.name} hole 1`);
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 12000), `address on ${c.name} hole 1`);
   await page.waitForTimeout(400);
   const theme = await page.evaluate(() => ({ terrain: window.__golf.game.terrain.theme, renderer: window.__golf.renderer.theme && window.__golf.renderer.theme.id }));
   check(theme.terrain === c.theme && (theme.renderer === undefined || theme.renderer === c.theme), `${c.name} plays and renders the ${c.theme} theme (${theme.terrain}/${theme.renderer})`);
@@ -470,7 +558,7 @@ async function courseRound(page, tag, vpw, vph, c) {
   check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), `${c.shot} struck with a short flick`);
   const sw = await page.evaluate(() => window.__golf.game.shot.swing.shot);
   check(sw === c.shot, `the swing plays the ${c.shot} (${sw})`);
-  check(await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 20000), `${c.shot} resolved`);
+  check(await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 45000), `${c.shot} resolved`);
   // The shot toast's first segment (its bold tab) is "<club> <Shot>", e.g. "Driver Draw" or "3W Cut";
   // a rule message (water, OB) may follow it in a toast of its own.
   const shotName = c.shot[0].toUpperCase() + c.shot.slice(1);

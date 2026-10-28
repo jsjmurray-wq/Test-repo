@@ -692,7 +692,8 @@ export class CameraRig {
 - **HUD layout (as built):** in portrait/square the club picker and putt range sit at the bottom
   of the swing pad, below the arc, and the idle hint sits inside the arc where the live readout
   appears, so the middle of the screen (target, cup) stays clear. Landscape is unchanged (club
-  bottom left, pad on the right). The arc centre is at 40% of the pad height (44% landscape).
+  bottom left, pad on the right). The arc centre is at 40% of the pad height (57% landscape, and the arc
+  is a little smaller there, 0.7 × the pad height: §8.7).
 
 `tests/e2e.spec.mjs` (Playwright, Chromium with SwiftShader WebGL, or `?nogl=1` without WebGL)
 drives the real UI with CDP touch events carrying explicit timestamps (SwiftShader frames take up
@@ -847,7 +848,8 @@ Players reported two problems on a real phone:
   run over them.
 - **Gauge** (`ui.js`): ticks at 25/50/75/100%. `setPower({power, overswing, full?, carryText,
   target?})`: `full` lights the 100% tick green ("Full · 100%"). `ui.setTarget(power|null)` places
-  the gold target notch (also shown, dimmed, while idle); within ±`TARGET_GLOW` (3%) of it the notch
+  the gold target notch (also shown, dimmed, while idle); within ±`TARGET_GLOW` (3% of the full-power travel,
+  measured in travel since §8.7: `onTarget(power, target, kind)`) of it the notch
   turns white-hot and the readout says "On target · N%". On Easy, `snapPower(power, target,
   difficulty)` (±`EASY_SNAP` = 5%) is applied by the live gauge, by `interpretSwing(…, {target})`
   and by the tap meter alike.
@@ -861,7 +863,8 @@ Players reported two problems on a real phone:
   never more than full power, checked on the real hole (integration, 8.6: `playablePower`): when the caddie's
   `predictShot` at that power would land or finish out of play (water, OB, sand, desert, fescue: a forced carry
   short of a dogleg corner gives no release), the notch moves up in 4% steps to the first power that is in play,
-  plus one step of margin. Putts: (distance + 0.35 m) / putt range (the pace that dies a foot
+  plus one step of margin (§8.7: now "safely in play" at the notch and ±3%, with a 3 m margin for the aim point,
+  searched down as well as up, and pin notches checked too). Putts: (distance + 0.35 m) / putt range (the pace that dies a foot
   past on the flat). No notch for a tap-in (< 4%).
 - **Strike recognition** (`interpretSwing`, full swings): after the deepest point, strike
   `'climb'` when the highest point reached is at least max(`STRIKE_CLIMB_PX` = 24,
@@ -985,7 +988,8 @@ own test file, `tests/course-*.test.js`).
 entry (unknown ids play as rough). No conditions, or default ones, return `SURFACES` itself (Hollow Pines is
 bit-for-bit unchanged); otherwise a derived table is cached per terrain (WeakMap). `simulateShot`, `rules.holdsBall`
 and the caddie's flat planes (`planeTerrain({..., conditions})`) all read it.
-- `firm` (clamped 0.6–1.8): `a0`, `kv` ÷ firm on fairway, tee, rough **and OOB** (OOB plays as rough), fairway
+- (Superseded by §8.7: `a0`, `kv` ÷ firm², crater × firm^−1.5, fairway e + (firm − 1)·0.4, and firm greens.)
+  `firm` (clamped 0.6–1.8): `a0`, `kv` ÷ firm on fairway, tee, rough **and OOB** (OOB plays as rough), fairway
   `e` + (firm − 1)·0.25 (clamped 0.8–1.2), and **deviation:** crater tilt × firm^−0.12 on the same surfaces. The
   roll terms alone gave a links 7-iron only +13% release (backspin checks it at the bounce); firm turf dents less,
   and with the crater term it releases +44% (driver +22%).
@@ -1181,7 +1185,7 @@ export function applyShot(p, shotId, club, lie, opts)  // p = {ballSpeed, launch
 - The main menu gets a course picker: four cards with name, tagline, par and yards, and a theme-coloured thumbnail (CSS gradient). New round starts the selected course.
 - The save (`golf.save.v1`) stores `courseId`. Old saves without it load as Hollow Pines.
 - The best round is kept per course: `golf.best.v1` becomes a map `{[courseId]: best}`. An old single value counts as Hollow Pines.
-- `?course=desert|water|links|pines` URL parameter.
+- `?course=desert|water|links|pines` URL parameter (and `mixed`, §8.7).
 
 #### 8.4 as built (special shots)
 
@@ -1199,12 +1203,12 @@ every eligible club with this physics, `tests/shots.test.js`):
 
 | Shot | As built | Measured (full power, flat, still air) |
 |---|---|---|
-| Draw | path +3°, face-to-path −4°, spin × 0.92, **launch −2.5°** | 7i 12.6 yd left, +4.2 yd roll, carry +0.6% |
+| Draw | path +3°, face-to-path −4°, spin × 0.92, **launch −2.5°**; path and face-to-path × spin loft / 31 (§8.7) | 7i 12.6 yd left, +4.2 yd roll, carry +0.6%; driver 15.9 yd, 3W 17.1 yd |
 | Cut | path −3°, face-to-path +4°, spin × 1.08, launch +1°, **ball speed × 0.985** | 7i 11.9 yd right, carry −3.0% |
 | Stinger | launch × 0.5, **spin × 0.7**, ball speed × 0.97 | driver apex 8.8 m, carry −21%, roll × 3.5, total −2% (+1% firm links) |
 | Punch | launch × 0.6, spin × 0.75, **ball speed × 0.91** | apex 38–42% of normal, carry 82–86%, 5 m/s headwind costs 8–21% of the normal loss |
 | Flop | **launch +18°** (≤ 60°), **spin × 0.42**, ball speed × 0.72 | lands 56.6–59.2°, rolls −2.5…+0 yd on a green (partial swings ≤ 2.4 yd) |
-| Bump & run | **launch × 0.3, spin × 0.2, ball speed × 0.8** | carry 37–43% of total on a fairway (7i–SW) |
+| Bump & run | **launch × 0.85, spin × 0.7, ball speed × 0.8** (§8.7; was × 0.3 / × 0.2) | at 15–25 m chips onto a green: carry 15–18% of the total (7i), 18–23% (9i), 35–41% (PW), 54–58% (SW) |
 
 Why: the draw and cut factors alone gave +1 yd of draw roll and −1.3% of cut carry (the closed face delofts, the open
 face glances). Stinger at × 0.6 spin carried 25.4% shorter with × 4.04 roll (both just outside). A flop at × 1.1 spin
@@ -1325,3 +1329,87 @@ shots, the course picker, per-course saves and best rounds.
 - **Results:** `npm test` 296/296; e2e 474/474 checks (portrait, landscape and foldable on `index.html` and
   `dist/golf.html`); soak 24/24 (a full autoplay round on each course on both builds, no errors, peak 14–16 draw calls
   at `quality=low`; bot scores +1 to +5).
+
+### 8.7 Mixed rounds and the final review fixes (as built)
+
+**Mixed Nine** (the user request "an option to have random holes which mix up the different courses"):
+- `courses.js`: `MIXED_ID = 'mixed'`, `MIXED_NAME = 'Mixed Nine'`, `MIXED_TAGLINE`, `drawMixedHoles(seed)` →
+  `[{courseId, hole (0-based)} × 9]`: par 36 like every course (two par 3s, five par 4s, two par 5s), two or three
+  holes from each of the four courses, opening with a par 4, never two holes of one course in a row (the course with
+  the most holes left goes next); deterministic per seed. `mixedCourse(seed, picks?)` → a course object `{id:'mixed',
+  name, tagline, theme:'mixed', mixed:true, conditions: DEFAULT_CONDITIONS, picks, holeCourses, holes}` whose `holes`
+  are the source courses' own HoleDefs (`picks`: a saved draw, used when it names nine real holes, else drawn from the
+  seed). `holeCourse(course, i)` → the course to build hole i with (the course itself for a normal round),
+  `mixedSummary()` (menu card: par 36, `lengthM: null`), `isCourseId(id)`, `courseName(id)`.
+- `game.js`: `state.mix` (the picks, serialized; `restore` rebuilds the mixed course from `courseId: 'mixed'` and
+  `mix`), `courseOf(i = holeIndex)`; each hole is built with its own course (theme, conditions) and its wind uses
+  that course's conditions (a Kittiwake hole is windy). `holeInfo()` adds `mixed`, `holeCourseId`,
+  `holeCourseName`, `holeN` (the hole's number on its own course); `n` is the round's number (1–9). The terrain
+  cache key stays `courseId:n:pin:seed` of the source course, so a mixed hole shares builds with its course.
+  `courseFromParam('mixed')`, `saveCourseId` and `bestMap` accept `'mixed'` (one best mixed round: every draw is
+  par 36).
+- `scoring.newCard` numbers a mixed round's holes 1–9 and adds `from: {courseId, name, theme, n}` per hole;
+  `ui.showScorecard` then adds a Course row (a chip with the course's initial on its theme colour).
+- UI/main: a fifth, wide card "Mixed Nine · Nine random holes from all four courses · Par 36 · New holes every round"
+  under the four (a four-colour thumbnail); New round draws a new nine from the round seed, Restart replays the same
+  nine, Play again draws a new one; the intro's course line names the hole's course ("Hollow Pines · No. 7"); the
+  menu backdrop for the card is the first hole of `mixedCourse(1)`; Resume reads "Mixed Nine · Hole 4";
+  `?course=mixed`; `app.debug.state()` adds `holeCourseId`, `theme`, `mix`. e2e: picked on the menu, intro, theme,
+  Course chips, a flick, reload and resume of the same nine; the soak plays a full autoplay mixed round.
+
+**Physics** (`physics.js`, `terrain.js`, `rules.js`):
+- Firmness (deviation from §8.2: the review measured links drives running 18 yd like parkland): `a0`, `kv` ÷ firm²,
+  crater tilt × firm^−1.5 on fairway, tee, rough and OOB, fairway `e` + (firm − 1)·0.4; greens when firm > 1: crater
+  × firm^−0.8, spin kept at the bounce × (1 − 0.3 (firm − 1)), spin-back cap × (1 − 1.2 (firm − 1)). Driver roll on
+  the fairway: parkland ~19 yd (unchanged), Red Mesa ~22–29, Kittiwake ~33–37 (real holes, median 33); on Kittiwake's
+  greens a 7-iron releases ~7 yd and a full SW stops by its pitch mark (Hollow Pines: 0.5 yd and −3 yd).
+- Pot bunkers: the 1 m grid spreads a pot's face up to a cell outside its outline; that steep band (gradient > 0.7
+  within 1.1 m) is BUNKER too, and `terrain.potAt(x, y)` reports the pot and its band. Sand steeper than `REVET_GRAD`
+  (0.88) is the revetted sod wall: `revetParams` (e 0.25, no crater, plough 0.94, mu 1, a0 3.2), both in the air and
+  when a rolling ball runs into it (an impact, not the speed-keeping re-seat); pot sand (`potAt`) ploughs (crater
+  0.5, plough 0.8). A 4H or 5i from a pot floor toward the cup stays in ~91% (was 48–52%); the flop gets out; no ball
+  rests on a face. `contactParams(terrain, surfId, grad)` (exported) is shared with `rules.holdsBall`.
+- Lie (`lie.js`): fescue and desert speed factors fall with loft (`TALL_LIE`: fescue 0.45 for a 3-wood to 0.70 for
+  the 9-iron and wedges, desert 0.63 to 0.75), so the club out of them is an iron (fescue 7-iron ~85 yd). A ball
+  inside a shrub or gorse bush: `lie.bush`, label "Fescue · In the gorse" / "Desert · In a bush", `BUSH_LIE` (speed ×
+  0.5, woods × 0.6 more, spin × 0.4, launch +4°, sdir +4°): a 20–30 yd hack-out.
+- Shots (`shots.js`): draw/cut path and face-to-path × min(1.3, spin loft / `SHAPE_LOFT` 31) (the 7-iron unchanged;
+  driver 16 yd, 3W 17 yd instead of 36/32); bump & run launch × 0.85, spin × 0.7, speed × 0.8 (table in §8.4).
+
+**Swing and HUD** (`input.js`, `swing.js`, `ui.js`, `style.css`):
+- Dialling back: `swingSetPoint(samples, dial = true)` → `{i, y}`, the bottom the power is read from. It follows the
+  finger down, and up while the finger eases up slowly (once 6 px above for 100 ms at under `DIAL_SPEED` 90 px/s,
+  timed from the first sample clearly above it so a pause never makes a flick look slow; then sample by sample over a
+  50 ms window); a rise that once went 150 px/s or faster is the swing and never dials. `swingProgress` (gauge) and
+  `interpretSwing` (from the set point on) both use it, so the struck power is the gauge's. Putts do not dial.
+  Deviation from §8.1: a climb under 90 px/s is no longer a 'decel' strike but a dial (lifted there, it cancels);
+  90–120 px/s is still decel.
+- Travel: `swingTravel(padH, kind, y0, padRect)` = fullPowerPx, or less when the touchdown is low in the pad (the
+  detent proper must fit above the pad's bottom edge), never under `TRAVEL_MIN_PX` 90; `powerFromDepth` /
+  `depthForPower` take it as a 4th argument; `swingProgress(samples, padH, kind, padRect)` returns `travel`;
+  `app.debug.depthForPower(power, kind, y0?)`.
+- `STRIKE_CLIMB_MAX` = 32 px caps the climb threshold (a 35 px flick that eases to a stop after a deep backswing now
+  strikes). `onTarget` is measured in travel (`rawForPower`), so the glow is ~±6 px everywhere and a 97% notch reaches
+  into the detent.
+- Landscape: the arc sits at 57% of the pad (0.7 × the pad height) and the readout left of it, so the target, the
+  landing ring and the flag stay above the arc and off the readout. Portrait: the info card stops 8 px short of the
+  tools column and a long lie chip wraps.
+
+**main.js / game / caddie / bot:**
+- Target notch (`playablePower`): safe = the predicted shot at the notch and at ±`SCATTER_P` (3%) lands out of water,
+  OB, sand, scrub and fescue and rests out of them (aim point: and `SAFE_MARGIN` 3 m clear); otherwise the nearest
+  safe power within ±0.16 (aim point, never past full) or ±0.06 (pin) in 2% steps, longer first on a tie. Red Mesa's
+  8th: the 3-wood notch now rests 9 m from the scrub.
+- `game.shotPreview(power)`: power to `PREVIEW_POWER_STEP` 0.02 and aim to `PREVIEW_AIM_STEP` 0.25°, up to 48 previews
+  cached per spot, club and shot; `caddie.shotPreview` keeps one flat plane per terrain and height.
+- Bot: from a deep bunker (rim ≥ 1 m above the ball) SW/LW normal and flop at 0.6/0.85/1.0 power over a fan of 0, ±25,
+  ±50, ±90 and 180°; an approach whose intended ball hits a tree (or ends behind the ball) is not "corrected" toward the
+  ricochet, and lines ±3° and ±6° either side of it are tried; `NOISE_SAMPLES` 8.
+- Looks: pot floors and back slopes are clean sand (no edge or hollow darkening) and the revetted face is lit stacked
+  turf (links `revet` [0.3, 0.34, 0.17], sod × 0.62–1.07); Red Mesa's buttes are taller, warmer and less hazed with a
+  ragged caprock and flanks lit or shaded by the sun; Red Mesa's turf is a deeper olive green with a bluer green.
+- Tests: build-time checks warm up and take the best of three; the e2e tap meter sends both taps with explicit event
+  times 600 ms apart and waits up to 45 s for shots to resolve.
+
+**Known gaps:** near-field turf is still the 0.5 m bake (soft at 3× up close); the buttes are still silhouettes (no
+geometry); the bot plays the flop only from deep bunkers.

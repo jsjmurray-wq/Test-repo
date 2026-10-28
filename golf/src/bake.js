@@ -175,6 +175,7 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = 
   const cFescue = C(SURF.FESCUE);
   const cFescueGreen = [cFescue[0] * 0.72, cFescue[1] * 0.86, cFescue[2] * 0.8]; // grey-green hollows
   const cRevet = TH.revet || [0.2, 0.26, 0.12];
+  const pots = new Uint8Array(N); // texels inside a pot bunker (no hollow occlusion there)
   // Detail weights for the shader (allocated only when something on the hole needs them).
   let det = null;
   const detail = () => det || (det = [new Float32Array(N), new Float32Array(N), new Float32Array(N), new Float32Array(N)]);
@@ -210,9 +211,16 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = 
           a = 1;
           break;
         case SURF.BUNKER: {
-          // Sand: slightly darker, damp-looking near the edge where the face is shadowed.
-          const edge = 1 - sandNear[k];
-          c = mul3(cSand, (0.98 + 0.06 * nf) * (1 - 0.22 * sat(edge * 2.2)));
+          // Sand: slightly darker, damp-looking near the edge where the face is shadowed. A pot
+          // bunker's floor and back slope stay clean, bright sand (the deep bowl already shades
+          // itself; darkening it as well made the pots read as black holes from the tee).
+          if (terrain.potAt && terrain.potAt(x, y)) {
+            pots[k] = 1;
+            c = mul3(cSand, 1.04 + 0.06 * nf);
+          } else {
+            const edge = 1 - sandNear[k];
+            c = mul3(cSand, (0.98 + 0.06 * nf) * (1 - 0.22 * sat(edge * 2.2)));
+          }
           break;
         }
         case SURF.WATER: {
@@ -290,7 +298,7 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = 
       const x = sg.minX + (i + 0.5) * st;
       const h0 = hAt(x, y);
       const lap = (hAt(x + 2, y) + hAt(x - 2, y) + hAt(x, y + 2) + hAt(x, y - 2)) / 4 - h0;
-      const ao = 1 - Math.max(-0.08, Math.min(0.2, lap * 0.9));
+      const ao = pots[j * W + i] ? 1 : 1 - Math.max(-0.08, Math.min(0.2, lap * 0.9));
       const k = (j * W + i) * 3;
       col[k] *= ao;
       col[k + 1] *= ao;

@@ -181,7 +181,11 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   align-items: stretch;
   gap: 12px;
   padding: 10px 14px 10px 14px;
+  /* Clear of the tools column (56 px at 10 px from the right edge) with an 8 px gap: a long lie
+     ('Waste area · Ball above feet') wraps inside the chip instead of running under Map/Flyover. */
+  max-width: calc(100vw - var(--sal) - var(--sar) - 10px - 56px - 10px - 8px);
 }
+.ic-side { min-width: 0; }
 .ic-main { display: flex; flex-direction: column; justify-content: center; }
 .ic-dist { display: flex; align-items: baseline; gap: 3px; line-height: 0.95; }
 .ic-num { font-size: 38px; font-weight: 800; letter-spacing: -0.03em; }
@@ -194,10 +198,10 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .lie-chip {
   align-self: flex-start;
   font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
-  padding: 3px 8px; border-radius: 999px;
+  padding: 3px 8px; border-radius: 10px; /* a pill on one line, a rounded box when it wraps */
   background: rgba(87, 214, 138, 0.2); color: #b9f5cf;
   box-shadow: inset 0 0 0 1px rgba(87, 214, 138, 0.45);
-  white-space: nowrap;
+  max-width: 100%;
 }
 .lie-chip[data-surf="rough"], .lie-chip[data-surf="oob"] { background: rgba(140, 170, 70, 0.22); color: #dbe9a8; box-shadow: inset 0 0 0 1px rgba(170, 200, 90, 0.45); }
 .lie-chip[data-surf="bunker"] { background: rgba(232, 210, 154, 0.22); color: #f6e7bf; box-shadow: inset 0 0 0 1px rgba(232, 210, 154, 0.5); }
@@ -618,6 +622,16 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {
     linear-gradient(90deg, transparent 0 30%, #a9b85a 30% 62%, transparent 62%) 0 33px / 100% 11px no-repeat,
     linear-gradient(180deg, #7f93a6 0%, #a8b6c2 34%, #4e6f86 35%, #5d7f93 46%, #b99c62 47%, #c7aa6c 100%);
 }
+/* Mixed Nine: a wide card under the four, its thumbnail the four courses' colours in slices. */
+.course-card.cc-mixed { grid-column: 1 / -1; flex-direction: row; align-items: center; }
+.course-card.cc-mixed .cc-thumb { width: 92px; height: auto; align-self: stretch; min-height: 56px; }
+.course-card.cc-mixed .cc-tag { min-height: 0; -webkit-line-clamp: 1; }
+.course-card.cc-mixed .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
+.course-card[data-theme="mixed"] .cc-thumb {
+  background: linear-gradient(105deg,
+    #3f8a3c 0 24%, #f4f0e6 24% 25.5%, #d38552 25.5% 49%, #f4f0e6 49% 50.5%,
+    #2fb6bb 50.5% 74%, #f4f0e6 74% 75.5%, #b99c62 75.5% 100%);
+}
 
 /* ---------------- settings ---------------- */
 .set-list { display: flex; flex-direction: column; }
@@ -651,6 +665,14 @@ table.sc { width: 100%; border-collapse: separate; border-spacing: 0; font-size:
 .sc tr.r-hole td:first-of-type { border-radius: 8px 0 0 8px; }
 .sc tr.r-hole td:last-child { border-radius: 0 8px 8px 0; }
 .sc tr.r-hole th { color: #fff; }
+.sc tr.r-from td { height: 24px; }
+.from-chip {
+  display: inline-block; width: 18px; height: 18px; line-height: 18px; border-radius: 50%;
+  font-size: 10px; font-weight: 800; color: #fff; background: #3f8a3c; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+.from-chip[data-theme="desert"] { background: #c8693d; }
+.from-chip[data-theme="tropical"] { background: #1fa3ab; }
+.from-chip[data-theme="links"] { background: #9c8350; }
 .sc tr.r-yds td { color: var(--muted); font-size: 11.5px; }
 .sc tr.r-par td { font-weight: 700; }
 .sc tr.r-score td { font-weight: 800; font-size: 14px; height: 36px; }
@@ -714,9 +736,12 @@ body[data-layout="landscape"] .shot-opt { min-height: 44px; padding: 3px 12px 3p
 body[data-layout="landscape"] #putt-range { left: calc(var(--sal) + 10px); top: auto; bottom: calc(var(--sab) + 76px); transform: none; }
 body[data-layout="landscape"] #toast { left: calc(var(--sal) + 10px); transform: none; top: auto; bottom: calc(var(--sab) + 80px); align-items: flex-start; max-width: 56vw; }
 body[data-layout="landscape"] #hud[data-phase="address"] #toast { bottom: calc(var(--sab) + 130px); }
-body[data-layout="landscape"] #pad .arc { top: 44%; }
+/* Landscape: the camera puts the target line up the pad's middle, so the arc sits low (round the
+   ball, its top below the target and landing ring) and the live readout sits left of the arc, off
+   the line from the ball to the target. */
+body[data-layout="landscape"] #pad .arc { top: 57%; }
 body[data-layout="landscape"] .pad-hint { top: auto; bottom: max(10px, calc(var(--pad-h) * 0.06)); transform: translateX(-50%); font-size: 13px; padding: 7px 14px; }
-body[data-layout="landscape"] .pad-readout { top: calc(44% - var(--arc, 260px) * 0.2); }
+body[data-layout="landscape"] .pad-readout { top: 57%; left: calc(50% - var(--arc, 260px) * 0.5 - 58px); }
 body[data-layout="landscape"] .pad-num { font-size: 40px; }
 body[data-layout="landscape"] #banner { top: 30%; }
 body[data-layout="landscape"] #intro { right: auto; width: min(520px, 70vw); }
@@ -733,6 +758,9 @@ body[data-layout="landscape"] .brand-t { font-size: 32px; margin-top: 2px; }
 body[data-layout="landscape"] .brand-s { margin-top: 4px; font-size: 13px; }
 body[data-layout="landscape"] .course-pick { grid-column: 1; grid-row: 2; max-width: none; margin: 0; }
 body[data-layout="landscape"] .course-card { flex-direction: row; align-items: center; min-height: 70px; }
+body[data-layout="landscape"] .course-card.cc-mixed { min-height: 0; }
+body[data-layout="landscape"] .course-card.cc-mixed .cc-thumb { width: 58px; min-height: 44px; }
+body[data-layout="landscape"] .course-card.cc-mixed .cc-body { padding: 5px 9px; }
 body[data-layout="landscape"] .cc-thumb { width: 58px; height: auto; align-self: stretch; }
 body[data-layout="landscape"] .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
 body[data-layout="landscape"] .cc-body { padding: 6px 9px; }
@@ -2928,6 +2956,11 @@ const FIELD_STEP = 2; // (s, lat, elevation) field spacing, m
 const STAKE_GAP = 12; // m between OOB stakes
 const LIP_W = 2; // m, width of the raised ring round a bunker (keep bunkers >= fringe + LIP_W off greens)
 const POT_FACE = 0.35; // m, ramp of a pot bunker's revetted face (the 1 m grid smooths it to ~55 deg)
+// The 1 m height grid spreads a pot's face up to a grid cell outside its outline; that steep band
+// (gradient over POT_STEEP within POT_BAND m of the outline) is still the pot's face, so it counts
+// as BUNKER (physics plays the revetted wall there; bake.js paints it sod).
+const POT_BAND = 1.1;
+const POT_STEEP = 0.7;
 const MAX_OBJECTS = 5000; // per hole, safety cap on scattered objects
 const MAX_DECOR = 8000; // per hole, dune-grass tufts
 // HoleDef names: `outside` values and `areas[].surface` values.
@@ -3541,6 +3574,8 @@ function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
   });
 
   // ---- surface classification (exact edges) ----
+  const gsurf = { x: 0, y: 0 };
+  const potList = bunkers.filter((b) => b.pot);
   function surfaceAt(x, y) {
     if (x < minX || x > maxX || y < minY || y > maxY) return SURF.OOB;
     fieldAt(x, y, fs, false);
@@ -3548,8 +3583,12 @@ function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     for (const w of waters) if (inBox(w.box, x, y) && pointInPoly(w.poly, x, y)) return SURF.WATER;
     if (flood && floodWet(x, y)) return SURF.WATER;
     for (const b of bunkers) {
-      if (!inBox(b.box, x, y)) continue;
+      if (!inBox(b.pot ? b.lipBox : b.box, x, y)) continue;
       for (const e of b.ells) if (ellQ(e, x, y) < 1) return SURF.BUNKER;
+      if (b.pot && bunkerSd(b, x, y) < POT_BAND) {
+        gradAt(x, y, gsurf);
+        if (Math.hypot(gsurf.x, gsurf.y) > POT_STEEP) return SURF.BUNKER;
+      }
     }
     if (inBox(gBoxM, x, y)) {
       if (ellQ(gE, x, y) <= 1) return SURF.GREEN;
@@ -3560,6 +3599,19 @@ function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     if (inFairway(fs.s, fs.lat)) return SURF.FAIRWAY;
     if (hasCorridor && !floodOutside && corridorSd(x, y) > 0) return outsideSurf;
     return SURF.ROUGH;
+  }
+  // Inside a pot bunker (or on the steep band of its face just outside the outline)?
+  function potAt(x, y) {
+    for (const b of potList) {
+      if (!inBox(b.lipBox, x, y)) continue;
+      const sd = bunkerSd(b, x, y);
+      if (sd < 0) return true;
+      if (sd < POT_BAND) {
+        gradAt(x, y, gsurf);
+        if (Math.hypot(gsurf.x, gsurf.y) > POT_STEEP) return true;
+      }
+    }
+    return false;
   }
   function isOOB(x, y) {
     if (x < minX || x > maxX || y < minY || y > maxY) return true;
@@ -4053,7 +4105,7 @@ function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
     path,
     corners,
     heightAt, gradAt, normalAt,
-    surfaceAt, isOOB, waterAt,
+    surfaceAt, isOOB, waterAt, potAt,
     waters: waterList,
     trees, treesNear, decor,
     stakes,
@@ -4096,17 +4148,21 @@ const __m_course_links = (() => {
 //   9  Home          par 4  the home hole: a huge fairway, out of bounds right (the town), pots
 //                           down the left, and the Valley of Sin, a deep hollow short-left of a
 //                           big two-tier green
-// Conditions (section 8.2): firm 1.45 (drives and approaches release; the ball runs on), greens
+// Conditions (section 8.2): firm 1.45 (a drive landing on the fairway runs on 30-40 yd, a 7-iron
+// releases on the firm greens and a wedge stops by its pitch mark instead of spinning back), greens
 // 9.5 ft, windy. Bump & run and punch shots are the natural play: the greens are open in front,
 // raised on firm ground, with short grass (fairway-cut run-offs) all round.
 //
-// Design notes (for a ~5 handicap: driver ~240 yd carry, plus ~10% extra run on firm turf):
+// Design notes (for a ~5 handicap: driver ~240 yd carry, plus 30-40 yd of run on firm turf):
 //  - Every tee shot has a wide line: fairways are 40-58 m wide where drives land, with ~9 m of
 //    rough before the fescue. The pots in the landing zones sit off the aim line (the bold player
 //    flirts with them); the greenside pots leave an open front on every green but the Postage.
-//  - Fescue stops a ball dead and costs distance, but it is never a penalty. Gorse (whin) is
-//    nearly unplayable (a ball inside a bush is caught again and again), so the thickets stand on
-//    the dunes, 20 m or more from any short grass.
+//  - Fescue stops a ball dead and costs distance (the way out is a short iron or a wedge, lie.js),
+//    but it is never a penalty. Gorse (whin) is nearly unplayable (a ball inside a bush is hacked
+//    out 20-30 yd, lie.js BUSH_LIE), so the thickets stand on the dunes, 20 m or more from any
+//    short grass.
+//  - Pot bunkers are deep with revetted sod faces (terrain.potAt, physics REVET): a long club from
+//    the floor dies against the face; the way out is a wedge or a flop, sideways if need be.
 //  - The sandhills come from the corridor rise (the land climbs beyond ~45 m of the centreline)
 //    plus chains of dune humps down each side; bare-sand blowouts scar their faces.
 //  - The sea and the burn are red penalty areas (lateral relief), with sand or grass beside them
@@ -4875,12 +4931,26 @@ const __m_courses = (() => {
 //
 // Course object: {id, name, tagline, theme:'parkland'|'desert'|'tropical'|'links',
 //                 conditions:{firm, greenStimpFt, wind:'normal'|'windy'}, holes:[HoleDef x 9]}
+//
+// Mixed rounds (the "Mixed Nine" card): nine holes drawn at random from all 36, seeded per round.
+//   MIXED_ID 'mixed', MIXED_NAME, MIXED_TAGLINE
+//   drawMixedHoles(seed) -> [{courseId, hole (0-based)} x 9]: par 36 like every course (two par 3s,
+//       five par 4s, two par 5s), two or three holes from each course, opening with a par 4 and
+//       never two holes of one course in a row when that can be avoided. Deterministic per seed.
+//   mixedCourse(seed, picks?) -> a course object {id:'mixed', mixed:true, picks, holeCourses, holes,
+//       ...} whose holes are the source courses' own HoleDefs (picks: a saved draw; invalid or
+//       missing -> drawn from the seed). Each hole keeps its own course: holeCourse(course, i)
+//       gives the course to build hole i with (theme, conditions, wind), the course itself for a
+//       normal round.
+//   mixedSummary() -> menu card data for the mixed round (par 36, no fixed length)
+//   isCourseId(id)  a known course id or 'mixed';  courseName(id) -> display name
 const { COURSE } = __m_course;
 const { DESERT } = __m_course_desert;
 const { WATER } = __m_course_water;
 const { LINKS } = __m_course_links;
 const { buildPath } = __m_spline;
 const { DEFAULT_CONDITIONS, mToYd } = __m_constants;
+const { mulberry32 } = __m_rng;
 
 const PINES = COURSE;
 const COURSES = [PINES, DESERT, WATER, LINKS];
@@ -4912,7 +4982,129 @@ function courseSummary(course) {
   };
 }
 
-return { PINES, COURSES, DEFAULT_COURSE_ID, courseById, courseSummary };
+// ------------------------------------------------------------------ mixed rounds
+
+const MIXED_ID = 'mixed';
+const MIXED_NAME = 'Mixed Nine';
+const MIXED_TAGLINE = 'Nine random holes from all four courses';
+const MIX_PARS = { 3: 2, 4: 5, 5: 2 }; // par 36, the same make-up as every course
+const MIX_MIN = 2; // holes per course (9 = 2 + 2 + 2 + 3)
+const MIX_MAX = 3;
+
+function isCourseId(id) {
+  return id === MIXED_ID || COURSES.some((c) => c.id === id);
+}
+
+function courseName(id) {
+  return id === MIXED_ID ? MIXED_NAME : courseById(id).name;
+}
+
+function shuffle(a, rng) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Playing order: a par 4 to open, then each next hole from another course than the last one's,
+// taking the course with the most holes left (so the last few never have to repeat a course;
+// ties and the hole within a course follow the random draw order).
+function mixOrder(picks) {
+  const left = picks.slice();
+  const out = [];
+  const first = left.findIndex((h) => h.par === 4);
+  out.push(left.splice(first < 0 ? 0 : first, 1)[0]);
+  while (left.length) {
+    const prev = out[out.length - 1].courseId;
+    const count = {};
+    for (const h of left) count[h.courseId] = (count[h.courseId] || 0) + 1;
+    let k = -1;
+    for (let j = 0; j < left.length; j++) {
+      const c = left[j].courseId;
+      if (c !== prev && (k < 0 || count[c] > count[left[k].courseId])) k = j;
+    }
+    out.push(left.splice(k < 0 ? 0 : k, 1)[0]);
+  }
+  return out;
+}
+
+function drawMixedHoles(seed) {
+  const rng = mulberry32(((seed >>> 0) ^ 0x6d1f3a5b) >>> 0);
+  const all = [];
+  for (const c of COURSES) c.holes.forEach((h, i) => all.push({ courseId: c.id, hole: i, par: h.par }));
+  let pick = null;
+  for (let attempt = 0; attempt < 64 && !pick; attempt++) {
+    shuffle(all, rng);
+    const need = { ...MIX_PARS };
+    const per = {};
+    const got = [];
+    let three = false; // only one course may give a third hole (2 + 2 + 2 + 3)
+    for (const h of all) {
+      if (got.length === 9) break;
+      const n = per[h.courseId] || 0;
+      if (!need[h.par] || n >= MIX_MAX || (n === MIX_MAX - 1 && three)) continue;
+      got.push(h);
+      need[h.par]--;
+      per[h.courseId] = n + 1;
+      if (n + 1 === MIX_MAX) three = true;
+    }
+    if (got.length === 9 && COURSES.every((c) => (per[c.id] || 0) >= MIX_MIN)) pick = got;
+  }
+  // (Practically unreachable) fallback: any nine with the par make-up.
+  if (!pick) {
+    const need = { ...MIX_PARS };
+    pick = all.filter((h) => need[h.par] > 0 && need[h.par]--);
+  }
+  return mixOrder(pick).map((h) => ({ courseId: h.courseId, hole: h.hole }));
+}
+
+// A saved draw is used as is when it names nine real holes.
+function validPicks(picks) {
+  if (!Array.isArray(picks) || picks.length !== 9) return null;
+  for (const p of picks) {
+    const c = p && COURSES.find((k) => k.id === p.courseId);
+    if (!c || !Number.isInteger(p.hole) || !c.holes[p.hole]) return null;
+  }
+  return picks.map((p) => ({ courseId: p.courseId, hole: p.hole }));
+}
+
+function mixedCourse(seed, picks = null) {
+  const p = validPicks(picks) || drawMixedHoles(seed);
+  const holeCourses = p.map((q) => courseById(q.courseId));
+  return {
+    id: MIXED_ID,
+    name: MIXED_NAME,
+    tagline: MIXED_TAGLINE,
+    theme: 'mixed',
+    mixed: true,
+    conditions: { ...DEFAULT_CONDITIONS },
+    picks: p,
+    holeCourses,
+    holes: p.map((q, i) => holeCourses[i].holes[q.hole]),
+  };
+}
+
+function holeCourse(course, i) {
+  return (course && course.holeCourses && course.holeCourses[i]) || course;
+}
+
+function mixedSummary() {
+  return {
+    id: MIXED_ID,
+    name: MIXED_NAME,
+    tagline: MIXED_TAGLINE,
+    theme: 'mixed',
+    holes: 9,
+    par: Object.entries(MIX_PARS).reduce((a, [par, n]) => a + par * n, 0),
+    lengthM: null,
+    yards: null,
+    mixed: true,
+    conditions: { ...DEFAULT_CONDITIONS },
+  };
+}
+
+return { PINES, COURSES, DEFAULT_COURSE_ID, courseById, courseSummary, MIXED_ID, MIXED_NAME, MIXED_TAGLINE, isCourseId, courseName, drawMixedHoles, mixedCourse, holeCourse, mixedSummary };
 })();
 
 // ---- src/clubs.js ----
@@ -5184,20 +5376,70 @@ const ZERO_WIND = { x: 0, y: 0 };
 const clampN = (x, a, b) => (x < a ? a : x > b ? b : x);
 const isLow = (tr) => tr.kind === 'shrub' || tr.kind === 'gorse';
 
+// Revetted pot-bunker faces. A bunker steeper than REVET_GRAD (41 deg; only pot bunkers' faces,
+// every ordinary bunker stays under 0.75) is a wall of stacked sod, not sand: a ball hitting it
+// dies against it (little restitution, no crater ramp, the tangential speed ploughed away), so a
+// long iron thinned into the face drops back into the pot instead of riding the face up and out
+// like a ramp; and it never holds a ball (a0 too low for the slope), which runs down to the floor.
+const REVET_GRAD = 0.88;
+const REVET_NZ = 1 / Math.sqrt(1 + REVET_GRAD * REVET_GRAD);
+const REVET = { e: 0.25, crater: 0, mu: 1, spinKeep: 0.1, plough: 0.94, maxBack: 0, a0: 3.2 };
+const _revet = new WeakMap(); // bunker params -> revetted-face params
+function revetParams(surf) {
+  let r = _revet.get(surf);
+  if (!r) {
+    r = { ...surf, ...REVET };
+    _revet.set(surf, r);
+  }
+  return r;
+}
+
+// The sand inside a pot bunker (terrain.potAt) is deep and soft: a ball driven into its rising
+// floor ploughs in (a shallow crater, most of the tangential speed lost) rather than being kicked
+// up by the crater's back wall and out over the lip. Only Kittiwake has pots.
+const POT_SAND = { crater: 0.5, plough: 0.8 };
+const _potSand = new WeakMap();
+function potSandParams(surf) {
+  let r = _potSand.get(surf);
+  if (!r) {
+    r = { ...surf, ...POT_SAND };
+    _potSand.set(surf, r);
+  }
+  return r;
+}
+
+// Ground parameters at a contact: the surface's own, or a revetted face's on a bunker steeper than
+// REVET_GRAD (grad: |gradient| there). rules.holdsBall uses the same.
+function contactParams(terrain, surfId, grad) {
+  const surf = surfaceParams(terrain, surfId);
+  return surfId === SURF.BUNKER && grad > REVET_GRAD ? revetParams(surf) : surf;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Course conditions (docs/architecture.md section 8.2)
 
 // Surfaces whose roll resistance follows the course's firmness (OOB plays as rough).
 const FIRM_SURFS = [SURF.FAIRWAY, SURF.TEE, SURF.ROUGH, SURF.OOB];
 const _tables = new WeakMap(); // terrain -> {key, table}
-const CRATER_FIRM = 0.12;
+const ROLL_FIRM = 2; // roll resistance a0, kv / firm^2
+const CRATER_FIRM = 1.5; // crater tilt x firm^-1.5 on fairway, tee and rough
+const FIRM_E = 0.4; // fairway restitution + (firm - 1) * 0.4
+const GREEN_CRATER_FIRM = 0.8; // firm greens (firm > 1): crater tilt x firm^-0.8,
+const GREEN_SPIN_FIRM = 0.3; //   spin kept at the bounce x (1 - 0.3 (firm - 1)),
+const GREEN_BACK_FIRM = 1.2; //   spin-back cap x (1 - 1.2 (firm - 1))
 
 // The SURFACES table with terrain.conditions applied, cached per terrain. Default conditions (or
 // none) return SURFACES itself, so Hollow Pines is bit-for-bit the shipped game.
-//   firm: roll resistance a0 and kv / firm on fairway, tee and rough (every roll-out on them
-//         scales by firm, see stimpDistance), fairway restitution + (firm - 1) * 0.25, and the
-//         crater tilt x firm^-CRATER_FIRM (firm turf dents less, so a spinning iron checks less:
-//         a links 7-iron releases ~45% further, not just the ~13% the roll terms alone give).
+//   firm: roll resistance a0 and kv / firm^2 on fairway, tee and rough (a pure roll-out on them
+//         scales by firm^2, see stimpDistance), fairway restitution + (firm - 1) * 0.4, and the
+//         crater tilt x firm^-1.5 (firm turf dents less, so the ball keeps its pace at the bounce
+//         and a spinning iron checks less). Measured with a stock driver landing on the fairway:
+//         parkland rolls ~19 yd, Red Mesa (1.25) ~22-29, Kittiwake (1.45) ~33-37 (a dry links
+//         runs a 240-yd carry on 30+ yd); the roll terms alone barely moved it, because most of
+//         a drive's release is the first bounces. Greens are firm too when firm > 1: crater tilt
+//         x firm^-0.8, spin kept at the bounce x (1 - 0.3 (firm - 1)), spin-back cap x
+//         (1 - 1.2 (firm - 1)), so on Kittiwake a 7-iron releases ~7 yd and a full SW stops by its
+//         pitch mark instead of spinning back 3 yd (Hollow Pines: 7-iron 0.5 yd, SW -3 yd).
 //   greenStimpFt: green a0 and kv / k with k = greenStimpFt / STIMP_REF_FT, which scales the
 //         green's roll-out from any speed by exactly k (D(v0; a0/k, kv/k) = k D(v0; a0, kv)).
 function surfaceTable(terrain) {
@@ -5212,15 +5454,24 @@ function surfaceTable(terrain) {
   const table = { ...SURFACES };
   // Clamped so the bounce and roll stay physical (fairway e x Penner curve stays under ~0.65).
   const f = clampN(firm, 0.6, 1.8);
+  const fr = Math.pow(f, ROLL_FIRM);
   for (const id of FIRM_SURFS) {
     const b = SURFACES[id];
-    table[id] = { ...b, a0: b.a0 / f, kv: b.kv / f, crater: b.crater * Math.pow(f, -CRATER_FIRM) };
+    table[id] = { ...b, a0: b.a0 / fr, kv: b.kv / fr, crater: b.crater * Math.pow(f, -CRATER_FIRM) };
   }
   const fw = table[SURF.FAIRWAY];
-  fw.e = clampN(fw.e + (f - 1) * 0.25, 0.8, 1.2);
+  fw.e = clampN(fw.e + (f - 1) * FIRM_E, 0.8, 1.2);
   const k = clampN(stimp / STIMP_REF_FT, 0.6, 1.5);
   const g = SURFACES[SURF.GREEN];
-  table[SURF.GREEN] = { ...g, a0: g.a0 / k, kv: g.kv / k };
+  const gr = { ...g, a0: g.a0 / k, kv: g.kv / k };
+  if (f > 1) {
+    // Firm greens: a shallower pitch mark, less grab and less spin-back, so approaches release.
+    const gf = f - 1;
+    gr.crater = g.crater * Math.pow(f, -GREEN_CRATER_FIRM);
+    gr.spinKeep = g.spinKeep * (1 - GREEN_SPIN_FIRM * gf);
+    gr.maxBack = g.maxBack * Math.max(0, 1 - GREEN_BACK_FIRM * gf);
+  }
+  table[SURF.GREEN] = gr;
   _tables.set(terrain, { key, table });
   return table;
 }
@@ -6036,9 +6287,17 @@ function simulateShot(terrain, launch, opts = {}) {
   };
 
   // Ball meets the ground at the current state (z already seated on gz + R).
+  // Contact parameters here (gs, p and the normal nz): bunkers have revetted faces and pot sand.
+  const contactSurf = (nz) => {
+    const base = surfOf(gs);
+    if (gs !== SURF.BUNKER) return base;
+    if (nz < REVET_NZ) return revetParams(base);
+    return terrain.potAt && terrain.potAt(p.x, p.y) ? potSandParams(base) : base;
+  };
+
   const impact = () => {
-    const surf = surfOf(gs);
     n = terrain.normalAt(p.x, p.y);
+    const surf = contactSurf(n.z);
     const vnIn = -(v.x * n.x + v.y * n.y + v.z * n.z);
     const vh = Math.hypot(v.x, v.y);
     // A rolled launch (putt) never "lands": a hop off a crest is just a bounce.
@@ -6152,8 +6411,8 @@ function simulateShot(terrain, launch, opts = {}) {
     }
 
     // ---- ground ----
-    const surf = surfOf(gs);
     n = terrain.normalAt(p.x, p.y);
+    const surf = contactSurf(n.z);
     const skidding = rollStep(s, n, surf, DT_GROUND);
     const sp = speed();
     if (!skidding && sp < REST_V) {
@@ -6203,7 +6462,18 @@ function simulateShot(terrain, launch, opts = {}) {
       p.z = gz + R;
       const n1 = terrain.normalAt(p.x, p.y);
       const d = v.x * n1.x + v.y * n1.y + v.z * n1.z;
-      if (sp > 0) {
+      if (gs === SURF.BUNKER && n1.z < REVET_NZ && d < -LAND_VN) {
+        // Ran into a revetted face (a pot bunker's sod wall): that is an impact, not a smooth
+        // climb (the speed-keeping re-seat below would carry it up the wall and out).
+        const out = bounceImpulse(v, w, n1, revetParams(surfOf(gs)));
+        if (out > LAND_VN) mode = 'air';
+        else {
+          const d2 = v.x * n1.x + v.y * n1.y + v.z * n1.z;
+          v.x -= d2 * n1.x;
+          v.y -= d2 * n1.y;
+          v.z -= d2 * n1.z;
+        }
+      } else if (sp > 0) {
         v.x -= d * n1.x;
         v.y -= d * n1.y;
         v.z -= d * n1.z;
@@ -6254,7 +6524,7 @@ function simulateShot(terrain, launch, opts = {}) {
   };
 }
 
-return { surfaceTable, surfaceParams, flightStep, bounceImpulse, rollStep, stimpDistance, puttSpeedForDistance, cupCheck, treeHit, planeTerrain, simulateShot };
+return { REVET_GRAD, revetParams, contactParams, surfaceTable, surfaceParams, flightStep, bounceImpulse, rollStep, stimpDistance, puttSpeedForDistance, cupCheck, treeHit, planeTerrain, simulateShot };
 })();
 
 // ---- src/lie.js ----
@@ -6290,20 +6560,46 @@ const __m_lie = (() => {
 // * Bunker: woods can't be swept off sand (speed x 0.5). A greenside wedge plays an explosion
 //   shot: the club enters the sand behind the ball, so speed x 0.6, spin x 0.5 and launch +6 deg
 //   replace the generic bunker factors.
-// * Waste area, desert and fescue (version 2 courses) are general area: their factors come straight
-//   from SURFACES (firm sand clips cleanly, stony desert and long fescue grab the club).
+// * Waste area, desert and fescue (version 2 courses) are general area: their factors come from
+//   SURFACES (firm sand clips cleanly, stony desert and long fescue grab the club). Knee-high
+//   fescue and desert scrub wrap round the hosel of a long, shallow-faced club: the ball-speed
+//   factor falls with loft (TALL_LIE: fescue x0.45 for a 3-wood up to the table's x0.70 for the
+//   9-iron and wedges; desert x0.63 up to x0.75), so the club out of fescue is a short iron or a
+//   wedge that advances it 60-100 yd, not a 3-wood.
+// * In a bush: a ball lying inside a shrub or gorse bush (physics lets it be hacked out of the bush
+//   it lies in) is close to unplayable: speed x BUSH_LIE.speed (woods x woodSpeed more), spin cut,
+//   a higher launch and a wide start-direction scatter on top of the ground under it. lie.bush is
+//   the bush's kind and the label says so ('Fescue · In the gorse').
 // * Rough: grass between the face and the ball cuts the spin (a "flier"), most for the lofted
 //   clubs whose spin comes from a clean strike: the full rough spin factor for 8-iron and up,
 //   rising to about x0.8 for woods, which have little spin to lose. Woods sweep the ball but the
 //   shallow face can't get under it: their ball speed totals x0.85 in rough (slope terms apply).
 const { SURF, SURF_NAMES, SURFACES } = __m_constants;
 const { clamp, DEG } = __m_vec3;
-const { surfaceParams } = __m_physics;
+const { surfaceParams, treeHit } = __m_physics;
 
 const EXPLOSION_RANGE = 40; // m from the green edge for a greenside explosion shot
 const WOOD_ROUGH_SPEED = 0.85; // total ball-speed factor of a wood from the rough
 const ROUGH_SPIN_LOFT = [10, 35]; // deg: the rough's spin cut scales from 45% to 100% over these lofts
 const LABEL_SLOPE = 0.05; // 5% before a slope is worth naming in the lie chip
+// Tall lies: total ball-speed factor [at loft <= lo, at loft >= hi] (linear in loft between).
+const TALL_LIE = {
+  [SURF.FESCUE]: { lo: 15, hi: 40, at: [0.45, 0.7] },
+  [SURF.DESERT]: { lo: 15, hi: 40, at: [0.63, 0.75] },
+};
+const BUSH_LIE = { speed: 0.5, woodSpeed: 0.6, spin: 0.4, launch: 4, sdir: 4 };
+
+// The low bush (shrub or gorse) the ball at pos (centre) lies inside, or null.
+function bushAt(terrain, pos) {
+  if (!terrain.treesNear || pos.z == null) return null;
+  for (const tr of terrain.treesNear(pos.x, pos.y, 3)) {
+    if ((tr.kind === 'shrub' || tr.kind === 'gorse') && tr.canopy) {
+      const h = treeHit(tr, pos, pos);
+      if (h && h.kind === 'canopy') return tr.kind;
+    }
+  }
+  return null;
+}
 
 // Distance (m) from (x, y) to the edge of the green ellipse {cx, cy, rx, ry, rot}, 0 inside.
 // Radial approximation: exact for circles, close for the mild ellipses of the course.
@@ -6332,17 +6628,20 @@ function lieAt(terrain, pos, aimYaw, { handed = 'R' } = {}) {
   const acrossDeg = Math.atan(slopeAcross) / DEG;
 
   const base = (SURFACES[surface] || SURFACES[SURF.ROUGH]).lie;
+  const bush = bushAt(terrain, pos);
   const factors = {
-    speed: base.speed * (1 - 0.4 * Math.max(0, slopeAlong)),
-    spin: base.spin,
-    launch: base.launch + 0.6 * alongDeg,
-    sdir: base.sdir,
+    speed: base.speed * (1 - 0.4 * Math.max(0, slopeAlong)) * (bush ? BUSH_LIE.speed : 1),
+    spin: base.spin * (bush ? BUSH_LIE.spin : 1),
+    launch: base.launch + 0.6 * alongDeg + (bush ? BUSH_LIE.launch : 0),
+    sdir: base.sdir + (bush ? BUSH_LIE.sdir : 0),
   };
   const dirOffset = clamp(-0.5 * acrossDeg, -4, 4) || 0; // (no -0)
 
-  // Label: surface name plus the dominant slope when it is noticeable (greens are read separately).
+  // Label: surface name plus the dominant slope when it is noticeable (greens are read separately),
+  // or the bush the ball is in.
   let label = SURF_NAMES[surface] || 'Rough';
-  if (surface !== SURF.GREEN && surface !== SURF.TEE) {
+  if (bush) label += bush === 'gorse' ? ' · In the gorse' : ' · In a bush';
+  else if (surface !== SURF.GREEN && surface !== SURF.TEE) {
     const a = Math.abs(slopeAlong);
     const c = Math.abs(slopeAcross);
     if (Math.max(a, c) >= LABEL_SLOPE) {
@@ -6362,6 +6661,7 @@ function lieAt(terrain, pos, aimYaw, { handed = 'R' } = {}) {
     label,
     factors,
     dirOffset,
+    bush,
     greenDist: greenEdgeDist(terrain.green, pos.x, pos.y),
     aimYaw,
     puttSurf: surfaceParams(terrain, SURF.GREEN),
@@ -6392,7 +6692,14 @@ function applyLie(params, lie, club) {
     const cut = clamp((loft - ROUGH_SPIN_LOFT[0]) / (ROUGH_SPIN_LOFT[1] - ROUGH_SPIN_LOFT[0]), 0.45, 1);
     spin = (spin / base.spin) * (1 - (1 - base.spin) * cut);
     if (kind === 'wood') speed *= WOOD_ROUGH_SPEED / base.speed;
+  } else if (TALL_LIE[lie.surface]) {
+    // Fescue / desert: the table's factor is the short irons'; longer, flatter clubs lose more.
+    const tl = TALL_LIE[lie.surface];
+    const loft = club ? club.loft : 34;
+    const f = tl.at[0] + (tl.at[1] - tl.at[0]) * clamp((loft - tl.lo) / (tl.hi - tl.lo), 0, 1);
+    speed *= f / SURFACES[lie.surface].lie.speed;
   }
+  if (lie.bush && kind === 'wood') speed *= BUSH_LIE.woodSpeed;
   out.ballSpeed = (params.ballSpeed || 0) * speed;
   out.spinRpm = (params.spinRpm || 0) * spin;
   out.launchDeg = (params.launchDeg || 0) + launch;
@@ -6405,7 +6712,7 @@ function isExplosion(lie, club) {
   return !!lie && !!club && lie.surface === SURF.BUNKER && club.kind === 'wedge' && lie.greenDist <= EXPLOSION_RANGE;
 }
 
-return { EXPLOSION_RANGE, WOOD_ROUGH_SPEED, greenEdgeDist, lieAt, applyLie, isExplosion };
+return { EXPLOSION_RANGE, WOOD_ROUGH_SPEED, TALL_LIE, BUSH_LIE, greenEdgeDist, lieAt, applyLie, isExplosion };
 })();
 
 // ---- src/shots.js ----
@@ -6431,6 +6738,11 @@ const __m_shots = (() => {
 //   draw     swing path 3 deg out to the right, face 4 deg closed to it (face 1 deg left of the
 //            target): the ball starts on the aim line (irons; woods a touch left) and curves left.
 //            The closed face delofts it: launch -2.5 deg, spin -8%, so it runs out 3-8 yd further.
+//            Those angles are the 7-iron's (spin loft 31 deg). The curve comes from the spin-axis
+//            tilt, atan(face-to-path / spin loft), so the same 4 deg on a driver (spin loft 13)
+//            tilts it 17 deg: a hook. Path and face-to-path therefore scale with the club's spin
+//            loft (x spinLoft / SHAPE_LOFT), which keeps the tilt near 7 deg and the bend about
+//            the same share of the carry: driver and 3-wood 12-20 yd, 7-iron 6-15 yd.
 //   cut      path 3 deg left, face 4 deg open to it: starts on the line and slides right. The open
 //            face adds loft and glances: launch +1 deg, spin +8%, ball speed x 0.985 (carry -2-4%).
 //   stinger  ball back, hands ahead, held-off finish: launch x 0.5, spin x 0.7, ball speed x 0.97.
@@ -6441,8 +6753,13 @@ const __m_shots = (() => {
 //            Lands at 55 deg or steeper and stops within 3 yd on the green. The low spin is what a
 //            slow, glancing open-face strike gives: at the stock spin the steep, slow ball zips back
 //            4-6 yd here. Needs grass under the ball (not hardpan).
-//   bump     a putting-style chip with a lofted iron: launch x 0.3, spin x 0.2, speed x 0.8. The
-//            ball lands short and runs: carry is a quarter to under half of the total.
+//   bump     a chip played with the ball back and the hands ahead: the club is delofted (launch
+//            x 0.85, on top of the partial swing's own launch), spin x 0.7, speed x 0.8. At chip
+//            distances (10-35 m) the ball flies low, lands a few metres on and runs: the carry is
+//            ~15-20% of the total with a 7-iron, ~20-25% with a 9-iron, ~35-45% with the PW and
+//            ~50-60% with the SW (the rule-of-thumb 1:3 / 1:2 / 1:1 chips), launching 16-33 deg at
+//            700-3500 rpm. (The earlier x0.3 launch, x0.2 spin made every club a putt along the
+//            ground: 5-12% carry, 2-15 cm apex.) A full-power bump is just a lower, softer shot.
 // releaseK (stinger, punch, bump): these shots are meant to run, so the target notch counts all of
 // their release instead of the caddie's RELEASE_K share.
 //
@@ -6463,11 +6780,12 @@ const SHOTS = [
     clubs: ['4H', '5i', '6i', '7i', '8i', '9i', 'PW', 'GW'] },
   { id: 'flop',    name: 'Flop',       blurb: 'Sky-high, stops dead', launchAdd: 18, spin: 0.42, speed: 0.72,
     clubs: ['GW', 'SW', 'LW'], notFrom: [SURF.WASTE, SURF.DESERT] },
-  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Lands short, rolls out', launch: 0.3, spin: 0.2, speed: 0.8, releaseK: 1,
+  { id: 'bump',    name: 'Bump & run', short: 'Bump', blurb: 'Lands short, rolls out', launch: 0.85, spin: 0.7, speed: 0.8, releaseK: 1,
     clubs: ['7i', '8i', '9i', 'PW', 'GW', 'SW'] },
 ];
 
 const FLOP_MAX_LAUNCH = 60; // deg: a flop off a short swing (partial-swing wedge loft) is capped here
+const SHAPE_LOFT = 31; // deg: the spin loft the draw / cut angles are given for (the 7-iron)
 
 const BY_ID = new Map(SHOTS.map((s) => [s.id, s]));
 const clubOf = (club) => (typeof club === 'string' ? clubById(club) : club);
@@ -6499,7 +6817,7 @@ function shotIntent(shotId, club, handed = 'R') {
   const s = BY_ID.get(shotId);
   const c = clubOf(club);
   if (!s || !c || !s.faceToPath) return { startDirDeg: 0, faceToPathDeg: 0 };
-  const m = handed === 'L' ? -1 : 1;
+  const m = (handed === 'L' ? -1 : 1) * Math.min(1.3, (c.spinLoft || SHAPE_LOFT) / SHAPE_LOFT);
   const k = dPlane(c, 1, 0).startDirDeg; // start = path + k x faceToPath
   return { startDirDeg: m * (s.path + k * s.faceToPath), faceToPathDeg: m * s.faceToPath };
 }
@@ -6526,7 +6844,7 @@ function applyShot(p, shotId, club, lie, opts = {}) {
   return out;
 }
 
-return { SHOTS, FLOP_MAX_LAUNCH, shotById, isEligible, shotsFor, shotIntent, applyShot };
+return { SHOTS, FLOP_MAX_LAUNCH, SHAPE_LOFT, shotById, isEligible, shotsFor, shotIntent, applyShot };
 })();
 
 // ---- src/input.js ----
@@ -6571,6 +6889,16 @@ const __m_input = (() => {
 //     (0.95-1.06 is the detent proper, 1.06-1.12 its margin), and only past 1.12x the travel does
 //     the swing overswing, up to MAX_POWER = 1.1 at raw 1.22.
 //   putt: power = raw (no detent: pace needs every pixel), capped at MAX_POWER.
+//
+// Travel from where the thumb lands (swingTravel): a swing started low in the pad (on the ball, say)
+// has less room below it than fullPowerPx, so its travel shrinks to fit: full power (the detent
+// proper) always lies inside the pad, down to a floor of TRAVEL_MIN_PX. Both the gauge and
+// interpretSwing take the pad rect for this.
+//
+// Dialling back (swingSetPoint): the power comes from the set point, the bottom of the backswing,
+// which follows the finger down and also back UP while it moves up slowly (under DIAL_SPEED px/s,
+// once it has risen DIAL_MIN_PX): a player who overshoots the notch eases back to it and the gauge
+// follows. Only a brisker move up is the swing itself (interpretSwing strikes from the set point).
 const { clamp } = __m_vec3;
 
 // Travel for full power: FRAC x the pad height, clamped to [MIN_PX, MAX_PX] CSS px.
@@ -6587,13 +6915,19 @@ const DETENT_LO = 0.95; // full power from here...
 const DETENT_HI = 1.06; // ...the detent proper ends here...
 const OVERSWING_FROM = 1.12; // ...and overswing only starts past this
 // Target notch: the gauge glows within TARGET_GLOW of the target power; Easy snaps within EASY_SNAP.
-const TARGET_GLOW = 0.03;
+const TARGET_GLOW = 0.03; // of the full-power travel (raw), see onTarget
 const EASY_SNAP = 0.05;
 // Tap meter: the power fills 0 -> MAX_POWER over METER_FILL_S, then falls back to 0 over the same
 // time; a meter left running past that is abandoned.
 const METER_FILL_S = 1.4;
 // A swing dragged this far sideways out of the pad during the backswing is abandoned.
 const SIDE_OUT_PX = 90;
+// Travel floor for a swing started near the bottom of the pad.
+const TRAVEL_MIN_PX = 90;
+// Dialling back: the finger moving up slower than this (px/s, measured once it has risen
+// DIAL_MIN_PX above the set point; then sample by sample) moves the set point up with it.
+const DIAL_SPEED = 90;
+const DIAL_MIN_PX = 6;
 
 const AIM_RAD_PER_PX = 0.0022; // ~0.13 deg/px for slow, precise drags
 const AIM_FAST_PX_S = 900; // drags faster than this get up to 3x gain for big turns
@@ -6660,23 +6994,38 @@ function powerFromRaw(raw, kind = 'full') {
   return Math.min(MAX_POWER, 1 + (r - OVERSWING_FROM));
 }
 
-// Power for a backswing depth (px below the touchdown point).
-function powerFromDepth(depth, padH, kind = 'full') {
-  return powerFromRaw(Math.max(0, depth) / fullPowerPx(padH, kind), kind);
+// Travel (px) for full power of a swing that touched down at y0 in padRect: fullPowerPx, or less
+// when the pad's bottom edge is closer than that (full swings keep the detent proper, up to
+// DETENT_HI, inside the pad; putts their full power), never under TRAVEL_MIN_PX. Without a pad
+// rect or y0: fullPowerPx.
+function swingTravel(padH, kind = 'full', y0 = null, padRect = null) {
+  const px = fullPowerPx(padH, kind);
+  if (!padRect || !Number.isFinite(y0)) return px;
+  const room = padRect.y + padRect.h - y0;
+  return clamp(room / (kind === 'putt' ? 1 : DETENT_HI), Math.min(px, TRAVEL_MIN_PX), px);
+}
+
+// Power for a backswing depth (px below the touchdown point); travel: swingTravel (default
+// fullPowerPx).
+function powerFromDepth(depth, padH, kind = 'full', travel = null) {
+  return powerFromRaw(Math.max(0, depth) / (travel || fullPowerPx(padH, kind)), kind);
+}
+
+// Raw travel (a fraction of the full-power travel) that gives `power`: the inverse of powerFromRaw
+// (full power: the middle of the detent).
+function rawForPower(power, kind = 'full') {
+  const p = clamp(Number.isFinite(power) ? power : 0, 0, MAX_POWER);
+  if (kind === 'putt') return p;
+  if (p <= RAMP_FROM) return p;
+  if (p < 1) return RAMP_FROM + ((p - RAMP_FROM) * (DETENT_LO - RAMP_FROM)) / (1 - RAMP_FROM);
+  if (p === 1) return (DETENT_LO + DETENT_HI) / 2;
+  return OVERSWING_FROM + (p - 1);
 }
 
 // Inverse of powerFromDepth: the depth (px) that gives `power` (full power: the middle of the
 // detent). Used by tests and the e2e swipe helpers.
-function depthForPower(power, padH, kind = 'full') {
-  const px = fullPowerPx(padH, kind);
-  const p = clamp(Number.isFinite(power) ? power : 0, 0, MAX_POWER);
-  if (kind === 'putt') return p * px;
-  let raw;
-  if (p <= RAMP_FROM) raw = p;
-  else if (p < 1) raw = RAMP_FROM + ((p - RAMP_FROM) * (DETENT_LO - RAMP_FROM)) / (1 - RAMP_FROM);
-  else if (p === 1) raw = (DETENT_LO + DETENT_HI) / 2;
-  else raw = OVERSWING_FROM + (p - 1);
-  return raw * px;
+function depthForPower(power, padH, kind = 'full', travel = null) {
+  return rawForPower(power, kind) * (travel || fullPowerPx(padH, kind));
 }
 
 // Easy difficulty: a power within EASY_SNAP of the target notch snaps onto it.
@@ -6685,9 +7034,12 @@ function snapPower(power, target, difficulty) {
   return Math.abs(power - target) <= EASY_SNAP ? target : power;
 }
 
-// The gauge glows when the power is this close to the target notch.
-function onTarget(power, target) {
-  return Number.isFinite(target) && Number.isFinite(power) && Math.abs(power - target) <= TARGET_GLOW + 1e-9;
+// The gauge glows when the power is this close to the target notch, measured in travel (raw) so the
+// window is the same width under the thumb everywhere on the arc (±TARGET_GLOW of the full-power
+// travel, about ±6 px): in the steeper 80-100% ramp it spans a little more power, and a notch just
+// short of full power reaches into the detent instead of ending a pixel before it.
+function onTarget(power, target, kind = 'full') {
+  return Number.isFinite(target) && Number.isFinite(power) && Math.abs(rawForPower(power, kind) - rawForPower(target, kind)) <= TARGET_GLOW + 1e-9;
 }
 
 // Tap meter: raw travel equivalent elapsedS seconds after the first tap. The power (through
@@ -6720,20 +7072,112 @@ function draggedOut(samples, padRect) {
   return false;
 }
 
+// Set point of a swing trace: the bottom of the backswing the power is read from. It follows the
+// finger down, and while the finger eases back up slowly it follows it up too (dialling back):
+//  - a rise starts at the first sample clearly (CLEAR_PX) above the set point; once it is
+//    DIAL_MIN_PX above and has lasted DIAL_MIN_MS, an average speed from that first sample under
+//    DIAL_SPEED enters dialling (timed from the first sample above, so a pause at the bottom with no
+//    touch events never makes a flick look slow; the minimum time lets an upswing that starts
+//    gently get going);
+//  - while dialling, the set point follows sample by sample as long as the speed over the last
+//    DIAL_WINDOW_MS stays under DIAL_SPEED;
+//  - a rise that has once gone COMMIT_SPEED or faster is the swing: it never dials (a climb that
+//    rests at the top before the lift is still a climb).
+// Returns {i, y}: the sample index and its y. Every later sample is at or above it. Pure and causal,
+// so the live gauge (swingProgress on the trace so far) and interpretSwing (the whole trace) agree.
+// dial false (putts: the stroke is the release, and a thumb relaxing forward before it must not
+// soften the putt): just the deepest point.
+const CLEAR_PX = 3;
+const DIAL_MIN_MS = 100;
+const DIAL_WINDOW_MS = 50;
+const COMMIT_SPEED = 150;
+const GAP_MS = 120; // no events for this long: the thumb was resting
+function windowSpeed(S, i) {
+  const s = S[i];
+  let k = i - 1;
+  while (k > 0 && S[k].t > s.t - DIAL_WINDOW_MS) k--;
+  return ((S[k].y - s.y) / Math.max(8, s.t - S[k].t)) * 1000;
+}
+function swingSetPoint(samples, dial = true) {
+  if (!samples || !samples.length) return { i: 0, y: 0 };
+  let si = 0;
+  let sy = samples[0].y;
+  if (!dial) {
+    for (let i = 1; i < samples.length; i++) {
+      if (samples[i].y > sy) {
+        si = i;
+        sy = samples[i].y;
+      }
+    }
+    return { i: si, y: sy };
+  }
+  let up = -1; // first sample of the current rise clearly above the set point
+  let dialing = false;
+  let committed = false;
+  for (let i = 1; i < samples.length; i++) {
+    const s = samples[i];
+    if (s.y >= sy) {
+      si = i;
+      sy = s.y;
+      up = -1;
+      committed = false;
+      continue;
+    }
+    if (committed) continue;
+    // A jump after a gap in the events (the thumb rested, then moved: iOS sends nothing while it
+    // is still) starts a new rise however long the gap was: it is never read as slow.
+    const prev = samples[i - 1];
+    if (s.t - prev.t > GAP_MS && prev.y - s.y > CLEAR_PX) {
+      dialing = false;
+      up = i;
+      continue;
+    }
+    if (dialing) {
+      const v = windowSpeed(samples, i);
+      if (v < DIAL_SPEED) {
+        si = i;
+        sy = s.y;
+        continue;
+      }
+      dialing = false;
+      if (v >= COMMIT_SPEED) committed = true;
+      up = sy - s.y > CLEAR_PX ? i : -1;
+      continue;
+    }
+    if (up < 0) {
+      if (sy - s.y > CLEAR_PX) up = i;
+      continue;
+    }
+    const a = samples[up];
+    const v = ((a.y - s.y) / Math.max(1, s.t - a.t)) * 1000;
+    if (v >= COMMIT_SPEED || windowSpeed(samples, i) >= COMMIT_SPEED) committed = true;
+    else if (sy - s.y >= DIAL_MIN_PX && s.t - a.t >= DIAL_MIN_MS && v < DIAL_SPEED) {
+      si = i;
+      sy = s.y;
+      up = -1;
+      dialing = true;
+    }
+  }
+  return { i: si, y: sy };
+}
+
 // Live swing state from the samples so far. The touchdown y is the start; depth is how far below
-// it the finger is now, maxDepth the bottom of the backswing. Power follows maxDepth so the gauge
-// holds the backswing while the finger travels up. phase: 'back' while the finger is still at (or
-// near) its lowest point, 'down' once it climbs back up. full: in the full-power detent.
-function swingProgress(samples, padRefH, kind = 'full') {
-  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back' };
+// it the finger is now, maxDepth the set point's depth (the bottom of the backswing, dialled back
+// by a slow move up on a full swing: swingSetPoint). Power follows the set point, so the gauge
+// holds the backswing while the finger swings up and follows a slow ease back. phase: 'back' while
+// the finger is still at (or near) the set point, 'down' once it climbs away. full: in the
+// full-power detent. padRect: the pad, for the travel of a swing started low in it (swingTravel);
+// travel is returned.
+function swingProgress(samples, padRefH, kind = 'full', padRect = null) {
+  if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back', travel: fullPowerPx(padRefH, kind) };
   const y0 = samples[0].y;
-  let maxDepth = 0;
-  for (const s of samples) maxDepth = Math.max(maxDepth, s.y - y0);
+  const travel = swingTravel(padRefH, kind, y0, padRect);
+  const maxDepth = Math.max(0, swingSetPoint(samples, kind !== 'putt').y - y0);
   const depth = Math.max(0, samples[samples.length - 1].y - y0);
-  const raw = maxDepth / fullPowerPx(padRefH, kind);
+  const raw = maxDepth / travel;
   const power = powerFromRaw(raw, kind);
   const phase = maxDepth - depth > DOWN_SLOP_PX ? 'down' : 'back';
-  return { depth, maxDepth, raw, power, overswing: power > 1, full: kind !== 'putt' && power === 1, phase };
+  return { depth, maxDepth, raw, power, overswing: power > 1, full: kind !== 'putt' && power === 1, phase, travel };
 }
 
 // Aim yaw change for a horizontal drag of dx px over dtMs. Faster drags turn more per pixel.
@@ -6899,7 +7343,7 @@ class InputController {
     this._g = { id: e.pointerId, kind, down: p, last: p, samples: [p] };
     if (kind === 'swing') {
       this.onSwingStart({ x: p.x, y: p.y });
-      this.onSwingProgress(swingProgress(this._g.samples, this.padRefH, this._mode));
+      this.onSwingProgress(swingProgress(this._g.samples, this.padRefH, this._mode, this.padRect));
     } else if (kind === 'padtap') {
       this.onPadTap({ x: p.x, y: p.y, t: p.t });
     }
@@ -6935,7 +7379,7 @@ class InputController {
         g.kind = 'void';
         this.onSwingCancel('dragOut');
       } else {
-        this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode));
+        this.onSwingProgress(swingProgress(g.samples, this.padRefH, this._mode, this.padRect));
       }
     }
     e.preventDefault();
@@ -6960,7 +7404,7 @@ class InputController {
   }
 }
 
-return { FULL_POWER_FRAC, FULL_POWER_MIN_PX, FULL_POWER_MAX_PX, PUTT_POWER_FRAC, PUTT_POWER_MIN_PX, PUTT_POWER_MAX_PX, MAX_POWER, RAMP_FROM, DETENT_LO, DETENT_HI, OVERSWING_FROM, TARGET_GLOW, EASY_SNAP, METER_FILL_S, SIDE_OUT_PX, SKIP_GUARD_MS, layoutMode, padRectFor, inRect, fullPowerPx, powerFromRaw, powerFromDepth, depthForPower, snapPower, onTarget, meterRaw, meterPower, draggedOut, swingProgress, aimDelta, orbitDelta, isTap, readSafeInsets, InputController };
+return { FULL_POWER_FRAC, FULL_POWER_MIN_PX, FULL_POWER_MAX_PX, PUTT_POWER_FRAC, PUTT_POWER_MIN_PX, PUTT_POWER_MAX_PX, MAX_POWER, RAMP_FROM, DETENT_LO, DETENT_HI, OVERSWING_FROM, TARGET_GLOW, EASY_SNAP, METER_FILL_S, SIDE_OUT_PX, TRAVEL_MIN_PX, DIAL_SPEED, DIAL_MIN_PX, SKIP_GUARD_MS, layoutMode, padRectFor, inRect, fullPowerPx, powerFromRaw, swingTravel, powerFromDepth, rawForPower, depthForPower, snapPower, onTarget, meterRaw, meterPower, draggedOut, swingSetPoint, swingProgress, aimDelta, orbitDelta, isTap, readSafeInsets, InputController };
 })();
 
 // ---- src/swing.js ----
@@ -7027,7 +7471,7 @@ const { clubById, dPlane, makeLaunch } = __m_clubs;
 const { puttSpeedForDistance } = __m_physics;
 const { applyLie } = __m_lie;
 const { applyShot } = __m_shots;
-const { MAX_POWER, powerFromDepth, snapPower, draggedOut } = __m_input;
+const { MAX_POWER, powerFromDepth, snapPower, draggedOut, swingSetPoint, swingTravel } = __m_input;
 
 // Difficulty: start-direction gain G_s and curve gain G_c (output deg per input deg) and their
 // dead zones on the chord angle (dzA) and the bend (dzK), in degrees.
@@ -7039,7 +7483,8 @@ const DIFFICULTY = {
 
 // Strike recognition (full swing), section 8.1.
 const STRIKE_CLIMB_PX = 24; // the climb after the bottom that strikes...
-const STRIKE_CLIMB_FRAC = 0.25; // ...or this fraction of the backswing depth, if more
+const STRIKE_CLIMB_FRAC = 0.25; // ...or this fraction of the backswing depth, if more...
+const STRIKE_CLIMB_MAX = 32; // ...but never more than this (a short flick off a deep backswing)
 const STRIKE_SPEED = 120; // px/s: a climb averaging less than this strikes as 'decel'
 const RELEASE_SPEED = 150; // px/s: lifted while moving up this fast strikes...
 const RELEASE_WINDOW_MS = 80; // ...measured over this window before the release
@@ -7184,13 +7629,17 @@ function interpretSwing(samples, opts = {}) {
   const H = Math.max(1, opts.padRefH || 300);
   const diff = DIFFICULTY[opts.difficulty] || DIFFICULTY.normal;
   const y0 = S[0].y;
-  let maxY = y0;
-  for (const s of S) if (s.y > maxY) maxY = s.y;
-  const depth = maxY - y0;
-  const power = snapPower(powerFromDepth(depth, H, kind), opts.target, opts.difficulty);
+  // The set point (input.js swingSetPoint): the bottom of the backswing, dialled back by a slow
+  // ease up, exactly as the live gauge reads it; the swing is read from there on. The travel
+  // shrinks for a swing started low in the pad (swingTravel), as on the gauge.
+  const set = swingSetPoint(S, kind !== 'putt');
+  const depth = set.y - y0;
+  const travel = swingTravel(H, kind, y0, opts.padRect || null);
+  const power = snapPower(powerFromDepth(depth, H, kind, travel), opts.target, opts.difficulty);
   if (depth < (kind === 'putt' ? PUTT_MIN_DEPTH_PX : MIN_DEPTH_PX)) return failed(kind, 'short', power);
   if (opts.padRect && draggedOut(S, opts.padRect)) return failed(kind, 'cancel', power);
-  return kind === 'putt' ? interpretPutt(S, y0, depth, power, diff, opts) : interpretFull(S, y0, depth, power, diff, opts);
+  const T = set.i > 0 && kind !== 'putt' ? [S[0], ...S.slice(set.i)] : S;
+  return kind === 'putt' ? interpretPutt(T, y0, depth, power, diff, opts) : interpretFull(T, y0, depth, power, diff, opts);
 }
 
 function interpretFull(S, y0, depth, power, diff, opts) {
@@ -7198,7 +7647,7 @@ function interpretFull(S, y0, depth, power, diff, opts) {
   const end = S[n - 1];
   let iMax = 0;
   for (let i = 1; i < n; i++) if (S[i].y > S[iMax].y) iMax = i;
-  const thr = Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth);
+  const thr = Math.min(STRIKE_CLIMB_MAX, Math.max(STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC * depth));
 
   // Strike 'climb': the highest point after the bottom of the backswing is at least thr above the
   // bottom of its upward run, and the finger has not slid back down to the bottom by the release
@@ -7443,7 +7892,7 @@ function swingToLaunch(club, lie, swing, aimYaw, rng, opts = {}) {
   return launch;
 }
 
-return { DIFFICULTY, STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC, STRIKE_SPEED, RELEASE_SPEED, RELEASE_WINDOW_MS, MAX_START_DIR, MAX_FACE_TO_PATH, PUTT_RANGES, PUTT_MIN_DEPTH_PX, RUSHED_FRAC, DECEL_FRAC, SIGMA_DIR, SIGMA_FACE, SIGMA_SPEED, RUSHED_FACE, DECEL_SPEED, PUTT_SIGMA_SPEED, PUTT_SIGMA_DIR, powerForDistance, swingLabel, interpretSwing, PARTIAL_LAUNCH, partialSwing, swingToLaunch };
+return { DIFFICULTY, STRIKE_CLIMB_PX, STRIKE_CLIMB_FRAC, STRIKE_CLIMB_MAX, STRIKE_SPEED, RELEASE_SPEED, RELEASE_WINDOW_MS, MAX_START_DIR, MAX_FACE_TO_PATH, PUTT_RANGES, PUTT_MIN_DEPTH_PX, RUSHED_FRAC, DECEL_FRAC, SIGMA_DIR, SIGMA_FACE, SIGMA_SPEED, RUSHED_FACE, DECEL_SPEED, PUTT_SIGMA_SPEED, PUTT_SIGMA_DIR, powerForDistance, swingLabel, interpretSwing, PARTIAL_LAUNCH, partialSwing, swingToLaunch };
 })();
 
 // ---- src/caddie.js ----
@@ -7627,9 +8076,17 @@ function predictShot(terrain, pos, lie, wind, clubId, aimYaw, power = 1, opts = 
 // The intended flight of a shot at a power over flat fairway at the ball's height (with the wind),
 // recorded for the aim preview: main.js drapes path [t, x, y, z]* onto the hole to draw where a
 // draw or cut bends. landing / final are world {x, y, z}.
+// The flat plane is kept per terrain and height (the preview is asked for every frame the gauge or
+// the aim moves: a new plane each time also built a new surface table).
+const _previewPlanes = new WeakMap();
 function shotPreview(terrain, pos, lie, wind, clubId, aimYaw, opts = {}) {
   const z = terrain.heightAt(pos.x, pos.y);
-  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions: terrain.conditions || null });
+  let pc = _previewPlanes.get(terrain);
+  if (!pc || pc.z !== z) {
+    pc = { z, plane: planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions: terrain.conditions || null }) };
+    _previewPlanes.set(terrain, pc);
+  }
+  const plane = pc.plane;
   const so = shotOpts(typeof clubId === 'string' ? clubById(clubId) : clubId, lie, opts);
   const power = opts.power ?? 1;
   const launch = swingToLaunch(clubId, lie, { ...STOCK, power }, aimYaw, null, { pos: { x: pos.x, y: pos.y, z: z + BALL_R }, ...so });
@@ -7731,7 +8188,7 @@ const __m_rules = (() => {
 // at least 2 m behind it, on dry ground. The player may instead replay from the previous spot.
 // Both cost one stroke. OB is stroke and distance.
 const { SURF, CLUB_LENGTH, BALL_R, G } = __m_constants;
-const { simulateShot, surfaceParams } = __m_physics;
+const { simulateShot, contactParams } = __m_physics;
 const { clamp } = __m_vec3;
 
 const RELIEF_R = 2 * CLUB_LENGTH; // 2.28 m
@@ -7795,8 +8252,8 @@ function slopeAt(terrain, x, y) {
 // well under the surface's rolling drag a0 (the physics rest test, with a margin; firm courses
 // have less drag, so fewer spots hold).
 function holdsBall(terrain, x, y) {
-  const surf = surfaceParams(terrain, terrain.surfaceAt(x, y));
   const t = slopeAt(terrain, x, y);
+  const surf = contactParams(terrain, terrain.surfaceAt(x, y), t);
   return (5 / 7) * G * (t / Math.sqrt(1 + t * t)) < surf.a0 * HOLD_MARGIN;
 }
 
@@ -7976,6 +8433,8 @@ const __m_scoring = (() => {
 //
 //   newCard(course) -> {course, holes:[{n, par, si, lengthM, strokes:null, putts:null,
 //                       penalties:null, fir:null, gir:null, pickUp:false}]}
+//       A mixed round (course.mixed) numbers its holes 1-9 in playing order and adds each hole's
+//       own course: from {courseId, name, theme, n}.
 //   recordHole(card, i, {strokes, putts, penalties, fir, gir, pickUp}) -> card (mutated)
 //   totals(card) -> {played, strokes, par, toPar, coursePar, putts, penalties,
 //                    fir:{hit, of}, gir:{hit, of}, pickUps}
@@ -7987,7 +8446,8 @@ function newCard(course) {
   return {
     course: course.name,
     holes: course.holes.map((h, i) => ({
-      n: h.n || i + 1,
+      n: course.mixed ? i + 1 : h.n || i + 1,
+      ...(course.mixed && course.holeCourses ? { from: { courseId: course.holeCourses[i].id, name: course.holeCourses[i].name, theme: course.holeCourses[i].theme, n: h.n || i + 1 } } : {}),
       par: h.par,
       si: h.si,
       lengthM: h.path ? Math.round(buildPath(h.path).length) : undefined,
@@ -8069,6 +8529,11 @@ const __m_game = (() => {
 // conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
 // stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
 //
+// Mixed rounds (courses.js mixedCourse): course.mixed is a nine drawn from all four courses. Each
+// hole is built and played with its own course (courseOf(i): theme, conditions, a windy course's
+// wind), state.mix stores the draw (serialized, so a resumed round plays the same holes), the card
+// numbers the holes 1-9 in playing order and holeInfo() adds the hole's own course and number.
+//
 // Special shots (section 8.4, shots.js): state.shotType ('normal' by default, serialized) is the
 // shot the next swing plays. setShot(id) only takes a shot that the club and lie allow
 // (shotsAvailable()); it goes back to 'normal' after every stroke, on every new spot, and when the
@@ -8078,13 +8543,13 @@ const __m_game = (() => {
 // shot's (the caddie picks the club for a normal swing).
 //
 // Saves and best rounds (section 8.5): pure helpers for main.js, which owns the storage:
-//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines)
+//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines|mixed)
 //   saveCourseId(save) -> course id                  (the wrapper's or the game's; old saves: pines)
 //   bestMap(raw) -> {[courseId]: {strokes, toPar, date}}   (an old single record counts as pines)
 //   mergeBest(a, b) -> map: per course the newer record by date (stored vs in-memory copies)
 //   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only)
 const { COURSE } = __m_course;
-const { courseById, COURSES, DEFAULT_COURSE_ID } = __m_courses;
+const { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, MIXED_ID } = __m_courses;
 const { buildHole: defaultBuildHole } = __m_terrain;
 const { SURF, BALL_R, WINDY_EXTRA } = __m_constants;
 const { mulberry32, randInt } = __m_rng;
@@ -8104,6 +8569,9 @@ const HOLED_HOLD = 2.5; // s in 'holed' before the scorecard
 const TREE_SEED = 1; // the course looks the same every round; pins and wind vary
 const WIND_RANGES = { off: [0, 0], light: [0, 4], breezy: [3, 8] }; // m/s at 10 m
 const DEFAULT_SETTINGS = Object.freeze({ wind: 'light', difficulty: 'normal', units: 'yd', handed: 'R' });
+const PREVIEW_POWER_STEP = 0.02; // shot preview: power resolution...
+const PREVIEW_AIM_STEP = 0.25 * (Math.PI / 180); // ...aim resolution (rad)...
+const PREVIEW_CACHE = 48; // ...and previews kept per spot
 
 const RESTORABLE = ['intro', 'address', 'decision', 'holed', 'scorecard', 'roundOver'];
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -8189,6 +8657,7 @@ class Game {
     this.state = {
       v: SAVE_VERSION,
       courseId: course.id || 'pines',
+      mix: course.mixed ? course.picks.map((p) => ({ courseId: p.courseId, hole: p.hole })) : null,
       seed: s,
       settings: { ...DEFAULT_SETTINGS, ...settings },
       pins: course.holes.map(() => randInt(pinRng, 3)),
@@ -8233,12 +8702,17 @@ class Game {
 
   // ------------------------------------------------------------------ holes
 
+  // The course hole i belongs to: the round's course, or in a mixed round the hole's own course.
+  courseOf(i = this.state.holeIndex) {
+    return holeCourse(this.course, i);
+  }
+
   loadHole(i, terrain = null) {
     const st = this.state;
     st.holeIndex = i;
     this.def = this.course.holes[i];
-    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED, course: this.course });
-    st.wind = windFor(st.seed, i, st.settings.wind, this.course.conditions);
+    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED, course: this.courseOf(i) });
+    st.wind = windFor(st.seed, i, st.settings.wind, this.courseOf(i).conditions);
     st.hole = newHoleState(this.terrain);
     st.decision = null;
     this.shot = null;
@@ -8253,14 +8727,23 @@ class Game {
     return this.terrain;
   }
 
+  // n is the hole's number in this round (1-9 in playing order; a mixed round renumbers them);
+  // holeCourseId / holeCourseName / holeN are the course the hole comes from and its number there.
   holeInfo() {
     const t = this.terrain;
+    const i = this.state.holeIndex;
+    const hc = this.courseOf(i);
+    const card = this.state.card.holes[i];
     return {
-      index: this.state.holeIndex,
+      index: i,
       courseId: this.state.courseId,
       courseName: this.course.name || '',
+      mixed: !!this.course.mixed,
+      holeCourseId: hc.id || 'pines',
+      holeCourseName: hc.name || '',
+      holeN: t.n,
       theme: t.theme || 'parkland',
-      n: t.n,
+      n: card ? card.n : t.n,
       par: t.par,
       name: t.name,
       si: t.si,
@@ -8308,7 +8791,7 @@ class Game {
     const prevWind = st.settings.wind;
     st.settings = { ...st.settings, ...partial };
     if (st.settings.wind !== prevWind && this.terrain) {
-      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind, this.course.conditions);
+      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind, this.courseOf().conditions);
       this._table = null;
     }
     this._lie = null;
@@ -8451,21 +8934,34 @@ class Game {
 
   // Intended flight of the selected club and shot at a power along the current aim, over flat
   // ground with the wind (caddie.shotPreview: {path [t,x,y,z]*, carry, total, landing, final}), for
-  // the curved aim preview of a draw or cut. null for the putter. Cached per spot, club, shot, aim
-  // and power (to 0.01).
+  // the curved aim preview of a draw or cut. null for the putter. The power is taken to
+  // PREVIEW_POWER_STEP and the aim to PREVIEW_AIM_STEP, and up to PREVIEW_CACHE previews are kept per
+  // spot, club and shot: the gauge filling or the aim being dragged asks every frame, and each new
+  // preview is a recorded flight simulation.
   shotPreview(power = 1) {
     const c = this.club;
     if (!c || c.kind === 'putter') return null;
     const b = this.state.hole.ball;
     const w = this.state.wind;
     const st = this.state;
-    const p = Math.round(power * 100) / 100;
-    const key = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${st.settings.handed},${st.aimYaw},${p}`;
-    if (!this._preview || this._previewKey !== key) {
-      this._preview = shotPreview(this.terrain, b, this.lie, w, c.id, st.aimYaw, { power: p, shot: this.shotType, handed: st.settings.handed });
-      this._previewKey = key;
+    const spot = `${b.x},${b.y},${w.x},${w.y},${c.id},${this.shotType},${st.settings.handed}`;
+    if (!this._preview || this._previewKey !== spot) {
+      this._preview = new Map();
+      this._previewKey = spot;
     }
-    return this._preview;
+    const p = Math.round(power / PREVIEW_POWER_STEP) * PREVIEW_POWER_STEP;
+    const yaw = Math.round(st.aimYaw / PREVIEW_AIM_STEP) * PREVIEW_AIM_STEP;
+    const k = `${p.toFixed(3)},${yaw.toFixed(5)}`;
+    const cache = this._preview;
+    let pv = cache.get(k);
+    if (pv) {
+      cache.delete(k); // most recently used last
+    } else {
+      pv = shotPreview(this.terrain, b, this.lie, w, c.id, yaw, { power: p, shot: this.shotType, handed: st.settings.handed });
+      while (cache.size >= PREVIEW_CACHE) cache.delete(cache.keys().next().value);
+    }
+    cache.set(k, pv);
+    return pv;
   }
 
   suggestClub() {
@@ -8704,17 +9200,18 @@ class Game {
   static restore(json, opts = {}) {
     const data = typeof json === 'string' ? JSON.parse(json) : clone(json);
     if (!data || data.v !== SAVE_VERSION || !data.hole || !Array.isArray(data.pins)) throw new Error('Game.restore: unsupported save');
-    const course = opts.course || courseById(data.courseId || 'pines');
+    const course = opts.course || (data.courseId === MIXED_ID ? mixedCourse(data.seed, data.mix) : courseById(data.courseId || 'pines'));
     const g = new Game({ course, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
     const pending = data.pendingShot;
     delete data.pendingShot;
     const phase = RESTORABLE.includes(data.phase) ? data.phase : 'address';
     data.courseId = course.id || 'pines';
+    data.mix = course.mixed ? course.picks.map((p) => ({ courseId: p.courseId, hole: p.hole })) : null;
     if (!data.shotType) data.shotType = 'normal'; // saves from before special shots
     g.state = data;
     g._rng = mulberry32(data.rng >>> 0);
     g.def = g.course.holes[data.holeIndex];
-    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED, course });
+    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED, course: g.courseOf(data.holeIndex) });
     g.phase = phase;
     data.phase = phase;
     if (pending && phase === 'address') {
@@ -8730,23 +9227,24 @@ class Game {
 // ------------------------------------------------------------------ saves and best rounds
 // Pure helpers for main.js (which owns localStorage and the in-memory fallback), section 8.5.
 
-// ?course= value -> a known course id, or null (unknown or missing: keep the menu's choice).
+// ?course= value -> a known course id (or 'mixed'), or null (unknown or missing: keep the menu's choice).
 function courseFromParam(value) {
   const v = String(value ?? '').trim().toLowerCase();
-  return COURSES.some((c) => c.id === v) ? v : null;
+  return isCourseId(v) ? v : null;
 }
 
 // Course of a stored save {v, savedAt, courseId?, game}: the wrapper's id, else the game's; saves
 // from before the course picker have neither and are Hollow Pines.
 function saveCourseId(save) {
   const id = (save && (save.courseId || (save.game && save.game.courseId))) || DEFAULT_COURSE_ID;
-  return courseById(id).id;
+  return isCourseId(id) ? id : DEFAULT_COURSE_ID;
 }
 
 const isRecord = (r) => !!r && typeof r === 'object' && Number.isFinite(r.strokes);
 
 // Best rounds by course. golf.best.v1 used to hold one record {strokes, toPar, date} (Hollow Pines,
-// the only course then); now it is a map {[courseId]: record}. Anything else is ignored.
+// the only course then); now it is a map {[courseId]: record} (mixed rounds share one 'mixed'
+// record: every draw is par 36). Anything else is ignored.
 function bestMap(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
@@ -8754,7 +9252,7 @@ function bestMap(raw) {
     out[DEFAULT_COURSE_ID] = { strokes: raw.strokes, toPar: raw.toPar ?? 0, date: raw.date || 0 };
     return out;
   }
-  for (const [id, r] of Object.entries(raw)) if (isRecord(r) && COURSES.some((c) => c.id === id)) out[id] = { strokes: r.strokes, toPar: r.toPar ?? 0, date: r.date || 0 };
+  for (const [id, r] of Object.entries(raw)) if (isRecord(r) && isCourseId(id)) out[id] = { strokes: r.strokes, toPar: r.toPar ?? 0, date: r.date || 0 };
   return out;
 }
 
@@ -8780,7 +9278,7 @@ function recordBest(map, courseId, totals, holes, date = Date.now()) {
 }
 
 
-return { SAVE_VERSION, END_HOLD, HOLED_HOLD, TREE_SEED, WIND_RANGES, DEFAULT_SETTINGS, windFor, pathAt, Game, courseFromParam, saveCourseId, bestMap, mergeBest, recordBest };
+return { SAVE_VERSION, END_HOLD, HOLED_HOLD, TREE_SEED, WIND_RANGES, DEFAULT_SETTINGS, PREVIEW_POWER_STEP, PREVIEW_AIM_STEP, windFor, pathAt, Game, courseFromParam, saveCourseId, bestMap, mergeBest, recordBest };
 })();
 
 // ---- src/gl.js ----
@@ -10584,11 +11082,13 @@ const DESERT = {
   fog: { color: null, density: 1 / 1800, aerial: 0.5, highClear: true },
   ambient: { sky: [0.22, 0.24, 0.3], ground: [0.13, 0.09, 0.06] },
   surfaceColors: surfaceColors({
-    [SURF.TEE]: [0.26, 0.6, 0.22],
-    [SURF.FAIRWAY]: [0.26, 0.62, 0.22],
-    [SURF.ROUGH]: [0.34, 0.48, 0.2],
-    [SURF.FRINGE]: [0.27, 0.62, 0.24],
-    [SURF.GREEN]: [0.3, 0.68, 0.27],
+    // (Watered turf in the desert: a deep, slightly olive green, not neon; the green a cooler,
+    // bluer green of its own so it stands out from the fairway.)
+    [SURF.TEE]: [0.27, 0.5, 0.2],
+    [SURF.FAIRWAY]: [0.28, 0.52, 0.19],
+    [SURF.ROUGH]: [0.36, 0.45, 0.21],
+    [SURF.FRINGE]: [0.26, 0.52, 0.23],
+    [SURF.GREEN]: [0.22, 0.56, 0.3],
     [SURF.BUNKER]: [0.93, 0.87, 0.72],
     [SURF.WATER]: [0.14, 0.38, 0.42],
     [SURF.OOB]: [0.64, 0.52, 0.41],
@@ -10603,7 +11103,7 @@ const DESERT = {
   land: 'mesas',
   seaAz: [0],
   seaHalf: 70,
-  ridges: { far: [0.24, 0.22, 0.38], near: [0.42, 0.15, 0.05] },
+  ridges: { far: [0.24, 0.22, 0.38], near: [0.46, 0.13, 0.035] }, // (warm red-orange rock, lightly hazed: render.js RIDGE_HAZE)
   skirt: { near: [0.63, 0.5, 0.4], far: [0.6, 0.47, 0.38], detail: [1, 0, 0, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { saguaro: 0.3, shrub: 0.55, rock: 0.15 }, perVertex: 0.8, grass: 0 },
   tints: {
@@ -10682,7 +11182,7 @@ const LINKS = {
     [SURF.WASTE]: [0.78, 0.72, 0.56],
     [SURF.FESCUE]: [0.7, 0.62, 0.38],
   }),
-  revet: [0.17, 0.22, 0.1],
+  revet: [0.3, 0.34, 0.17], // (lit stacked turf: the darker 0.17/0.22/0.1 read as a black pit)
   detail: { rake: 0.4, pebbles: 0.5, sheen: 1 },
   water: { deep: [0.01, 0.035, 0.05], shallow: [0.62, 0.58, 0.46], sea: true, tint: [0.22, 0.36, 0.38], clarity: 1.5, haze: 0.45, rough: 0.3 },
   horizon: 'ocean',
@@ -10887,6 +11387,7 @@ function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = null } 
   const cFescue = C(SURF.FESCUE);
   const cFescueGreen = [cFescue[0] * 0.72, cFescue[1] * 0.86, cFescue[2] * 0.8]; // grey-green hollows
   const cRevet = TH.revet || [0.2, 0.26, 0.12];
+  const pots = new Uint8Array(N); // texels inside a pot bunker (no hollow occlusion there)
   // Detail weights for the shader (allocated only when something on the hole needs them).
   let det = null;
   const detail = () => det || (det = [new Float32Array(N), new Float32Array(N), new Float32Array(N), new Float32Array(N)]);
@@ -10922,9 +11423,16 @@ function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = null } 
           a = 1;
           break;
         case SURF.BUNKER: {
-          // Sand: slightly darker, damp-looking near the edge where the face is shadowed.
-          const edge = 1 - sandNear[k];
-          c = mul3(cSand, (0.98 + 0.06 * nf) * (1 - 0.22 * sat(edge * 2.2)));
+          // Sand: slightly darker, damp-looking near the edge where the face is shadowed. A pot
+          // bunker's floor and back slope stay clean, bright sand (the deep bowl already shades
+          // itself; darkening it as well made the pots read as black holes from the tee).
+          if (terrain.potAt && terrain.potAt(x, y)) {
+            pots[k] = 1;
+            c = mul3(cSand, 1.04 + 0.06 * nf);
+          } else {
+            const edge = 1 - sandNear[k];
+            c = mul3(cSand, (0.98 + 0.06 * nf) * (1 - 0.22 * sat(edge * 2.2)));
+          }
           break;
         }
         case SURF.WATER: {
@@ -11002,7 +11510,7 @@ function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = null } 
       const x = sg.minX + (i + 0.5) * st;
       const h0 = hAt(x, y);
       const lap = (hAt(x + 2, y) + hAt(x - 2, y) + hAt(x, y + 2) + hAt(x, y - 2)) / 4 - h0;
-      const ao = 1 - Math.max(-0.08, Math.min(0.2, lap * 0.9));
+      const ao = pots[j * W + i] ? 1 : 1 - Math.max(-0.08, Math.min(0.2, lap * 0.9));
       const k = (j * W + i) * 3;
       col[k] *= ao;
       col[k + 1] *= ao;
@@ -11403,16 +11911,25 @@ void main() {
     far = 0.012 + 0.05 * m;
     float n1 = ridge(u, 7.0, 0.37);
     float n2 = ridge(u, 17.0, 0.63);
-    float butte = smoothstep(0.505, 0.512, n1);
-    float tier = smoothstep(0.545, 0.552, n2) * butte;
+    // Cliffs steep but not plumb (a slight taper), an uneven caprock with notches, a stepped tier.
+    float butte = smoothstep(0.503, 0.516, n1);
+    float tier = smoothstep(0.545, 0.556, n2) * butte;
+    float cap = 0.0022 * (ridge(u, 61.0, 0.5) - 0.5) + 0.0016 * (ridge(u, 149.0, 0.21) - 0.5) - 0.0028 * smoothstep(0.78, 0.86, ridge(u, 37.0, 0.44));
     float talus = smoothstep(0.38, 0.505, n1);
     float base = 0.003 + 0.016 * talus * talus * (3.0 - 2.0 * talus);
-    near = max(base, butte * (0.03 + 0.009 * tier + 0.0012 * ridge(u, 61.0, 0.5)));
-    // Talus slopes darker (shadow, scrub), sheer red cliffs above with faint strata, a paler cap.
+    near = max(base, sqrt(butte) * (0.036 + 0.01 * tier + cap));
+    // Talus slopes darker (shadow, scrub), red cliffs above with faint strata, a paler cap. The
+    // flanks are lit or in shade by which way they face the sun (the side where the butte rises
+    // with u faces clockwise of the view).
     float cliff = smoothstep(base + 0.0006, base + 0.0016, e);
     float band = smoothstep(0.3, 0.7, fract(e / 0.0042 + 0.3 * ridge(u, 23.0, 0.9)));
-    nearTone = mix(vec3(0.62, 0.6, 0.66), vec3(1.0, 0.97, 0.94) * (0.93 + 0.1 * band), cliff);
-    nearTone *= 1.0 + 0.12 * smoothstep(near - 0.0012, near - 0.0002, e);
+    float g = ridge(u + 0.0012, 7.0, 0.37) - ridge(u - 0.0012, 7.0, 0.37);
+    float flank = clamp(abs(g) * 160.0, 0.0, 1.0) * (1.0 - smoothstep(0.85, 1.0, butte));
+    vec2 vd = normalize(d.xy + vec2(1e-6, 0.0));
+    vec2 fn = normalize(-vd + sign(g) * flank * 1.6 * vec2(vd.y, -vd.x));
+    float lit = clamp(dot(fn, normalize(uSun.xy + vec2(1e-6, 0.0))) * 0.5 + 0.5, 0.0, 1.0);
+    nearTone = mix(vec3(0.62, 0.6, 0.66), vec3(1.04, 0.96, 0.9) * (0.93 + 0.1 * band) * mix(0.66, 1.12, lit), cliff);
+    nearTone *= 1.0 + 0.16 * smoothstep(near - 0.0012, near - 0.0002, e);
   } else {
     // Dunes: low, smooth swells.
     far = 0.006 + 0.014 * ridge(u, 3.0, 0.31);
@@ -11537,7 +12054,7 @@ vec3 groundDetail(vec3 alb, vec4 dm, float dist, vec4 nz, vec4 nzf) {
     // Revetted face: stacked sod layers about 11 cm thick.
     float layer = fract(vZ / 0.11 + nzf.r * 0.3);
     float seam = smoothstep(0.0, 0.14, layer) * (1.0 - smoothstep(0.84, 1.0, layer));
-    vec3 sod = toLin(uRevet) * (0.5 + 0.55 * seam) * (0.85 + 0.3 * nzf.g);
+    vec3 sod = toLin(uRevet) * (0.62 + 0.45 * seam) * (0.85 + 0.3 * nzf.g);
     alb = mix(alb, sod, clamp(dm.a, 0.0, 1.0));
   }
   return alb;
@@ -12257,7 +12774,7 @@ const OBJ_KINDS = [
 ];
 const HORIZON_KIND = { hills: 0, mountains: 1, mesas: 2, dunes: 3 };
 // Haze mixed into the far and near horizon silhouettes (the shipped 0.86 / 0.78 for hills).
-const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.3], dunes: [0.84, 0.72] };
+const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.17], dunes: [0.84, 0.72] };
 
 const ZERO = { x: 0, y: 0, z: 0 };
 
@@ -13661,10 +14178,12 @@ const __m_ui = (() => {
 //
 //   ui.showMenu({canResume=false, courseName?, courseSub?, courses?, selected?, resumeSub?}) /
 //       ui.hideMenu()
-//       courses: [{id, name, tagline, theme, par, lengthM, holes?, best?: {strokes, toPar}|null}]
+//       courses: [{id, name, tagline, theme, par, lengthM, holes?, mixed?, best?: {strokes, toPar}|null}]
 //       builds the course picker (cards with a theme-gradient thumbnail, name, tagline, par and
 //       length, best round); selected: the highlighted id (its name and par fill the title). A
 //       card tap selects it and emits 'course' (id). resumeSub: small line under Resume round.
+//       A mixed entry (the random nine from every course: mixed true, lengthM null) is a wide card
+//       under the others with a four-theme thumbnail and "Par 36 · New holes every round".
 //   ui.selectedCourse                 id of the highlighted course card (or null)
 //   ui.showPause({title?}) / ui.hidePause()       ui.showSettings() ui.showHowTo()
 //   ui.setLoading(on, text='Loading')             ui.showNoGL()
@@ -13687,7 +14206,8 @@ const __m_ui = (() => {
 //       null = idle (hint). power 0..1.1 (above 1 = overswing, drawn red); full: in the full-power
 //       detent (the 100% tick lights up); carryText like '158 yd' or '12 ft'. target (optional,
 //       0..1.1 or null) moves the target notch, see setTarget; the notch glows and the readout
-//       says "On target" while |power - target| <= TARGET_GLOW (3%).
+//       says "On target" while the power is within TARGET_GLOW (3%) of the full-power travel of it
+//       (input.js onTarget: the same width under the thumb anywhere on the arc).
 //   ui.setTarget(power | null)   the target notch on the arc (the power that reaches the pin or
 //       the aim point, from main.js); it shows dimmed while idle too. null hides it.
 //   ui.setHint(text | null)                       pad hint (null = default for full/putt and the
@@ -13712,7 +14232,9 @@ const __m_ui = (() => {
 //   ui.showScorecard(card, {final=false, current, title?, kicker?, course?}) / ui.hideScorecard()
 //       The header's first line is the course name (course, else card.course), then the kicker.
 //       card: {holes:[{n?, par, lengthM? | yards?, strokes|null, putts?, fir?: bool|null,
-//              gir?: bool|null}]} or the holes array itself. current: 0-based hole to
+//              gir?: bool|null, from?: {name, theme, n}}]} or the holes array itself. Holes with
+//              from (a mixed round) get a Course row: a theme-coloured chip with the course's
+//              initial per hole. current: 0-based hole to
 //       highlight. final shows Play again ([data-act="new-round"]) + Menu ([data-act="quit"])
 //       instead of Next hole ([data-act="next-hole"]).
 //   ui.showDecision(opts) -> Promise<id>
@@ -14004,7 +14526,9 @@ class UI {
       st.setProperty('--pad-w', `${r.w}px`);
       st.setProperty('--pad-h', `${r.h}px`);
     }
-    const arc = Math.round(Math.min(r.w * 0.82, r.h * 0.78, 300));
+    // (Landscape: a little smaller, centred low in the pad, so its top stays under the target.)
+    const land = this.doc.body.dataset.layout === 'landscape';
+    const arc = Math.round(Math.min(r.w * 0.82, r.h * (land ? 0.7 : 0.78), 300));
     s.setProperty('--arc', `${arc}px`);
   }
 
@@ -14038,7 +14562,7 @@ class UI {
     for (const c of this._courses) {
       const b = doc.createElement('button');
       b.type = 'button';
-      b.className = 'course-card';
+      b.className = c.mixed ? 'course-card cc-mixed' : 'course-card';
       b.dataset.course = c.id;
       b.dataset.theme = c.theme || 'parkland';
       b.setAttribute('role', 'radio');
@@ -14061,7 +14585,7 @@ class UI {
       tag.textContent = c.tagline || '';
       const meta = doc.createElement('span');
       meta.className = 'cc-meta';
-      meta.textContent = `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
+      meta.textContent = c.lengthM == null ? `Par ${c.par} · New holes every round` : `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
       body.append(name, tag, meta);
       b.append(thumb, body);
       box.appendChild(b);
@@ -14199,7 +14723,7 @@ class UI {
     const power = Math.max(0, Math.min(MAX_POWER, p.power || 0));
     const over = p.overswing ?? power > 1;
     const full = !over && (p.full ?? (power === 1 && !this._controls.putt));
-    const hit = this._target != null && onTarget(power, this._target);
+    const hit = this._target != null && onTarget(power, this._target, this._controls.putt ? 'putt' : 'full');
     pad.dataset.state = 'swing';
     pad.dataset.over = over ? '1' : '0';
     pad.dataset.full = full ? '1' : '0';
@@ -14383,6 +14907,7 @@ class UI {
       putts: h.putts ?? null,
       fir: h.fir ?? null,
       gir: h.gir ?? null,
+      from: h.from || null,
     }));
     const units = this._hud.units || this._settings.units;
     const played = holes.filter((h) => h.strokes != null);
@@ -14414,6 +14939,18 @@ class UI {
     };
     const lengthNum = (m) => (m == null ? '' : Math.round(units === 'm' ? m : mToYd(m)));
     row('r-hole', 'Hole', holes.map((h) => h.n), 'Out');
+    if (holes.some((h) => h.from)) {
+      // Mixed round: which course each hole comes from (initial on the course's theme colour).
+      row('r-from', 'Course', holes.map((h) => {
+        if (!h.from) return '';
+        const chip = doc.createElement('span');
+        chip.className = 'from-chip';
+        chip.dataset.theme = h.from.theme || 'parkland';
+        chip.textContent = (h.from.name || '?').charAt(0);
+        chip.title = `${h.from.name} ${h.from.n}`;
+        return chip;
+      }), '');
+    }
     row('r-yds', units === 'm' ? 'M' : 'Yds', holes.map((h) => lengthNum(h.lengthM)),
       holes.every((h) => h.lengthM != null) ? lengthNum(sum(holes, 'lengthM')) : '');
     row('r-par', 'Par', holes.map((h) => h.par), sum(holes, 'par'));
@@ -15022,6 +15559,12 @@ const __m_bot = (() => {
 // Special shots (section 8.4) join the candidates where a decent player would think of them: a
 // bump & run for a short approach from short grass, a punch into a stiff headwind, a stinger off
 // the tee (or a lay-up) into one. They win only when they score better, like any candidate.
+//   escape    from a deep bunker (a pot: the rim a metre or more above the ball), the wedges and
+//             their flops at a few powers over a wide fan (out sideways, or backwards), since the
+//             line at the cup may cross a face nothing clears
+// An approach whose intended ball hits a tree (or comes back behind the ball) is not "corrected"
+// toward where the ricochet went; a few lines just either side of it are tried instead, so the bot
+// plays round a trunk in its way.
 // The best few are re-scored with seeded random misses (the bot's execution error plus the game's
 // contact scatter), so risky lines next to water or OB lose to safer ones.
 //
@@ -15049,7 +15592,7 @@ const BOT_SKILL = {
   puttPacePerM: 0.004,
 };
 
-const NOISE_SAMPLES = 6;
+const NOISE_SAMPLES = 8; // seeded misses scored per shortlisted candidate (a line with trouble in reach of an ordinary miss scores worse)
 const PENALTY_FEAR = 0.3; // extra strokes a penalty "costs" in the bot's mind: it plays away from trouble
 const SHORTLIST = 4;
 const PUTT_PAST = 0.35; // m: putts are paced to die this far past the cup
@@ -15058,6 +15601,10 @@ const BUMP_RANGE = 45; // m: approaches this short may be bumped along the groun
 const BUMP_CLUBS = ['8i', 'PW'];
 const BUMP_FROM = new Set([SURF.FAIRWAY, SURF.FRINGE, SURF.TEE, SURF.WASTE]);
 const HEADWIND = 4; // m/s against the shot before the bot thinks of keeping it low
+const DEEP_RIM = 1; // m: a bunker whose rim stands this far above the ball calls for an escape
+const ESCAPE_FAN = [0, -25, 25, -50, 50, -90, 90, 180]; // deg from the cup line
+const ESCAPE_POWERS = [0.6, 0.85, 1];
+const AROUND = [-3, 3, -6, 6]; // deg: lines either side of an approach blocked by a tree
 const ZERO_WIND = { x: 0, y: 0 };
 
 // Expected strokes to hole out, by surface and distance (m). Piecewise-linear tables tuned to a
@@ -15174,6 +15721,9 @@ function approach(ctx, club, target, shot = 'normal') {
     const along = c.along - tc.along;
     const lat = c.lat - tc.lat;
     if (Math.abs(along) < 2 && Math.abs(lat) < 2) break;
+    // A ball that hit a tree, or finished behind where it started, says nothing about the aim:
+    // correcting toward the ricochet sent shots far off line (planFull tries lines round it).
+    if (c.along < 0 || res.events.some((e) => e.type === 'tree')) break;
     // Rotate toward the target (a ball finishing right needs a yaw increase: CCW is left) and
     // re-solve the power for the corrected distance.
     if (f.outcome === 'rest') {
@@ -15198,6 +15748,17 @@ function candidateClubs(ctx, pl) {
   if (pl < 60) for (const id of ['SW', 'LW', 'GW']) if (!out.includes(id)) out.push(id);
   if (lie.surface === SURF.BUNKER && !out.includes('SW')) out.unshift('SW');
   return out.slice(0, 3);
+}
+
+// Height of the highest ground within ~2.5 m above the ball's ground (a deep bunker's rim).
+function rimAbove(t, pos) {
+  const z = t.heightAt(pos.x, pos.y);
+  let top = z;
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * 2 * Math.PI;
+    for (const r of [1.5, 2.5, 3.5]) top = Math.max(top, t.heightAt(pos.x + r * Math.cos(a), pos.y + r * Math.sin(a)));
+  }
+  return top - z;
 }
 
 function planFull(game, rng) {
@@ -15263,6 +15824,30 @@ function planFull(game, rng) {
         for (const off of LAYUP_FAN) {
           const yaw = yaw0 + off * DEG;
           cands.push({ clubId: id, yaw, power: 1, intended: simulate(t, club, ctx.lie, fullSwing(1), yaw, pos, wind, so), shot: 'stinger' });
+        }
+      }
+    }
+  }
+  // Approaches blocked by a tree: try lines just either side (same club, power and shot).
+  for (const c of cands.slice()) {
+    if (!c.intended.events.some((e) => e.type === 'tree')) continue;
+    const club = clubById(c.clubId);
+    for (const off of AROUND) {
+      const yaw = c.yaw + off * DEG;
+      cands.push({ clubId: c.clubId, yaw, power: c.power, intended: simulate(t, club, ctx.lie, fullSwing(c.power), yaw, pos, wind, { shot: c.shot, handed: ctx.handed }), shot: c.shot });
+    }
+  }
+  // Deep in a pot: wedges and flops over a wide fan, the way out first and the distance second.
+  if (ctx.lie.surface === SURF.BUNKER && rimAbove(t, pos) >= DEEP_RIM) {
+    const yawCup = Math.atan2(cup.y - pos.y, cup.x - pos.x);
+    for (const id of ['SW', 'LW']) {
+      const club = clubById(id);
+      for (const shot of ['flop', 'normal']) {
+        if (shot !== 'normal' && !isEligible(shot, id, ctx.lie)) continue;
+        const so = { shot, handed: ctx.handed };
+        for (const off of ESCAPE_FAN) {
+          const yaw = yawCup + off * DEG;
+          for (const power of ESCAPE_POWERS) cands.push({ clubId: id, yaw, power, intended: simulate(t, club, ctx.lie, fullSwing(power), yaw, pos, wind, so), shot });
         }
       }
     }
@@ -15418,13 +16003,19 @@ const __m_main = (() => {
 // course (golf.best.v1 = {[courseId]: best}; an old single record is Hollow Pines'). Restart and
 // Play again replay the round's own course.
 //
+// Mixed rounds: the fifth card, "Mixed Nine", draws nine holes at random from all four courses
+// (courses.js mixedCourse, seeded by the round seed: two or three from each course, par 36). Each
+// hole is built with its own course (theme, conditions, wind), the intro names the course it
+// comes from, the save stores the draw, and the best mixed round is kept under 'mixed'. Restart
+// replays the same nine; Play again draws a new one.
+//
 // Special shots (section 8.4): the shot chip beside the club picker opens the shot sheet (the
 // eligible shots with their carry/total); the selection lasts one stroke. The club readout, power
 // gauge, target notch and aim preview follow it: a draw or cut shows its curved flight draped on
 // the ground (gold) ending in the landing ring, and the toast names the shot ("7i Stinger · ...").
 //
 // URL parameters
-//   ?course=ID    desert | water | links | pines: the course for new rounds (menu and autoplay)
+//   ?course=ID    desert | water | links | pines | mixed: the course for new rounds (menu and autoplay)
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
 //   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
@@ -15436,12 +16027,12 @@ const __m_main = (() => {
 // globalThis.__golf = app (debugging and tests).
 const { Game, TREE_SEED, courseFromParam, saveCourseId, mergeBest, recordBest } = __m_game;
 const { COURSE } = __m_course;
-const { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID } = __m_courses;
+const { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, mixedCourse, mixedSummary, courseName, isCourseId } = __m_courses;
 const { shotById, shotIntent } = __m_shots;
 const { buildHole } = __m_terrain;
 const { Renderer } = __m_render;
 const { CameraRig, FLYOVER_T, fovForAspect } = __m_camera;
-const { InputController, readSafeInsets, snapPower, meterPower, depthForPower, MAX_POWER } = __m_input;
+const { InputController, readSafeInsets, snapPower, meterPower, depthForPower, swingTravel, MAX_POWER } = __m_input;
 const { UI, fmtToPar } = __m_ui;
 const { AudioFX } = __m_audio;
 const { interpretSwing, swingLabel, powerForDistance } = __m_swing;
@@ -15464,7 +16055,11 @@ const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
 const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
 const FULL_SLACK = 0.03; // a target this little past full power is shown at full
-const AIM_STEP = 0.04; // the aim-point notch moves up in steps this big until its shot finishes in play
+const AIM_STEP = 0.02; // a notch whose shot is not safely in play moves in steps this big
+const AIM_SEARCH = 0.16; // ...at most this far from where it started (down as well as up)
+const PIN_SEARCH = 0.06; // (a pin notch moves at most this far: it is still the pin)
+const SCATTER_P = 0.03; // power either side of the notch that must be in play too (~2 sigma of contact)
+const SAFE_MARGIN = 3; // m: an aim-point notch's rest keeps this clear of trouble
 const CARRY_HAZARDS = new Set([SURF.WATER, SURF.OOB, SURF.BUNKER, SURF.DESERT, SURF.FESCUE]); // no landing there
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
@@ -15854,34 +16449,61 @@ function targetPower(g) {
   const zBall = t.heightAt(b.x, b.y);
   const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
   let p = powerForDistance(finish, need(t.cup), MAX_POWER);
-  if (p == null) p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1));
+  if (p != null) {
+    if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
+    if (p >= MIN_TARGET && p <= 1) p = playablePower(g, p, { margin: 0, max: 1, search: PIN_SEARCH });
+  } else p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1), { margin: SAFE_MARGIN, max: 1 });
   if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
   return p >= MIN_TARGET ? p : null;
 }
 
-// The aim point is where the hole bends, often just past a forced carry (a wash, the desert, a
-// lagoon). A notch that reaches it on the "expected finish" (carry plus most of the release) can
-// land in the carry, which gives no release: Red Mesa's 3rd sent a 64% driver into the desert
-// 7 m short of the fairway. So the notch's own shot is played on the real hole (the caddie's
-// predictShot: no scatter, with the wind and the selected shot), and when it would not land and
-// finish in play (not water, OB, sand, desert scrub or fescue) the notch moves up toward full power
-// to the first power that does, plus one AIM_STEP of margin when that is in play too (a thumb is
-// a few percent out either way). Full power is the caddie's own check of the club.
-function playablePower(g, p) {
+// The notch's own shot is played on the real hole (the caddie's predictShot: no scatter, with the
+// wind and the selected shot). The aim point is where the hole bends, often just past a forced
+// carry (a wash, the desert, a lagoon): a notch that reaches it on the "expected finish" (carry plus
+// most of the release) can land in the carry, which gives no release (Red Mesa's 3rd sent a 64%
+// driver into the desert 7 m short of the fairway); and a notch whose shot only just stays in play
+// puts an ordinary strike in trouble (Red Mesa's 8th: an on-target 3-wood rested 0.5 m from the
+// scrub, and contact scatter put it in). So a notch must be safely in play: at its power and at
+// SCATTER_P either side (about two sigma of contact) the shot lands clear of water, OB, sand, scrub
+// and fescue and rests out of them, and for an aim-point notch its rest is SAFE_MARGIN m clear of
+// them too. When it is not, the notch moves to the nearest power that is, AIM_STEP at a time, down
+// as well as up, within AIM_SEARCH (never past full power for the aim point); when nothing near is,
+// it stays (full power is the caddie's own check of the club). Pin notches get the same check with
+// no margin (a pin tucked by a bunker is still the target), and at most a few steps.
+function playablePower(g, p, { margin = SAFE_MARGIN, max = 1, search = AIM_SEARCH } = {}) {
   const t = g.terrain;
   const b = g.state.hole.ball;
   const opts = { shot: g.shotType, handed: app.ui.getSetting('handed') };
-  const inPlay = (q) => {
-    const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
-    return isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y)));
+  const memo = new Map();
+  const clear = (x, y) => {
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      if (CARRY_HAZARDS.has(t.surfaceAt(x + margin * Math.cos(a), y + margin * Math.sin(a)))) return false;
+    }
+    return true;
   };
-  if (p >= 1 || inPlay(p)) return p;
-  for (let q = p + AIM_STEP; q < 1; q += AIM_STEP) {
-    if (!inPlay(q)) continue;
-    const m = Math.min(1, q + AIM_STEP);
-    return inPlay(m) ? m : q;
+  const inPlay = (q) => {
+    const key = Math.round(q * 1000);
+    if (!memo.has(key)) {
+      const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
+      const ok = isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y))) && (margin <= 0 || clear(r.final.x, r.final.y));
+      memo.set(key, ok);
+    }
+    return memo.get(key);
+  };
+  const safe = (q) => inPlay(q) && inPlay(Math.max(0.05, q - SCATTER_P)) && inPlay(Math.min(MAX_POWER, q + SCATTER_P));
+  if (safe(p)) return p;
+  const lo = Math.max(MIN_TARGET, p - search);
+  const hi = Math.min(max, p + search);
+  for (let d = AIM_STEP; d <= search + 1e-9; d += AIM_STEP) {
+    // Nearest first; on a tie the longer one (short of the target is where forced carries bite).
+    if (p + d <= hi && safe(p + d)) return p + d;
+    if (p - d >= lo && safe(p - d)) return p - d;
   }
-  return 1;
+  // Nothing safely in play near: at least a power whose own shot is in play (the old rule).
+  if (inPlay(p)) return p;
+  for (let q = p + AIM_STEP; q <= hi; q += AIM_STEP) if (inPlay(q)) return q;
+  return max >= 1 && margin > 0 ? 1 : p;
 }
 
 function syncControls() {
@@ -15954,9 +16576,13 @@ function setView(v) {
   updateInputMode();
 }
 
+// The intro's course line: the course name, or in a mixed round the hole's own course and its
+// number there ("Red Mesa · No. 7").
 function showIntroCard(g) {
   const t = g.terrain;
-  app.ui.showIntro({ hole: t.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si, course: g.course.name });
+  const info = g.holeInfo();
+  const course = info.mixed ? `${info.holeCourseName} · No. ${info.holeN}` : g.course.name;
+  app.ui.showIntro({ hole: info.n, name: t.name, par: t.par, lengthM: t.lengthM, si: t.si, course });
 }
 
 function enterAddress() {
@@ -16048,13 +16674,14 @@ function unbindGame() {
   app.trail.count = 0;
 }
 
-// A new round on a course (the menu's choice; Restart and Play again pass the round's own).
-function newRound(courseId = app.courseId) {
+// A new round on a course (the menu's choice; Restart and Play again pass the round's own). A
+// mixed round draws its nine from the round seed, or replays a given draw (picks: Restart).
+function newRound(courseId = app.courseId, picks = null) {
   closeDialogs();
   app.ui.hideMenu();
   app.ui.hidePause();
   const seed = SEED ?? ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
-  const course = courseById(courseId);
+  const course = courseId === MIXED_ID ? mixedCourse(seed, picks) : courseById(courseId);
   const game = new Game({ course, seed, settings: gameSettings(), buildHole: cachedBuildHole });
   bindGame(game);
   game.loadHole(START_HOLE);
@@ -16103,12 +16730,12 @@ function showMenu() {
   let resumeSub = '';
   if (save && save.game) {
     const hole = (save.game.holeIndex ?? 0) + 1;
-    resumeSub = `${courseById(saveCourseId(save)).name} · Hole ${hole}`;
+    resumeSub = `${courseName(saveCourseId(save))} · Hole ${hole}`;
   }
   app.ui.showHud(false);
   app.ui.showMenu({
     canResume: !!save,
-    courses: COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })),
+    courses: [...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })), { ...mixedSummary(), best: best[MIXED_ID] || null }],
     selected: app.courseId,
     resumeSub,
   });
@@ -16117,22 +16744,30 @@ function showMenu() {
 
 // Course card picked: remember it and fly the backdrop over its first hole.
 function selectCourse(id) {
-  app.courseId = courseById(id).id;
+  app.courseId = isCourseId(id) ? id : courseById(id).id;
   saveCourseChoice(app.courseId);
   setBackdrop(app.courseId);
 }
 
-// Menu backdrop: the chosen course's first hole (built a moment after the tap has painted).
+// Menu backdrop: the chosen course's first hole (built a moment after the tap has painted); for
+// the mixed round, the first hole of a fixed sample draw.
+function backdropHole(courseId) {
+  const course = courseId === MIXED_ID ? mixedCourse(1) : courseById(courseId);
+  const i = course.mixed ? 0 : START_HOLE;
+  return { def: course.holes[i], course: course.mixed ? course.holeCourses[i] : course };
+}
+
 function setBackdrop(courseId) {
   if (app.renderer.isNull || app.game) return;
-  const course = courseById(courseId);
-  if (app.backdropCourse === course.id) return;
-  app.backdropCourse = course.id;
+  const id = isCourseId(courseId) ? courseId : DEFAULT_COURSE_ID;
+  if (app.backdropCourse === id) return;
+  app.backdropCourse = id;
   clearTimeout(app.backdropT);
   app.backdropT = setTimeout(() => {
-    if (app.game || app.backdropCourse !== course.id) return;
+    if (app.game || app.backdropCourse !== id) return;
     try {
-      const t = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
+      const { def, course } = backdropHole(id);
+      const t = cachedBuildHole(def, { pinIndex: 0, seed: TREE_SEED, course });
       app.holeTerrain = t;
       app.renderer.setHole(t);
     } catch (err) {
@@ -16221,7 +16856,7 @@ function onPhase(phase, prev) {
 function prebuildNext(g) {
   if (app.game !== g || g.phase !== 'scorecard') return;
   const i = g.state.holeIndex + 1;
-  if (i < g.course.holes.length) cachedBuildHole(g.course.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED, course: g.course });
+  if (i < g.course.holes.length) cachedBuildHole(g.course.holes[i], { pinIndex: g.state.pins[i], seed: TREE_SEED, course: g.courseOf(i) });
 }
 
 function onShotEvent(ev) {
@@ -16817,9 +17452,12 @@ function installDebugHooks() {
       const p = app.input.padRect;
       return { x: r.left + p.x, y: r.top + p.y, w: p.w, h: p.h };
     },
-    // Backswing depth (CSS px) for a swing power on the current pad (e2e swipe helpers).
-    depthForPower(power, kind = 'full') {
-      return depthForPower(power, app.input.padRefH, kind);
+    // Backswing depth (CSS px) for a swing power on the current pad (e2e swipe helpers). y0: the
+    // touchdown y in page px (a swing started low in the pad has a shorter travel: swingTravel).
+    depthForPower(power, kind = 'full', y0 = null) {
+      const r = app.renderer.canvas ? app.renderer.canvas.getBoundingClientRect() : { top: 0 };
+      const travel = y0 == null ? null : swingTravel(app.input.padRefH, kind, y0 - r.top, app.input.padRect);
+      return depthForPower(power, app.input.padRefH, kind, travel);
     },
     state() {
       const g = app.game;
@@ -16832,6 +17470,9 @@ function installDebugHooks() {
         putt: g.isPutt,
         card: g.state.card.holes.map((h) => h.strokes),
         courseId: g.course.id,
+        holeCourseId: g.courseOf().id,
+        theme: g.terrain ? g.terrain.theme : null,
+        mix: g.state.mix,
         shotType: g.shotType,
       };
     },
@@ -16869,11 +17510,12 @@ function boot() {
   app.courseId = COURSE_PARAM || loadCourseChoice() || DEFAULT_COURSE_ID;
   if (TEST) installDebugHooks();
 
-  // From the menu: the picked course; Play again (final card) and Restart: the round's own.
+  // From the menu: the picked course; Play again (final card) and Restart: the round's own (a
+  // mixed round: Restart keeps its nine holes, Play again draws a new nine).
   const replayCourse = () => newRound(app.game ? app.game.course.id : app.courseId);
   ui.on('new-round', replayCourse);
   ui.on('resume', resumeGame);
-  ui.on('restart', replayCourse);
+  ui.on('restart', () => newRound(app.game ? app.game.course.id : app.courseId, app.game && app.game.course.mixed ? app.game.course.picks : null));
   ui.on('course', selectCourse);
   ui.on('shots', openShots);
   ui.on('shot', pickShot);
@@ -16936,9 +17578,9 @@ function boot() {
     setTimeout(() => {
       try {
         if (!app.renderer.isNull) {
-          const course = courseById(app.courseId);
-          app.backdropCourse = course.id;
-          app.holeTerrain = cachedBuildHole(course.holes[START_HOLE], { pinIndex: 0, seed: TREE_SEED, course });
+          const { def, course } = backdropHole(app.courseId);
+          app.backdropCourse = app.courseId;
+          app.holeTerrain = cachedBuildHole(def, { pinIndex: 0, seed: TREE_SEED, course });
           app.renderer.setHole(app.holeTerrain);
         }
       } catch (err) {

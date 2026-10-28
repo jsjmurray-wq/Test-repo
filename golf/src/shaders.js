@@ -174,16 +174,25 @@ void main() {
     far = 0.012 + 0.05 * m;
     float n1 = ridge(u, 7.0, 0.37);
     float n2 = ridge(u, 17.0, 0.63);
-    float butte = smoothstep(0.505, 0.512, n1);
-    float tier = smoothstep(0.545, 0.552, n2) * butte;
+    // Cliffs steep but not plumb (a slight taper), an uneven caprock with notches, a stepped tier.
+    float butte = smoothstep(0.503, 0.516, n1);
+    float tier = smoothstep(0.545, 0.556, n2) * butte;
+    float cap = 0.0022 * (ridge(u, 61.0, 0.5) - 0.5) + 0.0016 * (ridge(u, 149.0, 0.21) - 0.5) - 0.0028 * smoothstep(0.78, 0.86, ridge(u, 37.0, 0.44));
     float talus = smoothstep(0.38, 0.505, n1);
     float base = 0.003 + 0.016 * talus * talus * (3.0 - 2.0 * talus);
-    near = max(base, butte * (0.03 + 0.009 * tier + 0.0012 * ridge(u, 61.0, 0.5)));
-    // Talus slopes darker (shadow, scrub), sheer red cliffs above with faint strata, a paler cap.
+    near = max(base, sqrt(butte) * (0.036 + 0.01 * tier + cap));
+    // Talus slopes darker (shadow, scrub), red cliffs above with faint strata, a paler cap. The
+    // flanks are lit or in shade by which way they face the sun (the side where the butte rises
+    // with u faces clockwise of the view).
     float cliff = smoothstep(base + 0.0006, base + 0.0016, e);
     float band = smoothstep(0.3, 0.7, fract(e / 0.0042 + 0.3 * ridge(u, 23.0, 0.9)));
-    nearTone = mix(vec3(0.62, 0.6, 0.66), vec3(1.0, 0.97, 0.94) * (0.93 + 0.1 * band), cliff);
-    nearTone *= 1.0 + 0.12 * smoothstep(near - 0.0012, near - 0.0002, e);
+    float g = ridge(u + 0.0012, 7.0, 0.37) - ridge(u - 0.0012, 7.0, 0.37);
+    float flank = clamp(abs(g) * 160.0, 0.0, 1.0) * (1.0 - smoothstep(0.85, 1.0, butte));
+    vec2 vd = normalize(d.xy + vec2(1e-6, 0.0));
+    vec2 fn = normalize(-vd + sign(g) * flank * 1.6 * vec2(vd.y, -vd.x));
+    float lit = clamp(dot(fn, normalize(uSun.xy + vec2(1e-6, 0.0))) * 0.5 + 0.5, 0.0, 1.0);
+    nearTone = mix(vec3(0.62, 0.6, 0.66), vec3(1.04, 0.96, 0.9) * (0.93 + 0.1 * band) * mix(0.66, 1.12, lit), cliff);
+    nearTone *= 1.0 + 0.16 * smoothstep(near - 0.0012, near - 0.0002, e);
   } else {
     // Dunes: low, smooth swells.
     far = 0.006 + 0.014 * ridge(u, 3.0, 0.31);
@@ -308,7 +317,7 @@ vec3 groundDetail(vec3 alb, vec4 dm, float dist, vec4 nz, vec4 nzf) {
     // Revetted face: stacked sod layers about 11 cm thick.
     float layer = fract(vZ / 0.11 + nzf.r * 0.3);
     float seam = smoothstep(0.0, 0.14, layer) * (1.0 - smoothstep(0.84, 1.0, layer));
-    vec3 sod = toLin(uRevet) * (0.5 + 0.55 * seam) * (0.85 + 0.3 * nzf.g);
+    vec3 sod = toLin(uRevet) * (0.62 + 0.45 * seam) * (0.85 + 0.3 * nzf.g);
     alb = mix(alb, sod, clamp(dm.a, 0.0, 1.0));
   }
   return alb;

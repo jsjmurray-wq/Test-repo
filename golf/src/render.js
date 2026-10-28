@@ -46,7 +46,7 @@ const OBJ_KINDS = [
 ];
 const HORIZON_KIND = { hills: 0, mountains: 1, mesas: 2, dunes: 3 };
 // Haze mixed into the far and near horizon silhouettes (the shipped 0.86 / 0.78 for hills).
-const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.3], dunes: [0.84, 0.72] };
+const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.17], dunes: [0.84, 0.72] };
 
 const ZERO = { x: 0, y: 0, z: 0 };
 

@@ -107,11 +107,13 @@ const DESERT = {
   fog: { color: null, density: 1 / 1800, aerial: 0.5, highClear: true },
   ambient: { sky: [0.22, 0.24, 0.3], ground: [0.13, 0.09, 0.06] },
   surfaceColors: surfaceColors({
-    [SURF.TEE]: [0.26, 0.6, 0.22],
-    [SURF.FAIRWAY]: [0.26, 0.62, 0.22],
-    [SURF.ROUGH]: [0.34, 0.48, 0.2],
-    [SURF.FRINGE]: [0.27, 0.62, 0.24],
-    [SURF.GREEN]: [0.3, 0.68, 0.27],
+    // (Watered turf in the desert: a deep, slightly olive green, not neon; the green a cooler,
+    // bluer green of its own so it stands out from the fairway.)
+    [SURF.TEE]: [0.27, 0.5, 0.2],
+    [SURF.FAIRWAY]: [0.28, 0.52, 0.19],
+    [SURF.ROUGH]: [0.36, 0.45, 0.21],
+    [SURF.FRINGE]: [0.26, 0.52, 0.23],
+    [SURF.GREEN]: [0.22, 0.56, 0.3],
     [SURF.BUNKER]: [0.93, 0.87, 0.72],
     [SURF.WATER]: [0.14, 0.38, 0.42],
     [SURF.OOB]: [0.64, 0.52, 0.41],
@@ -126,7 +128,7 @@ const DESERT = {
   land: 'mesas',
   seaAz: [0],
   seaHalf: 70,
-  ridges: { far: [0.24, 0.22, 0.38], near: [0.42, 0.15, 0.05] },
+  ridges: { far: [0.24, 0.22, 0.38], near: [0.46, 0.13, 0.035] }, // (warm red-orange rock, lightly hazed: render.js RIDGE_HAZE)
   skirt: { near: [0.63, 0.5, 0.4], far: [0.6, 0.47, 0.38], detail: [1, 0, 0, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { saguaro: 0.3, shrub: 0.55, rock: 0.15 }, perVertex: 0.8, grass: 0 },
   tints: {
@@ -205,7 +207,7 @@ const LINKS = {
     [SURF.WASTE]: [0.78, 0.72, 0.56],
     [SURF.FESCUE]: [0.7, 0.62, 0.38],
   }),
-  revet: [0.17, 0.22, 0.1],
+  revet: [0.3, 0.34, 0.17], // (lit stacked turf: the darker 0.17/0.22/0.1 read as a black pit)
   detail: { rake: 0.4, pebbles: 0.5, sheen: 1 },
   water: { deep: [0.01, 0.035, 0.05], shallow: [0.62, 0.58, 0.46], sea: true, tint: [0.22, 0.36, 0.38], clarity: 1.5, haze: 0.45, rough: 0.3 },
   horizon: 'ocean',

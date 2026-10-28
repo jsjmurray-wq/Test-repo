@@ -17,6 +17,7 @@ and the saved round remembers its course.
 | **Red Mesa** | Target golf through the high desert: forced carries over washes and arroyos, waste areas, saguaros, red buttes on the horizon | Firm (more bounce and roll), quick 11 ft greens. Desert scrub is a tough lie with erratic bounces | Trailhead, Canyon, Long Arroyo, Sidewinder, Coyote (drivable), Sundial, Red Rock, Sidewash, Oasis |
 | **Coral Cay** | Lagoons and the ocean: an island green, a split fairway, a peninsula green and a spit out into the surf; palms and white beaches | Soft and lush, 10.5 ft greens. Beaches play as waste sand (no penalty) | Palm Walk, The Fork, The Island, Mangroves, Peninsula, Shell Beach, Breakers, Reef Run, Sunset |
 | **Kittiwake Links** | Seaside links: dunes, deep revetted pot bunkers, a burn, gorse, a blind drive and a Valley of Sin | Very firm and fast-running, slower 9.5 ft greens, 3 m/s windier than the wind setting (unless wind is off). Fescue beyond the rough stops the ball dead and is hard to escape | Kittiwake, Sandhills, Postage, Hell, Burnside, Whins, Haar, Strand, Home |
+| **Mixed Nine** | Nine random holes drawn from all four courses: two or three from each, par 36, a new draw every round (Restart replays the same nine) | Each hole plays with its own course's look, turf, greens and wind; the intro and the scorecard name the course each hole comes from | Random |
 
 ## Controls
 
@@ -87,7 +88,7 @@ npm run icons     # regenerate icons/icon-180.png and icon-512.png (needs Playwr
 
 ES modules need HTTP, so open `http://localhost:8081/` rather than `index.html` from disk; the
 single-file build in `dist/golf.html` works from anywhere. URL options: `?course=ID` (`pines`,
-`desert`, `water` or `links`: the course for new rounds), `?hole=N` (start a round at hole N),
+`desert`, `water`, `links` or `mixed`: the course for new rounds), `?hole=N` (start a round at hole N),
 `?autoplay=1` (the bot plays the round), `?fast=N` (playback speed), `?seed=N`, `?quality=low`,
 `?debug=1` (fps and draw-call overlay), `?nogl=1` (logic without WebGL), `?test=1` (e2e hooks).
 

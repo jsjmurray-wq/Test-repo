@@ -313,10 +313,11 @@ export function swingSetPoint(samples, dial = true) {
 
 // Live swing state from the samples so far. The touchdown y is the start; depth is how far below
 // it the finger is now, maxDepth the set point's depth (the bottom of the backswing, dialled back
-// by a slow move up on a full swing: swingSetPoint). Power follows the set point, so the gauge holds the backswing
-// while the finger swings up and follows a slow ease back. phase: 'back' while the finger is still
-// at (or near) the set point, 'down' once it climbs away. full: in the full-power detent. padRect:
-// the pad, for the travel of a swing started low in it (swingTravel); travel is returned.
+// by a slow move up on a full swing: swingSetPoint). Power follows the set point, so the gauge
+// holds the backswing while the finger swings up and follows a slow ease back. phase: 'back' while
+// the finger is still at (or near) the set point, 'down' once it climbs away. full: in the
+// full-power detent. padRect: the pad, for the travel of a swing started low in it (swingTravel);
+// travel is returned.
 export function swingProgress(samples, padRefH, kind = 'full', padRect = null) {
   if (!samples || samples.length === 0) return { depth: 0, maxDepth: 0, raw: 0, power: 0, overswing: false, full: false, phase: 'back', travel: fullPowerPx(padRefH, kind) };
   const y0 = samples[0].y;
