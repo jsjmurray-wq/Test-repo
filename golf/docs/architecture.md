@@ -338,7 +338,8 @@ interpretSwing(samples, {padRefH, kind:'full'|'putt', difficulty:'easy'|'normal'
    tempo:'smooth'|'rushed'|'decel', label}
 ```
 
-**Full swing**
+**Full swing** (version 1; the power travel, detent, strike recognition and tempo are replaced by
+§8.1 and its "as built" notes)
 
 - Touchdown at y0 defines the impact line.
 - Dragging down sets `power = clamp(depth / (0.32·padRefH), 0, 1.1)`; anything above 1 is
@@ -437,9 +438,10 @@ startDirDeg}, lie, club)` returns a copy with the factors and `dirOffset` applie
 The greenside explosion (wedge, bunker, `greenDist ≤ 40`) **replaces** the generic bunker factors;
 the wood penalties multiply on top of them. Also `greenEdgeDist(green, x, y)`, `isExplosion(lie, club)`.
 
-**Swing** — `interpretSwing(samples, {padRefH, kind, difficulty, handed, club?})` uses input.js's
-`FULL_POWER_FRAC`/`PUTT_POWER_FRAC`/`MAX_POWER` and the deepest point of the trace, exactly like the
-live gauge. Result extras: `kind`, and for full swings `alpha`/`kappa` (raw deg) and `downswingS`.
+**Swing** — `interpretSwing(samples, {padRefH, kind, difficulty, handed, club?, target?, padRect?})`
+uses input.js's `powerFromDepth` (§8.1) and the deepest point of the trace, exactly like the live
+gauge. Result extras: `kind`, and for full swings `strike`, `alpha`/`kappa` (raw deg), `downswingS`
+and `upSpeed`. (The strike and tempo bullets below are version 1; see §8.1 as built.)
 `face`/`path` use the club's D-plane k when `club` is given, else 0.8 (`swingToLaunch` re-splits
 with the real club, so the launch's start direction equals `startDir` plus scatter).
 - The downswing starts at the last sample at the bottom of the final upward run (3 px jitter
@@ -650,9 +652,9 @@ export class CameraRig {
   flight/holed/flyover are hard cuts.
 - **Input modes:** `full`/`putt` by club, `read`, `map`, `intro` (intro and flyover), `watch`
   (flight fast-forward, holed → scorecard), `disabled` otherwise (menus, dialogs, pause).
-- **Swing:** `interpretSwing(samples, {padRefH: input.padRefH, kind, difficulty, handed, club})`;
-  a failed swing shows a hint ("Too slow · swipe up faster", "Swing cancelled") and is not a
-  stroke. The live arc readout is `game.carryForPower(power)` (carry, or flat roll for putts), and
+- **Swing:** `interpretSwing(samples, {padRefH: input.padRefH, kind, difficulty, handed, club,
+  target, padRect})`; a failed swing shows a toast ("Swing cancelled — swipe up to hit"; putts the
+  "Putt cancelled" hint) and is not a stroke. The tap meter and the target notch: §8.1 as built. The live arc readout is `game.carryForPower(power)` (carry, or flat roll for putts), and
   the aim ring follows it. The power curve is warmed on every address so the first gauge move
   does not hitch.
 - **Scene:** the pin is out for putts (address, flight, holed and scorecard after a holed putt),
@@ -701,11 +703,13 @@ input.resize(); input.destroy()
 ```
 
 - **full / putt:** a press inside `padRect` records a swing: `onSwingStart({x,y})`, then on every
-  move `onSwingProgress({depth, maxDepth, power, overswing, phase:'back'|'down'})` (power =
-  maxDepth / (0.32 or 0.30 · padRefH), capped at 1.1, held at the backswing peak during the
+  move `onSwingProgress({depth, maxDepth, raw, power, overswing, full, phase:'back'|'down'})` (power
+  = `powerFromDepth(maxDepth, padRefH, kind)`, §8.1, held at the backswing peak during the
   downswing), and on release `onSwing(samples)` (`[{t ms, x, y}]`, coalesced events included,
-  pointerdown to pointerup). `pointercancel` or a mode change mid-swing calls `onSwingCancel()`.
-  Input never decides strike/cancel; `interpretSwing` does.
+  pointerdown to pointerup). `onSwingCancel(reason)`: `'pointercancel'`, `'dragOut'` (§8.1),
+  `'mode'`/`'style'` (mode or swing style changed mid-swing). Apart from the live drag-out, input
+  never decides strike/cancel; `interpretSwing` does. With `input.swingStyle = 'tap'` a pad press
+  calls `onPadTap({x, y, t})` instead (§8.1 tap meter).
 - A press above/outside the pad aims: `onAim(dyaw)` per move. Dragging right turns the aim
   clockwise (dyaw < 0); ~0.13°/px, up to 3× for fast drags.
 - **read:** drag → `onOrbit(dyaw)` (drag right → dyaw < 0). **map:** tap → `onTap(sx, sy)` (CSS px,
@@ -713,7 +717,7 @@ input.resize(); input.destroy()
   `onSkip()` (use 'watch' during flight to fast-forward), ignored for `SKIP_GUARD_MS` = 350 ms after
   entering the mode (the second tap of a double tap on a closing overlay button). Only the first
   pointer is tracked.
-- **Pad rect:** portrait/square = lower 40% of the canvas above the bottom safe inset, full width;
+- **Pad rect:** portrait/square = lower 45% (version 2; was 40%) of the canvas above the bottom safe inset, full width;
   landscape = right 40% of the width, lower 72% of the height (deviation from "lower 40%": a 40%
   strip of a 390 px tall screen leaves too little backswing travel). Safe insets come from the CSS
   tokens `--sat/--sar/--sab/--sal`.
@@ -734,7 +738,8 @@ input.resize(); input.destroy()
   lieSurface?, windSpeed, windRelAngle, units?})` (partial merge; distances in **metres**, wind in
   m/s; `windRelAngle` = wind travel direction minus camera yaw, CCW +, 0 = arrow up/helping;
   `playsLike: null` hides it). `setClub({name, carry, total, sub?})` (metres).
-  `setPower({power, overswing, carryText} | null)`. `setHint(text|null)`.
+  `setPower({power, overswing, full?, carryText, target?} | null)`, `setTarget(power|null)` (§8.1).
+  `setHint(text|null)`.
   `setControls({phase, putt, canRead, read, map, puttRange})` — club picker, tools and swing pad
   are shown only for `phase === 'address'`. `showIntro({hole, name, par, lengthM, si})`,
   `hideIntro()`. `toast(text, ms)` (`'7 Iron · Carry 158 yd · Total 164 yd'`; the first segment is
@@ -747,7 +752,8 @@ input.resize(); input.destroy()
   -> Promise<id>`; the first option is the primary default.
 - Settings: `ui.settings` (copy), `getSetting(k)`, `setSetting(k, v)`, `onChange(fn)`;
   `{units:'yd'|'m', wind:'off'|'light'|'breezy', difficulty:'easy'|'normal'|'pro', handed:'R'|'L',
-  sound:bool, quality:'auto'|'low'}` in `localStorage['golf.settings.v1']` (try/catch).
+  sound:bool, quality:'auto'|'low', swing:'swipe'|'tap'}` in `localStorage['golf.settings.v1']`
+  (try/catch).
 - `ui.padRect` / `ui.setPadRect(r)`: the HUD positions the power arc and club picker from the same
   `padRectFor` as input.js; main may pass `input.padRect` to be explicit.
 
@@ -812,6 +818,78 @@ Players reported two problems on a real phone:
 - Direction and curve are 0. Contact scatter still applies.
 - `interpretSwing` is not used. `main.js` builds `{ok:true, kind, power, startDir:0, faceToPath:0, tempo:'smooth', label:'Tap swing'}`.
 - Putting works the same way with the putt range.
+
+#### 8.1 as built (swing ease)
+
+- **Power travel** (`input.js`): `fullPowerPx(padH, kind = 'full')` = clamp(0.55·padH, 140, 220) px;
+  putts clamp(0.5·padH, 110, 200) px (about 202 px / 184 px on an iPhone 15 in portrait, 147 px in
+  landscape). `powerFromRaw(raw, kind)`, `powerFromDepth(depth, padH, kind)` and its inverse
+  `depthForPower(power, padH, kind)` are shared by `swingProgress`, `interpretSwing` and the tap
+  meter. Full swings (raw = depth / fullPowerPx): power = raw up to 0.8 (25/50/75% of the travel is
+  25/50/75% power: the ticks are where the thumb is), a slightly steeper ramp to 1.0 at raw 0.95,
+  **exactly 1.0 from 0.95 to 1.12** (the detent: 0.95–1.06 proper plus a margin, since any power
+  above 1 is an overswing in `swingToLaunch`), then 1 + (raw − 1.12), capped at 1.1 (raw 1.22).
+  Continuous and monotone. Putts are linear (no detent: pace needs every pixel), capped at 1.1.
+- **Pad:** portrait/square = lower 45% (`padRectFor`); landscape unchanged (right 40% × lower 72%).
+  The club and putt-range pickers stay on the pad's bottom edge, below the arc: they are DOM buttons
+  above the canvas, so a press on them never starts a swing, and pointer capture lets a backswing
+  run over them.
+- **Gauge** (`ui.js`): ticks at 25/50/75/100%. `setPower({power, overswing, full?, carryText,
+  target?})`: `full` lights the 100% tick green ("Full · 100%"). `ui.setTarget(power|null)` places
+  the gold target notch (also shown, dimmed, while idle); within ±`TARGET_GLOW` (3%) of it the notch
+  turns white-hot and the readout says "On target · N%". On Easy, `snapPower(power, target,
+  difficulty)` (±`EASY_SNAP` = 5%) is applied by the live gauge, by `interpretSwing(…, {target})`
+  and by the tap meter alike.
+- **Target** (`main.js` `targetPower`, recomputed in `refreshClub`: new lie, club, putt range,
+  settings): the "expected finish" (carry + `RELEASE_K` × release, the caddie's own measure) of
+  `game.carryForPower` (the caddie power curve, with the wind), inverted by
+  `powerForDistance(distAt, dist, maxPower = 1)` (`swing.js`, bisection; null when out of reach).
+  The distance is the horizontal distance plus Δz / tan(the club's descent angle), as in plays-like.
+  The pin first, up to 1.1 (a notch in the red zone says the pin needs an overswing or more club;
+  up to 3% over full reads as full); when the pin is out of reach even then, the course aim point,
+  never more than full power. Putts: (distance + 0.35 m) / putt range (the pace that dies a foot
+  past on the flat). No notch for a tap-in (< 4%).
+- **Strike recognition** (`interpretSwing`, full swings): after the deepest point, strike
+  `'climb'` when the highest point reached is at least max(`STRIKE_CLIMB_PX` = 24,
+  `STRIKE_CLIMB_FRAC` = 0.25 × depth) above the bottom of its upward run **and** the release is still
+  at least half of that above the bottom (a waggle that ends back at the bottom is not a swing);
+  else strike `'release'` when lifted while moving up at ≥ `RELEASE_SPEED` = 150 px/s over the last
+  `RELEASE_WINDOW_MS` = 80 ms (the window starts no earlier than the move up, so a pause does not
+  dilute it; it needs ≥ 10 px of climb, so jitter cannot fake it). Anything else is `reason
+  'cancel'` (main: toast "Swing cancelled — swipe up to hit"). The touchdown line is never needed;
+  `'tooSlow'` is no longer produced. Clarification of "cancel only on release at the bottom with no
+  upward movement": a small climb under the threshold that has stopped before the lift also
+  cancels (it is neither a clear upswing nor a flick). On synthetic iPhone traces (60/120 Hz,
+  timing and position jitter, coalesced and dropped events, no events while still) a 12 000-swipe
+  fuzz strikes 99.6% of human swings (the misses are 50 ms flicks whose only frames were dropped)
+  and none of 12 000 hold-and-lifts; `tests/swing.test.js` runs 300 + 300 of them.
+- **Tempo:** `'decel'` when the first threshold's worth of the climb averaged under
+  `STRIKE_SPEED` = 120 px/s (a slow return, or creeping up before a flick); `'rushed'` when
+  power × `TEMPO_REF_PX` (150) / v < `RUSHED_FRAC` × (0.10 + 0.15·power) s, v being the climb to the
+  touchdown line (or to the top of the upswing) over the time since the finger left the bottom
+  (about 3300 px/s at full power, 2400 at half); else `'smooth'`. The version 1 "over 2× the ideal
+  is decel" rule is dropped: a deliberate 200–300 px/s upswing is a normal swing. `DECEL_SPEED` is
+  now 0.95 (was 0.92; the `swingToLaunch` code itself is unchanged).
+- **Cancels:** `draggedOut(samples, padRect)` = more than `SIDE_OUT_PX` = 90 px beyond the pad's
+  left or right edge while the finger is still at or near its lowest point (the backswing); a wide
+  follow-through is fine. input.js applies it live (`onSwingCancel('dragOut')`, the rest of the
+  touch is ignored) and `interpretSwing` with `opts.padRect`. The portrait pad spans the screen, so
+  it only triggers in landscape. `pointercancel` → `onSwingCancel('pointercancel')` (toast "Swing
+  cancelled"). `lostpointercapture` no longer cancels: move/up/cancel are heard on `window`, so a
+  lost capture can neither drop nor strand a swing.
+- **Tap meter:** `settings.swing` (`'swipe'` default | `'tap'`; Settings "Swing control: Swipe / Tap
+  meter"; persisted). `input.swingStyle` mirrors it; in tap style a pad press calls
+  `onPadTap({x, y, t})` at once (t = event time, so timing does not depend on the frame rate).
+  `meterRaw(elapsedS, kind)` / `meterPower(elapsedS, kind)`: the power fills 0 → 1.1 over
+  `METER_FILL_S` = 1.4 s through `powerFromRaw` (so it hangs about 0.2 s in the full-power detent),
+  falls back the same way and is abandoned after 2.8 s ("Too late · tap to start again"). The second
+  tap builds `{ok:true, kind, power, overswing, startDir:0, faceToPath:0, face:0, path:0,
+  tempo:'smooth', tempoErr:0, label:'Tap swing'}` for `game.swing`. A club or view change, pause,
+  phase change or switching the setting abandons the meter. Hints: "Tap to start · tap again to hit"
+  ("… to putt").
+- Tests and e2e: `app.debug.depthForPower(power, kind)`; the e2e plays the hole 1 tee shot with a
+  short flick that stops well short of the start point (builds without that hook, e.g. a stale
+  `dist/`, keep the version 1 swipe), checks that hold-and-lift cancels, and plays a tap-meter shot.
 
 ### 8.2 Courses (`courses.js`, `course*.js`, `terrain.js`)
 

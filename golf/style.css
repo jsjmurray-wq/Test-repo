@@ -580,7 +580,12 @@ body[data-layout="landscape"] .card { max-width: 640px; }
 body[data-layout="landscape"] .sheet-t { font-size: 21px; }
 body[data-layout="landscape"] .btn { min-height: 44px; }
 body[data-layout="landscape"] .set-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 22px; }
-body[data-layout="landscape"] .set-row:nth-last-child(2) { border-bottom: 0; }
+/* The last grid row has no rule under it (the item before the last shares that row only when the
+   count is even, i.e. when it sits in the left column). Rows are tighter so the sheet, with the
+   swing-control row, still fits a 390 px tall screen without scrolling. */
+body[data-layout="landscape"] .set-row:nth-last-child(2):nth-child(odd) { border-bottom: 0; }
+body[data-layout="landscape"] .set-row { padding: 5px 0; }
+body[data-layout="landscape"] #settings .set-note { display: none; }
 body[data-layout="landscape"] #settings .sheet { max-width: 680px; }
 body[data-layout="landscape"] .card { padding: 12px 16px 12px; gap: 8px; }
 body[data-layout="landscape"] .card .sheet-t { font-size: 19px; }

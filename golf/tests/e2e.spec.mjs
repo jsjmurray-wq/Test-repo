@@ -106,6 +106,26 @@ async function swipeSwing(page, x, y, depth) {
   await touchPath(page, pts);
 }
 
+// Full swing the way a thumb really does it (version 2 gesture, section 8.1): down `depth` px,
+// then a short quick flick up (45% of the depth, ~65 ms) that stops well short of the start
+// point, lifted at the top of the flick.
+async function flickSwing(page, x, y, depth) {
+  const pts = [[x, y]];
+  const n = 15;
+  for (let i = 1; i <= n; i++) pts.push([x, y + (depth * i) / n, 20]);
+  pts.push([x, y + depth, 60]);
+  for (let i = 1; i <= 4; i++) pts.push([x, y + depth - (0.45 * depth * i) / 4, 16]);
+  await touchPath(page, pts);
+}
+
+// Backswing, then hold still at the bottom and lift: cancels (not a stroke).
+async function holdAndLift(page, x, y, depth) {
+  const pts = [[x, y]];
+  for (let i = 1; i <= 10; i++) pts.push([x, y + (depth * i) / 10, 25]);
+  pts.push([x, y + depth - 1, 300]);
+  await touchPath(page, pts);
+}
+
 // Putt: drag down `depth` px over 200 ms and release at the bottom.
 async function swipePutt(page, x, y, depth) {
   const pts = [[x, y]];
@@ -202,13 +222,21 @@ async function smoke(browser, base, path, vp, gl) {
   });
   check(overlap.length === 0, `HUD panels clear of the swing pad${overlap.length ? ': ' + overlap.join(', ') : ''}`);
 
-  // Tee shot: drag down then flick up in the pad.
+  // Tee shot: drag down then flick up in the pad. Builds with the version 2 gesture (they expose
+  // debug.depthForPower) get a short flick that never returns to the start point; older builds
+  // (a stale dist/) the classic swipe through it.
   const pad = await page.evaluate(() => window.__golf.debug.padRect());
+  const v2 = await page.evaluate(() => typeof window.__golf.debug.depthForPower === 'function');
   const sx = pad.x + pad.w * 0.5;
   const sy = pad.y + pad.h * 0.22;
   const depth = Math.min(200, pad.h * 0.3);
-  await swipeSwing(page, sx, sy, depth);
-  check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'swipe swings: the ball is in flight');
+  if (v2) {
+    check(await page.evaluate(() => getComputedStyle(document.querySelector('#pad .arc-target')).display !== 'none'), 'power arc shows the target notch');
+    await flickSwing(page, sx, sy, depth);
+  } else {
+    await swipeSwing(page, sx, sy, depth);
+  }
+  check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), `${v2 ? 'short flick' : 'swipe'} swings: the ball is in flight`);
   await page.waitForTimeout(350);
   await shot(page, tag, 'flight');
   const ended = await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000);
@@ -258,6 +286,37 @@ async function smoke(browser, base, path, vp, gl) {
   await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
   await waitFor(page, () => window.__golf.game.phase === 'address', 5000);
   await page.waitForTimeout(400);
+
+  if (v2) {
+    // Holding at the bottom and lifting cancels, with a hint, and is not a stroke.
+    const p2 = await page.evaluate(() => window.__golf.debug.padRect());
+    await holdAndLift(page, p2.x + p2.w * 0.5, p2.y + p2.h * 0.22, Math.min(200, p2.h * 0.3));
+    await page.waitForTimeout(400);
+    const c = await page.evaluate(() => ({ phase: window.__golf.game.phase, strokes: window.__golf.game.state.hole.strokes, toast: document.getElementById('toast').textContent }));
+    check(c.phase === 'address' && c.strokes === 0 && /Swing cancelled/.test(c.toast), `hold and lift cancels the swing (${c.phase}, ${c.strokes} strokes, "${c.toast}")`);
+
+    // Tap meter: Settings "Swing control: Tap meter"; tap to start the bar, tap again to hit.
+    await page.evaluate(() => window.__golf.ui.setSetting('swing', 'tap'));
+    const hint = await page.evaluate(() => document.querySelector('[data-f="hint"]').textContent);
+    check(/Tap to start/.test(hint), `tap meter hint ("${hint}")`);
+    const tx = p2.x + p2.w * 0.5;
+    const ty = p2.y + p2.h * 0.3;
+    await page.touchscreen.tap(tx, ty);
+    await page.waitForTimeout(700);
+    const running = await page.evaluate(() => ({ state: document.getElementById('pad').dataset.state, power: window.__golf.swingPower }));
+    check(running.state === 'swing' && running.power > 0.1, `tap meter fills (power ${running.power && running.power.toFixed(2)})`);
+    await page.touchscreen.tap(tx, ty);
+    check(await waitFor(page, () => window.__golf.game.phase === 'flight', 3000), 'second tap hits: the ball is in flight');
+    const ls = await page.evaluate(() => window.__golf.lastSwing && window.__golf.lastSwing.sw);
+    check(ls && ls.label === 'Tap swing' && ls.power > 0.3 && ls.startDir === 0, `tap swing (power ${ls && ls.power.toFixed(2)})`);
+    await page.evaluate(() => window.__golf.ui.setSetting('swing', 'swipe'));
+    check(await waitFor(page, () => ['address', 'decision'].includes(window.__golf.game.phase), 20000), 'tap shot resolved');
+    if ((await state(page)).phase === 'decision') {
+      await page.locator('#decision [data-dec="drop"]').tap();
+      await waitFor(page, () => window.__golf.game.phase === 'address', 3000);
+    }
+    await page.waitForTimeout(400);
+  }
 
   // Pause sheet opens and closes.
   await page.locator('#pause-btn').tap();

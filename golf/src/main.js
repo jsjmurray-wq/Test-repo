@@ -50,6 +50,7 @@ const PIN_ATTEND_M = 9; // m: putts longer than this keep the flagstick in (atte
 const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
 const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
+const FULL_SLACK = 0.03; // a target this little past full power is shown at full
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
 const flag = (k) => params.has(k) && params.get(k) !== '0';
@@ -375,12 +376,15 @@ function refreshClub() {
   syncControls();
 }
 
-// Power that reaches the target from here with the selected club: the pin, or the aim point when
-// the pin is out of reach at full power; null when neither is (or for a tap-in). Full swings use
-// the inverse of the caddie's power curve on the "expected finish" (carry plus most of the
-// release, as the caddie picks clubs), with the height difference over the club's descent angle
-// added like the plays-like distance (the curve already has the wind). Putts: the flat-roll pace
-// that dies PUTT_PAST_M past the cup.
+// Power that reaches the target from here with the selected club. Full swings: the pin, up to
+// MAX_POWER (a notch in the red zone says the pin needs an overswing, or more club); when even
+// that falls short, the aim point (the course's lay-up / dogleg target), where the notch never
+// asks for more than full power. The power comes from the inverse of the caddie's power curve on
+// the "expected finish" (carry plus most of the release, as the caddie picks clubs), with the
+// height difference over the club's descent angle added like the plays-like distance (the curve
+// already has the wind). A pin that needs at most FULL_SLACK more than full power reads as full
+// (the detent): a 3% overswing for a few yards would double the scatter. Putts: the flat-roll pace
+// that dies PUTT_PAST_M past the cup. null for a tap-in.
 function targetPower(g) {
   if (!g || g.phase !== 'address' || !g.terrain) return null;
   if (g.isPutt) {
@@ -396,12 +400,11 @@ function targetPower(g) {
     return d.carry + RELEASE_K * Math.max(0, d.total - d.carry);
   };
   const zBall = t.heightAt(b.x, b.y);
-  for (const target of [t.cup, t.aimPoint(b)]) {
-    const dist = Math.hypot(target.x - b.x, target.y - b.y) + (t.heightAt(target.x, target.y) - zBall) / tanDescent;
-    const p = powerForDistance(finish, dist, 1);
-    if (p != null) return p >= MIN_TARGET ? p : null;
-  }
-  return null;
+  const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
+  let p = powerForDistance(finish, need(t.cup), MAX_POWER);
+  if (p == null) p = Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1);
+  if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
+  return p >= MIN_TARGET ? p : null;
 }
 
 function syncControls() {
