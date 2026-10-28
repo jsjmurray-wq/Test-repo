@@ -62,8 +62,8 @@ metres). Wind shows in mph (or km/h).
 | `game.js` | `Game` state machine, plus `serialize()` and `static restore()` |
 | `bot.js` | `planShot(game) -> {clubId, yaw, swing, puttRange?}`, `playBotShot(game)`, `botDecide(game)`: a simulated "decent player" used by `?autoplay` and the playability tests |
 | `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
-| `meshes.js` | Geometry builders that return typed arrays |
-| `bake.js` | `bakeTerrainColor(terrain)` and `bakeClouds(seed)` |
+| `meshes.js` | Geometry builders that return typed arrays; themed objects and the sea (`seaSetup`, §8.3 as built) |
+| `bake.js` | `bakeTerrainColor(terrain, {theme})`, `bakeWaterDepth(terrain)`, `bakeClouds(seed)`, `bakeNoise(seed)` |
 
 DOM and GL modules: `gl.js`, `shaders.js`, `render.js`, `input.js`, `ui.js`, `audio.js`, `main.js`.
 
@@ -550,11 +550,13 @@ export class Renderer {
   debugPixel(sx, sy) -> [r,g,b,a]           // tests: reads back right after draw
 }
 scene = { time, cam:{eye,target,up,fovY,near,far,shiftX?}, ball:{x,y,z,visible,minPx?}, trail:{data:Float32Array([x,y,z]*), count}|null,
-          aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir? }
+          aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir?, clearView? }
 ```
 
 - GLSL 100 (works on WebGL1 and WebGL2), `highp` fragments, camera-relative positions, and
-  25 draw calls or fewer.
+  25 draw calls or fewer (version 2: 30 or fewer; the themed holes measure 11–22).
+- The look follows the hole's course theme (`terrain.theme`, §8.3 as built); `parkland` renders
+  Hollow Pines pixel for pixel as version 1.
 - Contents: sky gradient with baked clouds and horizon hills; a chunked terrain with a baked
   colour texture and mowing stripes; fog; a skirt ring to the horizon; water planes with a
   fresnel and sun glint; instanced trees; OOB stakes; tee markers; the pin with a waving flag;
@@ -1037,7 +1039,7 @@ Breezy ranges (same direction draw; Off stays calm). `holeInfo()` adds `courseId
 
 **Known gaps for other stages:** `bot.js` `expectedAt` reads `tr.canopy.rx` and crashes on canopy-null objects
 (desert); use `tr.canopy ? tr.canopy.rx : tr.trunkR`, and it should value DESERT/FESCUE rests like rough or worse.
-`main.js`'s terrain cache key (`n:pin:seed`) must include the course id. `bake.js` paints unknown surfaces as rough.
+`main.js`'s terrain cache key (`n:pin:seed`) must include the course id. (The renderer now draws the new surfaces and objects: §8.3 as built.)
 
 ### 8.3 Themes (`themes.js` data, consumed by `render.js`/`bake.js`/`shaders.js`)
 
@@ -1062,6 +1064,63 @@ colours are linear (as the shaders use them); surface and water-bed colours are 
 strength); `water.deep` is the shader's deep colour, `water.shallow` the bake's shallow-bed colour. Extra fields:
 `ridges {far, near}` (horizon silhouettes), `skirt {near, far}` (ground beyond the hole) and `tints` per object kind.
 `parkland` copies the shipped constants of `render.js`, `shaders.js` and `bake.js` (and `SURFACES` colours).
+
+#### 8.3 as built (render themes)
+
+`Renderer.setHole(terrain)` takes the look from `themeFor(terrain.theme)`, per hole (a round that mixes courses
+switches theme hole by hole); the public Renderer API is unchanged. Hollow Pines (`parkland`) renders bit-identical
+to version 1: checked pixel for pixel over 22 views (all nine holes, every camera, both orientations).
+
+**Theme fields added** (`themes.js` header is the reference; all optional for a custom theme): `clouds {cover, shift,
+grey}` (cumulus density × cover + shift; grey = overcast deck), `fog.highClear` (the far aerial haze thins with camera
+height like the fog, so a map view is not washed out; off for parkland), `revet` (sod colour of pot-bunker faces),
+`detail {rake, pebbles, sheen}`, `water {tint (sRGB colour of sunlit shallow water; null = the shipped dark pond),
+clarity (m), haze (most haze the sea takes), rough (sea swell: least view cosine, a crisp sea horizon)}`, `land`
+(silhouette on the landward side of an `'ocean'` horizon), `seaAz` (sea direction by hole number, degrees from the
+tee→green line, for holes without sea water) and `seaHalf`, `skirt {detail, scale, blend}`, `skirtObjects {kinds,
+perVertex, grass}` (null = the shipped pine/broad tree line), `trunks {palm, saguaro}`.
+
+**Looks.** desert ('mesas'): deep blue sky with few clouds, pale haze; red flat-topped buttes with talus aprons and
+strata over blue-violet ranges; a tan desert floor with iron-red and caliche patches, pebbles and scrub tufts close up;
+saguaros, creosote and boulders, also on the skirt. tropical ('ocean' + hills): deep blue sky, fair-weather cumulus;
+turquoise shallows over white sand deepening to ocean blue with distance from the shore; surf on the sea's beaches;
+palms and broadleaves (palm/broad jungle on the skirt). links ('ocean' + dunes): grey-blue overcast; tawny fescue with
+wind-combed wisps and rolling wind sheen; dune-grass tufts; gorse in flower; revetted pot bunkers; faint stripes
+(`stripe` 0.4); a steel-grey sea with surf.
+
+**Sea** (`meshes.js` `seaSetup(terrain, theme)` → `{level, dir, cosHalf, full, near, rect}` or null): every `'ocean'`
+hole and any hole with sea water has one. Level: the flood's (island and ocean holes: `full`, sea all round), else the
+sea polygon's (direction toward it), else 1.5 m under the lowest grid-edge point (direction `seaAz`; `near: false`).
+`skirtMesh(grid, {sea, dense})` drops the skirt under the sea toward it: from the grid edge when the sea is the hole's
+own water, else with a beach 60–90 m out (a sea off the course does not trace the grid's rectangle); the shelf reaches
+−90 m at 4 km; landward rings stay ≥ level + 0.8; nrm.y carries the seaward weight for the beach colour. `waterMesh(waters, pad, {sea, skirt})` puts the
+sea on the skirt's own vertices and triangles with a per-vertex depth (level − skirt height), so the surf line lands on
+the skirt's shore, plus a ring to 6 km; the hole's sea polygons and flood are clipped to the grid rectangle. The sky
+shader draws the open sea below the horizon beyond the far plane (same colour model), and the horizon silhouettes taper
+into the sea sector.
+
+**Water shader.** Themes with `water.tint`: colour = tint (lit) over the bed, deepening with depth and with distance
+from the shore (`bakeWaterDepth(terrain)`: r = depth / 6 m, g = chamfer distance to dry ground, on the 1 m grid; beyond
+the grid the distance keeps growing), alpha 0.42 (shallow) → 0.97; sea water adds rolling foam bands and a lacy fringe
+at the waterline. Parkland water is unchanged.
+
+**Ground** (`bake.js`). `bakeTerrainColor(terrain, {sunDir, seed, theme})` paints the theme's surface colours and the
+new surfaces (desert patches, waste/beach sand with a damp band at the water, tawny fescue), revetted sod on bunker walls
+steeper than gradient 0.88 on the 1 m grid (pot bunkers reach 0.8–1.3; every ordinary bunker on the four courses stays
+under 0.75), and per-kind object shadows (palm trunk and crown, saguaro column and arms, bush, rock). Its `detail` (RGBA
+mask: desert, waste, fescue, sod; null when the hole has none) drives the terrain shader's close-up texture (pebbles and
+scrub, rake lines, fescue wisps and sheen, stacked sod layers). Themed skirts (`skirt.blend`) start as the blurred colour
+of the grid edge and turn into their own ground over the first band, with `dense` edges (a vertex per grid node: no
+slits along the grid edge), so a hole has no visible border.
+
+**Objects.** One instanced program (`OBJ_VS/FS`) for palm (curved trunk with leaf-scar rings, 11 fronds with cut-out
+leaflets, hanging dead fronds; crown sway, frond flutter), saguaro (ribbed column, up to four arms by size), shrub
+(open, twiggy creosote) and gorse (dense, yellow-flecked), rock (faceted, strata and lichen), and dune grass (three
+clumps of blades from `terrain.decor`, streaming in the wind, faded out beyond 70–120 m). Instance rows are the tree
+layout `[x, y, z, h, rx, rz, r, seed]`; colours jitter per instance. Objects standing in the sight line from the
+camera to the ball and tall enough to block it dissolve (`scene.clearView: false` turns that off). Triangles: palm 354,
+saguaro 556, bush 400, rock 80, tuft 54. Measured: 11–22 draw calls and 160–520 k triangles on the themed holes
+(Hollow Pines 16–18, 320–360 k).
 
 ### 8.4 Special shots (`shots.js`; hooks in `swing.js`, `caddie.js`, `game.js`, `ui.js`, `main.js`)
 

@@ -211,9 +211,9 @@ const LINKS = {
   horizon: 'ocean',
   land: 'dunes',
   seaAz: [90, 0, -90],
-  seaHalf: 65,
+  seaHalf: 55,
   ridges: { far: [0.2, 0.24, 0.28], near: [0.3, 0.31, 0.22] },
-  skirt: { near: [0.64, 0.58, 0.36], far: [0.5, 0.5, 0.32], detail: [0, 0, 1, 0], scale: 700, blend: true },
+  skirt: { near: [0.64, 0.58, 0.36], far: [0.58, 0.55, 0.35], detail: [0, 0, 1, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { gorse: 1 }, perVertex: 0.35, grass: 3 },
   tints: {
     pine: [0.1, 0.18, 0.1], broad: [0.18, 0.26, 0.12], palm: [0.2, 0.32, 0.12], saguaro: [0.2, 0.32, 0.16],

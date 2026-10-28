@@ -134,11 +134,11 @@ export function skirtMesh(grid, { outer = 4000, every = 8, sea = null, dense = f
       const y = minY + j * step;
       const l = Math.hypot(x - cx, y - cy) || 1;
       const c = ((x - cx) * sea.dir.x + (y - cy) * sea.dir.y) / l;
-      const sector = sea.full ? 1 : smoothstep01((c - (sea.cosHalf - 0.15)) / 0.3);
+      const sector = sea.full ? 1 : smoothstep01((c - (sea.cosHalf - 0.3)) / 0.6);
       raw[k] = Math.max(sector, heights[j * nx + i] < sea.level + 0.3 ? 1 : 0);
     }
     seaW = new Float32Array(n);
-    const R = 3;
+    const R = sea.near === false ? 10 : 3;
     for (let k = 0; k < n; k++) {
       let acc = 0;
       for (let q = -R; q <= R; q++) acc += raw[(k + q + n) % n];
@@ -164,9 +164,12 @@ export function skirtMesh(grid, { outer = 4000, every = 8, sea = null, dense = f
       [cx + dx * outer, cy + dy * outer, avg + 70 + roll * 10],
     ];
     if (seaW) {
-      // Landward: never below the sea (+0.8 m). Seaward: a beach, then the shelf drops away.
+      // Landward: never below the sea (+0.8 m). Seaward: a beach, then the shelf drops away; right
+      // at the grid edge when the sea is the hole's own water, else some 60-90 m out (a sea off
+      // the course, whose coast should not trace the grid's rectangle).
       const s = seaW[k];
-      const seaZ = [z, Math.min(z, sea.level) - 3, sea.level - 25, sea.level - 90];
+      const ring1 = sea.near === false ? sea.level + 2.2 : Math.min(z, sea.level) - 3;
+      const seaZ = [z, ring1, sea.level - 25, sea.level - 90];
       for (let r = 1; r < RINGS; r++) {
         const land = Math.max(ring[r][2], sea.level + 0.8);
         ring[r][2] = land + (seaZ[r] - land) * s;
@@ -1113,7 +1116,8 @@ export function waterMesh(waters, pad = 1.6, { sea = null, skirt = null, outer =
 
 // Where the sea lies for one hole, or null when it has none: {level, dir:{x,y} (unit, from the
 // grid centre), cosHalf (sector half-angle), full (sea all round: an island hole or an ocean
-// flood), rect (the height grid's extent)}. An 'ocean' theme always has a sea: at the level of the
+// flood), near (the sea is the hole's own water, so its shore is at the grid edge), rect (the
+// height grid's extent)}. An 'ocean' theme always has a sea: at the level of the
 // hole's own sea water (toward it), else 1.5 m below the lowest point of the grid edge, in the
 // theme's direction for this hole (theme.seaAz, relative to the tee -> green line).
 export function seaSetup(terrain, theme) {
@@ -1127,7 +1131,7 @@ export function seaSetup(terrain, theme) {
   const cx = (rect.minX + rect.maxX) / 2;
   const cy = (rect.minY + rect.maxY) / 2;
   const half = ((theme && theme.seaHalf) || 70) * (Math.PI / 180);
-  if (flood && (flood.sea || ocean)) return { level: flood.level, dir: { x: 1, y: 0 }, cosHalf: -2, full: true, rect };
+  if (flood && (flood.sea || ocean)) return { level: flood.level, dir: { x: 1, y: 0 }, cosHalf: -2, full: true, near: true, rect };
   let level;
   let dx;
   let dy;
@@ -1156,7 +1160,7 @@ export function seaSetup(terrain, theme) {
     dy = hx * Math.sin(az) + hy * Math.cos(az);
   }
   const l = Math.hypot(dx, dy) || 1;
-  return { level, dir: { x: dx / l, y: dy / l }, cosHalf: Math.cos(half), full: false, rect };
+  return { level, dir: { x: dx / l, y: dy / l }, cosHalf: Math.cos(half), full: false, near: !!seaW, rect };
 }
 
 // ---------------------------------------------------------------------------------------------
