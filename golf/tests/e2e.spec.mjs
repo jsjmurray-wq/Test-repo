@@ -456,11 +456,12 @@ async function courseRound(page, tag, vpw, vph, c) {
   await page.locator(`#shots [data-shot="${c.shot}"]`).tap();
   check(await waitFor(page, (s) => document.getElementById('shots').hidden && window.__golf.game.shotType === s, 3000, c.shot), `${c.shot} selected from the sheet`);
   await page.waitForTimeout(500);
-  const pv = await page.evaluate(() => {
+  // The next frames draw it (the first one simulates the intended flight; SwiftShader frames are slow).
+  const pv = await waitFor(page, () => {
     const s = window.__golf.lastScene;
-    return { trail: !!(s && s.trail && s.trail.count > 2), ring: !!(s && s.aim && s.aim.ring) };
-  });
-  check(pv.trail && pv.ring, `${c.shot}: curved aim preview with a landing ring`);
+    return !!(s && s.trail && s.trail.count > 2 && s.aim && s.aim.ring);
+  }, 8000);
+  check(pv, `${c.shot}: curved aim preview with a landing ring`);
   await shot(page, tag, `${c.id}-${c.shot}`);
   const pad = await page.evaluate(() => window.__golf.debug.padRect());
   const p = await page.evaluate(() => Math.min(1, window.__golf.targetPower ?? 1));
@@ -470,9 +471,11 @@ async function courseRound(page, tag, vpw, vph, c) {
   const sw = await page.evaluate(() => window.__golf.game.shot.swing.shot);
   check(sw === c.shot, `the swing plays the ${c.shot} (${sw})`);
   check(await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 20000), `${c.shot} resolved`);
-  const toast = await page.evaluate(() => document.getElementById('toast').textContent);
+  // The shot toast's first segment (its bold tab) is "<club> <Shot>", e.g. "Driver Draw" or "3W Cut";
+  // a rule message (water, OB) may follow it in a toast of its own.
   const shotName = c.shot[0].toUpperCase() + c.shot.slice(1);
-  check(new RegExp(` ${shotName} ·`).test(toast), `toast names the ${c.shot} ("${toast}")`);
+  const tabs = await page.evaluate(() => [...document.querySelectorAll('#toast .toast b')].map((b) => b.textContent));
+  check(tabs.some((t) => t.endsWith(` ${shotName}`)), `toast names the ${c.shot} ("${tabs.join(' | ')}")`);
   await shot(page, tag, `${c.id}-after-${c.shot}`);
   if ((await state(page)).phase === 'decision') {
     await page.locator('#decision [data-dec="drop"]').tap();

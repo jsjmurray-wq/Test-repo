@@ -1301,14 +1301,27 @@ shots, the course picker, per-course saves and best rounds.
   driver that carried into the desert short of it. The aim-point notch is now checked on the real hole (8.1 as built,
   Target). Over 80 aim-point notches in bot rounds on all four courses (breezy) it moved 4 (Red Mesa 3rd and 8th tee
   shots, 0.65 → 0.77 and 0.68 → 0.80; a hybrid from a Kittiwake pot to full), at most 10 ms of simulation.
+- **Curved aim preview:** the draw / cut preview drapes on the water surface over lakes and the sea (it ran under the
+  water and looked broken across Coral Cay's lagoon).
 - **Menu and card yardage:** `courseSummary` sums the per-hole lengths rounded to the metre, like `newCard`, so the
   course card and the scorecard's Out total agree (Hollow Pines 3,315 yd on both).
 - **HUD:** in putt mode (portrait and square) the result toast sits left-aligned under the info card and stops short of
   the tool buttons (Read / Map / Flyover reach down past it), wrapping instead of running under them.
 - **Course report:** `npm run course [id]` reports every course (or one) with the new surfaces.
+- **Play-test** (Chromium + SwiftShader, iPhone 393 × 852 portrait and 852 × 393 landscape, auto quality): the first
+  three holes of every course with real touch swipes (short flicks at the target notch ± 4%, putts at the notch ± 6%) and
+  a special shot on each course (punch, flop): every swipe struck, no console errors, nothing overlapping except the
+  putt-mode toast (fixed above). Scores: portrait Pines 5-3-5, Red Mesa 5-3-7 (the 7 is the notch above, before the
+  fix), Coral Cay 5-5-3, Kittiwake 5-4-3; landscape Pines 5-3-5, Red Mesa 5-3-5, Coral Cay 5-5-3, Kittiwake 4-5-4.
+- **Renderer budget** (`renderer.stats()`, auto quality, DPR 2 portrait, the address and Map views of every hole): Hollow
+  Pines at most 21 draw calls / 502 k triangles, Red Mesa 22 / 498 k, Coral Cay 21 / 534 k (the island par 3: 11 / 66 k),
+  Kittiwake Links 20 / 484 k; all within the 30-call budget.
 - **e2e** (`tests/e2e.spec.mjs`): the version 1 flow (a short flick that never returns to the start line, a hold-and-lift
   cancel, a tap-meter shot, putts, pause, reload and resume), then the course picker, a Red Mesa stinger, `?course=`,
   the desert resume, and a round each on Coral Cay (a draw) and Kittiwake Links (a cut): card, intro, theme (terrain and
   renderer), shot sheet, curved preview and landing ring, flick, toast, reload and resume on the same hole and stroke.
   `--soak` plays a full autoplay round on every course on both builds (`--courses=` for some, `--soak-only` without the
   UI flow) and checks the peak draw calls against the 30-call budget.
+- **Results:** `npm test` 296/296; e2e 474/474 checks (portrait, landscape and foldable on `index.html` and
+  `dist/golf.html`); soak 24/24 (a full autoplay round on each course on both builds, no errors, peak 14–16 draw calls
+  at `quality=low`; bot scores +1 to +5).

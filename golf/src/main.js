@@ -1138,6 +1138,14 @@ function buildTrail(g) {
   return count > 1 ? tr : null;
 }
 
+// Height to drape the aim preview on: the ground, or the water surface over a lake or the sea (a
+// draw across Coral Cay's lagoon would otherwise run under the water and look broken).
+function drapeZ(t, x, y) {
+  const z = t.heightAt(x, y);
+  const w = t.waterAt ? t.waterAt(x, y) : null;
+  return w && w.level > z ? w.level : z;
+}
+
 // Curved aim preview for a draw or cut at address: the intended flight at the gauge's power (full
 // power while idle) draped on the hole up to where it lands, so the line bends the way the ball
 // will. Returns {trail, landing} or null for shots that fly straight down the aim line.
@@ -1164,12 +1172,12 @@ function buildPreview(g, power) {
     const y = path[k * 4 + 2];
     d[k * 3] = x;
     d[k * 3 + 1] = y;
-    d[k * 3 + 2] = t.heightAt(x, y) + PREVIEW_LIFT;
+    d[k * 3 + 2] = drapeZ(t, x, y) + PREVIEW_LIFT;
   }
   const L = pv.landing;
   d[k * 3] = L.x;
   d[k * 3 + 1] = L.y;
-  d[k * 3 + 2] = t.heightAt(L.x, L.y) + PREVIEW_LIFT;
+  d[k * 3 + 2] = drapeZ(t, L.x, L.y) + PREVIEW_LIFT;
   pr.count = k + 1;
   // Direction of travel at the landing, for the ring's stub.
   const j = Math.max(0, k - 1);

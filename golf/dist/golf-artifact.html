@@ -327,7 +327,13 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
    result toasts go to the top, under the info card. */
 body:not([data-layout="landscape"]) #hud[data-putt="1"] .pad-hint { top: 57%; }
 #hud[data-putt="1"][data-hinted="1"] .pad-hint { opacity: 0; }
-body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast { top: calc(var(--sat) + 158px); }
+/* Left-aligned under the info card and clear of the tool buttons on the right (Read / Map /
+   Flyover reach down past it), so a long "LW · 15/22 yd · Straight → push fade" wraps instead. */
+body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {
+  top: calc(var(--sat) + 158px);
+  left: calc(var(--sal) + 10px); transform: none; align-items: flex-start;
+  max-width: calc(100vw - var(--sal) - var(--sar) - 86px);
+}
 @keyframes pulse { 50% { opacity: 0.3; transform: scale(0.7); } }
 
 /* ---------------- phases ---------------- */
@@ -5120,12 +5126,13 @@ function courseById(id) {
   return COURSES.find((c) => c.id === id) || COURSES[0];
 }
 
-// Card data for a course: par and length (the centreline spline lengths, as the scorecard).
+// Card data for a course: par and length (the centreline spline lengths rounded to the metre per
+// hole, as scoring.newCard does, so the menu card and the scorecard's Out total agree).
 function courseSummary(course) {
   let lengthM = 0;
   let par = 0;
   for (const h of course.holes) {
-    lengthM += buildPath(h.path).length;
+    lengthM += Math.round(buildPath(h.path).length);
     par += h.par;
   }
   return {
@@ -5983,6 +5990,15 @@ function simulateShot(terrain, launch, opts = {}) {
   let cupInside = false;
   let pinInside = false;
   const canopyInside = new Set();
+  // A ball played from inside a bush (it ran in and stopped there) is hacked out of it: the bush it
+  // lies in does not catch it again on the way out (otherwise nearly every shot from there would
+  // drop dead in the same bush, and there is no unplayable rule). The lie of the ground under it
+  // (desert, fescue or rough) already costs the distance. Other bushes catch it as usual.
+  if (hasTrees) {
+    for (const tr of terrain.treesNear(p.x, p.y, TREE_QUERY_R)) {
+      if (isLow(tr) && treeHit(tr, p, p)) canopyInside.add(tr);
+    }
+  }
   let n = terrain.normalAt(p.x, p.y);
   // Slope (dz per horizontal metre) the ball actually followed on its last ground step.
   let slopeAct = 0;
@@ -6117,7 +6133,7 @@ function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.5;
         w.y *= 0.5;
         w.z *= 0.5;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
         continue;
       }
@@ -6135,7 +6151,7 @@ function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.5;
         w.y *= 0.5;
         w.z *= 0.5;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
         continue;
       }
@@ -6174,7 +6190,7 @@ function simulateShot(terrain, launch, opts = {}) {
           w.x *= 0.5;
           w.y *= 0.5;
           w.z *= 0.5;
-          emit('tree', gs);
+          emit('tree', gs, speed(), { obj: tr.kind });
           changed = true;
         }
         continue;
@@ -6195,7 +6211,7 @@ function simulateShot(terrain, launch, opts = {}) {
           w.x *= 0.1;
           w.y *= 0.1;
           w.z *= 0.1;
-          emit('tree', gs);
+          emit('tree', gs, speed(), { obj: tr.kind });
           changed = true;
         }
         continue;
@@ -6236,7 +6252,7 @@ function simulateShot(terrain, launch, opts = {}) {
         w.x *= 0.3;
         w.y *= 0.3;
         w.z *= 0.3;
-        emit('tree', gs);
+        emit('tree', gs, speed(), { obj: tr.kind });
         changed = true;
       }
     }
@@ -14808,12 +14824,16 @@ const __m_audio = (() => {
 //   audio.impact(kind, power)             kind: club kind 'wood'|'hybrid'|'iron'|'wedge'|'putter'
 //                                         or 'driver'; power 0..1.1
 //   audio.land(surface, v)                SURF id or name ('green','fairway','rough','bunker',
-//                                         'water','tee','fringe','oob'); v = impact speed m/s
-//   audio.tree(v)  audio.pin(v)  audio.cup(v)  audio.lipout(v)  audio.applause(strength 0..1)
+//                                         'water','tee','fringe','oob','waste','desert','fescue');
+//                                         v = impact speed m/s
+//   audio.tree(v, obj?)                   obj: the object's kind (physics 'tree' events carry it):
+//                                         trees and palms rustle, rocks clack, a saguaro thuds,
+//                                         shrubs and gorse crackle
+//   audio.pin(v)  audio.cup(v)  audio.lipout(v)  audio.applause(strength 0..1)
 //   audio.setWind(mps)                    ambient wind loop; gain grows with wind speed
 //   audio.handle(event | events)          maps physics shot events {type, surface, v, kind?}:
 //       launch -> impact (kind from ev.kind / ev.club.kind, else guessed from v)
-//       land / bounce -> land(surface)  tree -> rustle+clack  pin -> flagstick clank
+//       land / bounce -> land(surface)  tree -> tree(v, ev.obj)  pin -> flagstick clank
 //       lipout -> rattle  cup -> rattle + plunk  water -> splash  rest -> nothing
 //       swing -> whoosh(ev.power)  applause -> applause(ev.strength)
 const { SURF } = __m_constants;
@@ -14823,6 +14843,7 @@ const MAX_VOICES = 16;
 const SURF_BY_NAME = {
   tee: SURF.TEE, fairway: SURF.FAIRWAY, rough: SURF.ROUGH, fringe: SURF.FRINGE, green: SURF.GREEN,
   bunker: SURF.BUNKER, sand: SURF.BUNKER, water: SURF.WATER, oob: SURF.OOB,
+  waste: SURF.WASTE, desert: SURF.DESERT, fescue: SURF.FESCUE,
 };
 
 function surfId(s) {
@@ -14923,7 +14944,7 @@ class AudioFX {
           this.land(ev.surface, v * 0.6);
           break;
         case 'tree':
-          this.tree(v);
+          this.tree(v, ev.obj);
           break;
         case 'pin':
           this.pin(v);
@@ -15061,6 +15082,22 @@ class AudioFX {
         this._noiseBurst(now, { freq: 1200, q: 0.8, peak: 0.28 * k, attack: 0.003, decay: 0.09 });
         this._tone(now, { freq: 100, freqEnd: 65, peak: 0.25 * k, attack: 0.003, decay: 0.06 });
         break;
+      case SURF.FESCUE:
+        // Long links grass: a soft swish that swallows the ball, hardly any thump.
+        this._noiseBurst(now, { freq: 2200, freqEnd: 1100, q: 0.6, peak: 0.24 * k, attack: 0.008, decay: 0.14 });
+        this._tone(now, { freq: 90, freqEnd: 60, peak: 0.12 * k, attack: 0.004, decay: 0.05 });
+        break;
+      case SURF.WASTE:
+        // Hardpan or beach sand: a gritty crunch over a firm knock.
+        this._tone(now, { freq: 130, freqEnd: 75, peak: 0.4 * k, attack: 0.002, decay: 0.06 });
+        this._noiseBurst(now, { freq: 3200, freqEnd: 1500, q: 0.9, peak: 0.24 * k, attack: 0.002, decay: 0.08 });
+        break;
+      case SURF.DESERT:
+        // Stony scrub: a sharp click off the stones, then grit.
+        this._tone(now, { freq: 1900, freqEnd: 1300, peak: 0.16 * k, attack: 0.0008, decay: 0.03, type: 'triangle' });
+        this._noiseBurst(now, { freq: 2800, q: 1.1, peak: 0.26 * k, attack: 0.001, decay: 0.07 });
+        this._tone(now, { freq: 120, freqEnd: 70, peak: 0.3 * k, attack: 0.002, decay: 0.05 });
+        break;
       default:
         // Fairway / tee: a heavier thump.
         this._tone(now, { freq: 115, freqEnd: 62, peak: 0.6 * k, attack: 0.002, decay: 0.09 });
@@ -15077,11 +15114,28 @@ class AudioFX {
     this._noiseBurst(now + 0.12, { freq: 3200, q: 0.8, peak: 0.12 * k, attack: 0.05, decay: 0.45 }); // droplets
   }
 
-  // Leaves rustle, then (if it was a hard hit) a woody clack off a branch.
-  tree(v = 10) {
+  // Leaves rustle, then (if it was a hard hit) a woody clack off a branch. obj (the object's kind)
+  // picks another sound for the desert and links objects: a rock clacks, a saguaro thuds and a
+  // shrub or gorse bush crackles.
+  tree(v = 10, obj = null) {
     if (!this._ready() || !this._voice(0.6)) return;
     const now = this.ctx.currentTime;
     const k = Math.min(1, 0.3 + v / 30);
+    if (obj === 'rock') {
+      this._tone(now, { freq: 2300, freqEnd: 1700, peak: 0.32 * k, attack: 0.0006, decay: 0.05, type: 'triangle' });
+      this._noiseBurst(now, { freq: 3800, q: 2, peak: 0.3 * k, attack: 0.0006, decay: 0.03 });
+      return;
+    }
+    if (obj === 'saguaro') {
+      this._tone(now, { freq: 150, freqEnd: 90, peak: 0.45 * k, attack: 0.002, decay: 0.08 });
+      this._noiseBurst(now, { freq: 900, q: 1.2, peak: 0.15 * k, attack: 0.002, decay: 0.05 });
+      return;
+    }
+    if (obj === 'shrub' || obj === 'gorse') {
+      this._noiseBurst(now, { freq: 3400, q: 1.1, peak: 0.26 * k, attack: 0.005, decay: 0.18 });
+      for (let i = 0; i < 3; i++) this._noiseBurst(now + 0.02 + i * 0.035, { freq: 1800 + 900 * i, q: 3, peak: 0.1 * k, attack: 0.001, decay: 0.02 });
+      return;
+    }
     this._noiseBurst(now, { freq: 4200, q: 0.7, peak: 0.3 * k, attack: 0.02, decay: 0.4 });
     this._noiseBurst(now + 0.05, { freq: 2600, q: 0.9, peak: 0.18 * k, attack: 0.05, decay: 0.3 });
     if (v > 8) {
@@ -15590,8 +15644,9 @@ const __m_main = (() => {
 // Swing (architecture.md section 8.1): with settings.swing = 'swipe' the pad gesture goes through
 // input.js (live gauge) and interpretSwing; with 'tap' the pad runs a tap meter here (first tap
 // starts it, the second hits). Either way the power arc carries a target notch: the power that
-// reaches the pin (or the aim point when the pin is out of reach), from the inverse of the
-// caddie's power curve; Easy snaps a power within 5% onto it.
+// reaches the pin (or the aim point when the pin is out of reach, moved up until the caddie's
+// predicted shot lands in play), from the inverse of the caddie's power curve; Easy snaps a power
+// within 5% onto it.
 //
 // Courses (section 8.5): the main menu's course picker chooses the course of a new round (the
 // choice is remembered in golf.course.v1; ?course= overrides it); the menu backdrop flies over the
@@ -15626,7 +15681,7 @@ const { InputController, readSafeInsets, snapPower, meterPower, depthForPower, M
 const { UI, fmtToPar } = __m_ui;
 const { AudioFX } = __m_audio;
 const { interpretSwing, swingLabel, powerForDistance } = __m_swing;
-const { releaseK } = __m_caddie;
+const { releaseK, predictShot, isSafeRest } = __m_caddie;
 const { playBotShot, botDecide } = __m_bot;
 const { CLUBS, clubById } = __m_clubs;
 const { SURF, fmtDist, mToFt } = __m_constants;
@@ -15645,6 +15700,8 @@ const MAX_DT = 0.1; // s: frame dt clamp (a stall must not skip half a shot)
 const PUTT_PAST_M = 0.35; // m: the putt notch is the pace that dies this far past the cup (flat)
 const MIN_TARGET = 0.04; // a target power below this (a tap-in) gets no notch
 const FULL_SLACK = 0.03; // a target this little past full power is shown at full
+const AIM_STEP = 0.04; // the aim-point notch moves up in steps this big until its shot finishes in play
+const CARRY_HAZARDS = new Set([SURF.WATER, SURF.OOB, SURF.BUNKER, SURF.DESERT, SURF.FESCUE]); // no landing there
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
 const flag = (k) => params.has(k) && params.get(k) !== '0';
@@ -16011,8 +16068,9 @@ function refreshClub() {
 // the "expected finish" (carry plus most of the release, as the caddie picks clubs), with the
 // height difference over the club's descent angle added like the plays-like distance (the curve
 // already has the wind). A pin that needs at most FULL_SLACK more than full power reads as full
-// (the detent): a 3% overswing for a few yards would double the scatter. Putts: the flat-roll pace
-// that dies PUTT_PAST_M past the cup. null for a tap-in.
+// (the detent): a 3% overswing for a few yards would double the scatter. The aim-point notch is
+// checked on the real hole (playablePower). Putts: the flat-roll pace that dies PUTT_PAST_M past
+// the cup. null for a tap-in.
 function targetPower(g) {
   if (!g || g.phase !== 'address' || !g.terrain) return null;
   if (g.isPutt) {
@@ -16032,9 +16090,34 @@ function targetPower(g) {
   const zBall = t.heightAt(b.x, b.y);
   const need = (q) => Math.hypot(q.x - b.x, q.y - b.y) + (t.heightAt(q.x, q.y) - zBall) / tanDescent;
   let p = powerForDistance(finish, need(t.cup), MAX_POWER);
-  if (p == null) p = Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1);
+  if (p == null) p = playablePower(g, Math.min(1, powerForDistance(finish, need(t.aimPoint(b)), MAX_POWER) ?? 1));
   if (p > 1 && p <= 1 + FULL_SLACK) p = 1;
   return p >= MIN_TARGET ? p : null;
+}
+
+// The aim point is where the hole bends, often just past a forced carry (a wash, the desert, a
+// lagoon). A notch that reaches it on the "expected finish" (carry plus most of the release) can
+// land in the carry, which gives no release: Red Mesa's 3rd sent a 64% driver into the desert
+// 7 m short of the fairway. So the notch's own shot is played on the real hole (the caddie's
+// predictShot: no scatter, with the wind and the selected shot), and when it would not land and
+// finish in play (not water, OB, sand, desert scrub or fescue) the notch moves up toward full power
+// to the first power that does, plus one AIM_STEP of margin when that is in play too (a thumb is
+// a few percent out either way). Full power is the caddie's own check of the club.
+function playablePower(g, p) {
+  const t = g.terrain;
+  const b = g.state.hole.ball;
+  const opts = { shot: g.shotType, handed: app.ui.getSetting('handed') };
+  const inPlay = (q) => {
+    const r = predictShot(t, b, g.lie, g.wind, g.club.id, g.aimYaw, q, opts);
+    return isSafeRest(r) && !(r.landing && CARRY_HAZARDS.has(t.surfaceAt(r.landing.x, r.landing.y)));
+  };
+  if (p >= 1 || inPlay(p)) return p;
+  for (let q = p + AIM_STEP; q < 1; q += AIM_STEP) {
+    if (!inPlay(q)) continue;
+    const m = Math.min(1, q + AIM_STEP);
+    return inPlay(m) ? m : q;
+  }
+  return 1;
 }
 
 function syncControls() {
@@ -16687,6 +16770,14 @@ function buildTrail(g) {
   return count > 1 ? tr : null;
 }
 
+// Height to drape the aim preview on: the ground, or the water surface over a lake or the sea (a
+// draw across Coral Cay's lagoon would otherwise run under the water and look broken).
+function drapeZ(t, x, y) {
+  const z = t.heightAt(x, y);
+  const w = t.waterAt ? t.waterAt(x, y) : null;
+  return w && w.level > z ? w.level : z;
+}
+
 // Curved aim preview for a draw or cut at address: the intended flight at the gauge's power (full
 // power while idle) draped on the hole up to where it lands, so the line bends the way the ball
 // will. Returns {trail, landing} or null for shots that fly straight down the aim line.
@@ -16713,12 +16804,12 @@ function buildPreview(g, power) {
     const y = path[k * 4 + 2];
     d[k * 3] = x;
     d[k * 3 + 1] = y;
-    d[k * 3 + 2] = t.heightAt(x, y) + PREVIEW_LIFT;
+    d[k * 3 + 2] = drapeZ(t, x, y) + PREVIEW_LIFT;
   }
   const L = pv.landing;
   d[k * 3] = L.x;
   d[k * 3 + 1] = L.y;
-  d[k * 3 + 2] = t.heightAt(L.x, L.y) + PREVIEW_LIFT;
+  d[k * 3 + 2] = drapeZ(t, L.x, L.y) + PREVIEW_LIFT;
   pr.count = k + 1;
   // Direction of travel at the landing, for the ring's stub.
   const j = Math.max(0, k - 1);

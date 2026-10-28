@@ -26,7 +26,7 @@ and the saved round remembers its course.
 | Aim | Drag left or right on the upper part of the screen (faster drags turn further) |
 | Swing (swipe, the default) | On the lower pad: drag **down** to take the club back, then flick **up**. A short, quick flick is enough: you do not need to get back to where you started, and a slow but clear upswing still hits (a little shorter, *Decel*) |
 | Power | 25/50/75% of the travel is 25/50/75% power (ticks on the arc). Full power clicks into place: the 100% tick lights up green over a generous stretch of travel |
-| Target notch | The gold notch on the arc is the power that reaches the pin (or the course's target when the pin is out of reach); it glows when you are on it. On Easy, a power within 5% of it snaps onto it |
+| Target notch | The gold notch on the arc is the power that reaches the pin (when the pin is out of reach, the hole's target where it bends, never short of a forced carry); it glows when you are on it. On Easy, a power within 5% of it snaps onto it |
 | Overswing | Pulling well past full (the red zone) gives up to 10% more power but doubles the dispersion |
 | Shape the shot | A straight swipe flies straight; curving the swipe draws or fades the ball. Only a frantic snap counts as *Rushed* |
 | Cancel a swing | Hold still at the bottom and lift your finger (in landscape, dragging well off the side of the pad also cancels). A cancelled swing is not a stroke |
