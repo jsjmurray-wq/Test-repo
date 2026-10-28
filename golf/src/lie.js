@@ -5,7 +5,7 @@
 //   applyLie(params, lie, club) -> params with the lie applied
 //
 // Lie = {surface, slopeAlong, slopeAcross, label, factors:{speed, spin, launch, sdir},
-//        dirOffset, greenDist, aimYaw}
+//        dirOffset, greenDist, aimYaw, puttSurf}
 //   slopeAlong   ground rise per metre toward the target (+ = uphill lie)
 //   slopeAcross  ground rise per metre to the RIGHT of the aim line. For a right-hander (who stands
 //                on the left of the line) + means the ball is above the feet.
@@ -14,6 +14,9 @@
 //                  launch degrees added to launch     sdir    extra start-direction sigma (deg)
 //   dirOffset    start-direction shift (deg, + = right) from a sidehill stance
 //   greenDist    metres from the ball to the green edge (0 on the green)
+//   puttSurf     this hole's green ground parameters (surfaceParams: the course's green speed
+//                applied), for pacing putts with puttSpeedForDistance
+//   label        the surface name ('Fairway', 'Waste area', 'Desert', 'Fescue', ...) plus the slope
 //
 // Slope physics, simplified:
 // * Up/downhill: the golfer sets the shoulders with the slope, so the effective loft grows by
@@ -26,6 +29,8 @@
 // * Bunker: woods can't be swept off sand (speed x 0.5). A greenside wedge plays an explosion
 //   shot: the club enters the sand behind the ball, so speed x 0.6, spin x 0.5 and launch +6 deg
 //   replace the generic bunker factors.
+// * Waste area, desert and fescue (version 2 courses) are general area: their factors come straight
+//   from SURFACES (firm sand clips cleanly, stony desert and long fescue grab the club).
 // * Rough: grass between the face and the ball cuts the spin (a "flier"), most for the lofted
 //   clubs whose spin comes from a clean strike: the full rough spin factor for 8-iron and up,
 //   rising to about x0.8 for woods, which have little spin to lose. Woods sweep the ball but the
@@ -33,6 +38,7 @@
 
 import { SURF, SURF_NAMES, SURFACES } from './constants.js';
 import { clamp, DEG } from './vec3.js';
+import { surfaceParams } from './physics.js';
 
 export const EXPLOSION_RANGE = 40; // m from the green edge for a greenside explosion shot
 export const WOOD_ROUGH_SPEED = 0.85; // total ball-speed factor of a wood from the rough
@@ -98,6 +104,7 @@ export function lieAt(terrain, pos, aimYaw, { handed = 'R' } = {}) {
     dirOffset,
     greenDist: greenEdgeDist(terrain.green, pos.x, pos.y),
     aimYaw,
+    puttSurf: surfaceParams(terrain, SURF.GREEN),
   };
 }
 

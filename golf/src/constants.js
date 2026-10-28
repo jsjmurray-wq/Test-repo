@@ -39,9 +39,13 @@ export const SURF = {
   BUNKER: 6,
   WATER: 7,
   OOB: 8,
+  // Version 2 (themed courses). None of them is a penalty area.
+  WASTE: 9, // desert hardpan, waste sand, beach sand: grounding the club allowed
+  DESERT: 10, // natural desert scrub with stones
+  FESCUE: 11, // links long fescue, marram and gorse edges
 };
 
-export const SURF_NAMES = ['', 'Tee', 'Fairway', 'Rough', 'Fringe', 'Green', 'Bunker', 'Water', 'Out of bounds'];
+export const SURF_NAMES = ['', 'Tee', 'Fairway', 'Rough', 'Fringe', 'Green', 'Bunker', 'Water', 'Out of bounds', 'Waste area', 'Desert', 'Fescue'];
 
 // Ground interaction per surface (tuned by the physics calibration tests; see golf/tests/physics.test.js).
 //   e        restitution multiplier on the Penner restitution curve
@@ -52,6 +56,9 @@ export const SURF_NAMES = ['', 'Tee', 'Fairway', 'Rough', 'Fringe', 'Green', 'Bu
 //   spinKeep spin multiplier applied before the impact impulse (grass between ball and face/turf)
 //   maxBack  cap on reverse horizontal speed after a bounce (m/s)
 //   plough   optional (sand): fraction of outgoing tangential speed and spin lost on impact
+//   erratic  optional (desert): random tilt (rad, sigma) of the impact normal from stones and ruts
+//   stone    optional (desert): chance per bounce of striking a stone: a lively kick (e x STONE_E,
+//            little friction or ploughing) off a face tilted up to ~35 degrees
 //   lie      factors applied to a shot played FROM this surface:
 //            speed (ball speed), spin, launch (deg added), sdir (extra direction sigma deg)
 //   color    albedo (0..1 rgb) for renderer and UI
@@ -99,7 +106,43 @@ export const SURFACES = {
     lie: { speed: 0.88, spin: 0.55, launch: 1.5, sdir: 2.5 },
     color: [0.22, 0.4, 0.15], stripe: 0,
   },
+  // Firm, compacted sand (hardpan, waste areas, beaches): the ball takes one low skip off the crust
+  // (some ploughing), then the sand drags it to a stop much sooner than turf.
+  [SURF.WASTE]: {
+    e: 0.4, crater: 1.5, mu: 0.6, muS: 0.7, a0: 3.4, kv: 1.6, spinKeep: 0.6, maxBack: 0, plough: 0.25,
+    lie: { speed: 0.93, spin: 0.75, launch: 1, sdir: 1.2 },
+    color: [0.84, 0.75, 0.57], stripe: 0,
+  },
+  // Loose desert soil between stones and scrub: mostly dead bounces (soft, ploughing), but the
+  // ground is uneven (erratic normal) and now and then the ball strikes a stone and kicks away.
+  [SURF.DESERT]: {
+    e: 0.45, crater: 1.8, mu: 0.6, muS: 0.8, a0: 4.5, kv: 2.0, spinKeep: 0.4, maxBack: 0, plough: 0.35,
+    erratic: 0.22, stone: 0.18,
+    lie: { speed: 0.75, spin: 0.5, launch: 2, sdir: 3.0 },
+    color: [0.66, 0.48, 0.33], stripe: 0,
+  },
+  // Knee-high fescue and marram: the grass swallows the ball (deep crater, heavy ploughing, almost
+  // no rebound) and holds it within a few centimetres.
+  [SURF.FESCUE]: {
+    e: 0.25, crater: 2.4, mu: 0.7, muS: 0.9, a0: 9, kv: 4, spinKeep: 0.2, maxBack: 0, plough: 0.75,
+    lie: { speed: 0.7, spin: 0.45, launch: 3, sdir: 3.0 },
+    color: [0.66, 0.6, 0.37], stripe: 0,
+  },
 };
+
+// Restitution multiplier of a stone struck in desert ground (a hard, lively kick).
+export const STONE_E = 1.6;
+
+// Course conditions (docs/architecture.md section 8.2). Hollow Pines plays at these, which
+// reproduce the SURFACES table exactly.
+//   firm          fairway/tee/rough firmness: roll resistance / firm, fairway e + (firm - 1) * 0.25
+//   greenStimpFt  nominal green speed. STIMP_REF_FT is the rating of the calibrated SURFACES green
+//                 (its closed-form roll from 1.83 m/s is 3.10 m); other speeds scale every green roll
+//                 distance by greenStimpFt / STIMP_REF_FT
+//   wind          'normal' | 'windy' (adds WINDY_EXTRA m/s to the Light and Breezy wind ranges)
+export const STIMP_REF_FT = 10.5;
+export const WINDY_EXTRA = 3;
+export const DEFAULT_CONDITIONS = Object.freeze({ firm: 1, greenStimpFt: STIMP_REF_FT, wind: 'normal' });
 
 // ---------- units ----------
 export const M_PER_YD = 0.9144;

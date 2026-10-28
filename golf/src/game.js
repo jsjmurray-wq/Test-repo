@@ -22,10 +22,16 @@
 // Randomness: one mulberry32 stream (state.rng) feeds the swing contact scatter and the per-shot
 // physics seed, so a restored save continues exactly as the original would have. Pins and wind
 // derive from the round seed.
+//
+// Courses (docs/architecture.md section 8): Game({course}) plays course.holes and builds each hole
+// with buildHole(def, {pinIndex, seed, course}), so the terrain carries the course's theme and
+// conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
+// stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
 
 import { COURSE } from './course.js';
+import { courseById } from './courses.js';
 import { buildHole as defaultBuildHole } from './terrain.js';
-import { SURF, BALL_R } from './constants.js';
+import { SURF, BALL_R, WINDY_EXTRA } from './constants.js';
 import { mulberry32, randInt } from './rng.js';
 import { clubById } from './clubs.js';
 import { simulateShot } from './physics.js';
@@ -48,10 +54,16 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 const copy3 = (p) => ({ x: p.x, y: p.y, z: p.z });
 
 // Wind for a hole: uniform direction, speed uniform in the setting's range; a pure function of
-// (seed, hole, setting) so a restored round and a replayed hole get the same wind.
-export function windFor(seed, holeIndex, setting) {
-  const [lo, hi] = WIND_RANGES[setting] || WIND_RANGES.light;
+// (seed, hole, setting, course conditions) so a restored round and a replayed hole get the same
+// wind. A windy course (conditions.wind === 'windy') adds WINDY_EXTRA m/s to both ends of the
+// range (never to 'off').
+export function windFor(seed, holeIndex, setting, conditions = null) {
+  let [lo, hi] = WIND_RANGES[setting] || WIND_RANGES.light;
   if (hi <= 0) return { x: 0, y: 0 };
+  if (conditions && conditions.wind === 'windy') {
+    lo += WINDY_EXTRA;
+    hi += WINDY_EXTRA;
+  }
   const r = mulberry32(((seed >>> 0) ^ Math.imul(holeIndex + 1, 0x9e3779b1)) >>> 0);
   r();
   const speed = lo + (hi - lo) * r();
@@ -116,6 +128,7 @@ export class Game {
     const pinRng = mulberry32(s ^ 0x51ed270b);
     this.state = {
       v: SAVE_VERSION,
+      courseId: course.id || 'pines',
       seed: s,
       settings: { ...DEFAULT_SETTINGS, ...settings },
       pins: course.holes.map(() => randInt(pinRng, 3)),
@@ -163,8 +176,8 @@ export class Game {
     const st = this.state;
     st.holeIndex = i;
     this.def = this.course.holes[i];
-    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED });
-    st.wind = windFor(st.seed, i, st.settings.wind);
+    this.terrain = terrain || this.buildHole(this.def, { pinIndex: st.pins[i], seed: TREE_SEED, course: this.course });
+    st.wind = windFor(st.seed, i, st.settings.wind, this.course.conditions);
     st.hole = newHoleState(this.terrain);
     st.decision = null;
     this.shot = null;
@@ -183,6 +196,8 @@ export class Game {
     const t = this.terrain;
     return {
       index: this.state.holeIndex,
+      courseId: this.state.courseId,
+      theme: t.theme || 'parkland',
       n: t.n,
       par: t.par,
       name: t.name,
@@ -231,7 +246,7 @@ export class Game {
     const prevWind = st.settings.wind;
     st.settings = { ...st.settings, ...partial };
     if (st.settings.wind !== prevWind && this.terrain) {
-      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind);
+      st.wind = windFor(st.seed, st.holeIndex, st.settings.wind, this.course.conditions);
       this._table = null;
     }
     this._lie = null;
@@ -560,18 +575,21 @@ export class Game {
     return data;
   }
 
-  // json: serialize() output (object or string). opts: {course, buildHole, terrain}.
+  // json: serialize() output (object or string). opts: {course, buildHole, terrain}. Without
+  // opts.course the course comes from data.courseId (older saves have none: Hollow Pines).
   static restore(json, opts = {}) {
     const data = typeof json === 'string' ? JSON.parse(json) : clone(json);
     if (!data || data.v !== SAVE_VERSION || !data.hole || !Array.isArray(data.pins)) throw new Error('Game.restore: unsupported save');
-    const g = new Game({ course: opts.course || COURSE, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
+    const course = opts.course || courseById(data.courseId || 'pines');
+    const g = new Game({ course, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
     const pending = data.pendingShot;
     delete data.pendingShot;
     const phase = RESTORABLE.includes(data.phase) ? data.phase : 'address';
+    data.courseId = course.id || 'pines';
     g.state = data;
     g._rng = mulberry32(data.rng >>> 0);
     g.def = g.course.holes[data.holeIndex];
-    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED });
+    g.terrain = opts.terrain || g.buildHole(g.def, { pinIndex: data.pins[data.holeIndex], seed: TREE_SEED, course });
     g.phase = phase;
     data.phase = phase;
     if (pending && phase === 'address') {

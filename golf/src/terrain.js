@@ -11,13 +11,38 @@
 //     to 0 just outside. On the green every surrounding grid node has F == G, so the result is G
 //     exactly (analytic), while the expression is continuous everywhere by construction.
 //  4. surfaceAt is computed analytically (exact ellipse / polygon edges) with the priority
-//     OOB > water > bunker > green > fringe > tee > fairway > rough; sgrid caches it at 0.5 m.
+//     OOB > water > bunker > green > fringe > tee > areas > fairway > rough > outside; sgrid caches
+//     it at 0.5 m.
+//  5. Trees and objects (palms, saguaros, shrubs, gorse, rocks) are scattered from authored rows,
+//     clusters and area densities with a seeded rng; dune grass goes to the visual-only `decor`.
+//
+// Version 2 (themed courses, docs/architecture.md section 8.2), all optional in a HoleDef:
+//  * outside: 'rough'|'desert'|'fescue'|'waste'|'water' is what lies beyond the playing corridor,
+//    i.e. beyond rough.w m (default 18) of rough round the fairways, rough.tee (default min(w, 8))
+//    round the tee and rough.green (default w) round the green and fringe. The corridor edge
+//    wanders by rough.wobble m (default 2.5); rough.relief m (default by kind) of extra small-scale
+//    relief roughens the ground outside it. Distances to the fairways come from an exact Euclidean
+//    distance transform of the fairway mask on the 1 m grid, so the edge is continuous round doglegs.
+//  * outside: 'water' floods everything outside the corridor (and outside non-water areas) to
+//    outsideWater {kind:'red', level:-1.2 (relative to the lowest centreline elevation), depth:2,
+//    bank:8, sea:false}.
+//  * water[].fill: 'outside' floods everything outside its polygon instead (island greens). Several
+//    such entries together form an archipelago: a point is water when it lies outside all of their
+//    polygons (and off the corridor land of outside: 'water'); the first entry gives kind, level,
+//    depth, bank and sea. water[].sea marks an ocean for the renderer.
+//  * areas[] paint surfaces ('waste'|'desert'|'fescue'|'bunker'|'rough'|'fairway') over the fairway,
+//    rough and outside (later areas over earlier ones; tee, green, bunkers and water still win),
+//    with an optional height offset dz eased in over `ease` m (default 3).
+//  * bunkers[].pot: a deep (1.2-1.8 m) round bunker (shape, or r) whose face toward the green is a
+//    steep revetted wall (0.35 m ramp) and whose back is a gentler entry.
+//  * objects[] scatter themed objects; trees rows with `mix` still work, and forest.kind may give
+//    the background woodland a kind or weight map.
 //
 // Local frames: at arc length s the frame is forward f = tangentAt(s) and right r = f x z-up =
 // (fy, -fx). Authored features use (s, off) with off + to the right, or green-relative [r, f]
 // (r = right, f = forward/away from the tee) measured from the green centre.
 
-import { SURF } from './constants.js';
+import { SURF, DEFAULT_CONDITIONS } from './constants.js';
 import { smoothstep } from './vec3.js';
 import { fbm2, valueNoise2 } from './noise.js';
 import { buildPath } from './spline.js';
@@ -27,6 +52,16 @@ const DEG = Math.PI / 180;
 const FIELD_STEP = 2; // (s, lat, elevation) field spacing, m
 const STAKE_GAP = 12; // m between OOB stakes
 const LIP_W = 2; // m, width of the raised ring round a bunker (keep bunkers >= fringe + LIP_W off greens)
+const POT_FACE = 0.35; // m, ramp of a pot bunker's revetted face (the 1 m grid smooths it to ~55 deg)
+const MAX_OBJECTS = 5000; // per hole, safety cap on scattered objects
+const MAX_DECOR = 8000; // per hole, dune-grass tufts
+// HoleDef names: `outside` values and `areas[].surface` values.
+const SURF_BY_NAME = { rough: SURF.ROUGH, desert: SURF.DESERT, fescue: SURF.FESCUE, waste: SURF.WASTE, water: SURF.WATER };
+const AREA_SURF = {
+  waste: SURF.WASTE, desert: SURF.DESERT, fescue: SURF.FESCUE, bunker: SURF.BUNKER, rough: SURF.ROUGH, fairway: SURF.FAIRWAY,
+};
+// Default extra relief (m) of the ground outside the corridor: stony desert, fescue dunes.
+const OUTSIDE_RELIEF = { [SURF.DESERT]: 0.3, [SURF.FESCUE]: 0.5, [SURF.WASTE]: 0.1 };
 
 // ---------------------------------------------------------------------------------------------
 // Small helpers
@@ -185,9 +220,69 @@ function boxBlur(src, nx, ny, r) {
   return out;
 }
 
+// Exact 1D squared Euclidean distance transform (Felzenszwalb & Huttenlocher) of f (0 on the
+// feature, a huge value elsewhere), n samples with stride `stride` from `off`, in place.
+function edt1d(a, off, stride, n, f, d, v, z) {
+  for (let q = 0; q < n; q++) f[q] = a[off + q * stride];
+  let k = 0;
+  v[0] = 0;
+  z[0] = -Infinity;
+  z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let sp = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (sp <= z[k]) {
+      k--;
+      sp = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k++;
+    v[k] = q;
+    z[k] = sp;
+    z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+  }
+  for (let q = 0; q < n; q++) a[off + q * stride] = d[q];
+}
+
+// Euclidean distance (grid units) from every node of an nx*ny mask (1 = feature) to the nearest
+// feature node; Infinity-free (a mask with no feature gives 1e9).
+function distanceTransform(mask, nx, ny) {
+  const BIG = 1e18;
+  const a = new Float64Array(nx * ny);
+  for (let k = 0; k < a.length; k++) a[k] = mask[k] ? 0 : BIG;
+  const m = Math.max(nx, ny);
+  const f = new Float64Array(m);
+  const d = new Float64Array(m);
+  const v = new Int32Array(m);
+  const z = new Float64Array(m + 1);
+  for (let j = 0; j < ny; j++) edt1d(a, j * nx, 1, nx, f, d, v, z);
+  for (let i = 0; i < nx; i++) edt1d(a, i, nx, ny, f, d, v, z);
+  const out = new Float32Array(nx * ny);
+  for (let k = 0; k < a.length; k++) out[k] = a[k] >= BIG ? 1e9 : Math.sqrt(a[k]);
+  return out;
+}
+
+// Weighted pick from a kind spec: a string, or a weight map such as {palm: 0.7, broad: 0.3}.
+function pickKind(spec, rng) {
+  if (typeof spec === 'string') return spec;
+  const keys = Object.keys(spec || {});
+  if (!keys.length) return 'broad';
+  let total = 0;
+  for (const k of keys) total += Math.max(0, spec[k]);
+  let r = rng() * total;
+  for (const k of keys) {
+    r -= Math.max(0, spec[k]);
+    if (r < 0) return k;
+  }
+  return keys[keys.length - 1];
+}
+
 // ---------------------------------------------------------------------------------------------
 
-export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
+export function buildHole(def, { pinIndex = 0, seed = 1, course = null } = {}) {
   const nseed = (def.n || 1) * 1013 + 7; // terrain shape is part of the design: fixed per hole
   const path = buildPath(def.path);
   const L = path.length;
@@ -252,6 +347,9 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
   const teeHW = (tdef.w || 8) / 2;
   const teeHL = (tdef.l || 14) / 2;
   const teeZ = prof(teeS) + (tdef.raise == null ? 0.4 : tdef.raise);
+  // Radius of the tee box's bounding circle: anything further from its centre is off the box.
+  const teeR = Math.hypot(teeHW, teeHL);
+  const nearTee = (x, y, r) => Math.abs(x - teeF.x) <= teeR + r && Math.abs(y - teeF.y) <= teeR + r;
   function teeOutside(x, y) {
     const dx = x - teeF.x;
     const dy = y - teeF.y;
@@ -344,21 +442,177 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
   const obTo = ob.to == null ? Infinity : ob.to;
   const oobSL = (s, lat) => s >= obFrom && s <= obTo && ((obL !== null && lat < -obL) || (obR !== null && lat > obR));
 
+  // ---- grid size (1 m nodes) ----
+  const nx = maxX - minX + 1;
+  const ny = maxY - minY + 1;
+
+  // ---- the playing corridor and what lies outside it (themed courses) ----
+  const outsideSurf = SURF_BY_NAME[def.outside] || SURF.ROUGH;
+  const rdef = def.rough || {};
+  const roughW = rdef.w == null ? 18 : rdef.w;
+  const roughTee = rdef.tee == null ? Math.min(roughW, 8) : rdef.tee;
+  const roughGreen = rdef.green == null ? roughW : rdef.green;
+  const edgeWob = rdef.wobble == null ? 2.5 : rdef.wobble;
+  const relief = rdef.relief == null ? OUTSIDE_RELIEF[outsideSurf] || 0 : rdef.relief;
+  const hasCorridor = outsideSurf !== SURF.ROUGH;
+  // Signed distance (m, negative inside) to the playing corridor at every 1 m node: the fairways
+  // grown by the rough band, the tee box and the green with its fringe grown by their own bands,
+  // plus a wandering edge. The fairway distance is an exact Euclidean distance transform of the
+  // fairway mask, so the edge stays continuous round doglegs (where the centreline projection
+  // jumps between branches). Between nodes it is bilinear, one function for surfaces and heights.
+  let corGrid = null;
+  if (hasCorridor) {
+    const mask = new Uint8Array(nx * ny);
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        fieldAt(minX + ix, minY + iy, fs, false);
+        if (inFairway(fs.s, fs.lat)) mask[iy * nx + ix] = 1;
+      }
+    }
+    corGrid = distanceTransform(mask, nx, ny);
+    for (let iy = 0; iy < ny; iy++) {
+      const y = minY + iy;
+      for (let ix = 0; ix < nx; ix++) {
+        const x = minX + ix;
+        const k = iy * nx + ix;
+        let d = corGrid[k] - roughW;
+        if (nearTee(x, y, roughTee + d)) {
+          const dt = teeOutside(x, y) - roughTee;
+          if (dt < d) d = dt;
+        }
+        const dg = ellSd(gE, x, y) - fringe - roughGreen;
+        if (dg < d) d = dg;
+        corGrid[k] = d + edgeWob * (valueNoise2(x / 14, y / 14, nseed + 21) - 0.5) * 2;
+      }
+    }
+  }
+  function corridorSd(x, y) {
+    let fx = x - minX;
+    let fy = y - minY;
+    fx = fx < 0 ? 0 : fx > nx - 1 ? nx - 1 : fx;
+    fy = fy < 0 ? 0 : fy > ny - 1 ? ny - 1 : fy;
+    const ix = Math.min(nx - 2, Math.floor(fx));
+    const iy = Math.min(ny - 2, Math.floor(fy));
+    const tx = fx - ix;
+    const ty = fy - iy;
+    const k = iy * nx + ix;
+    const a = corGrid[k] + (corGrid[k + 1] - corGrid[k]) * tx;
+    const b = corGrid[k + nx] + (corGrid[k + nx + 1] - corGrid[k + nx]) * tx;
+    return a + (b - a) * ty;
+  }
+
+  // ---- areas: free-form surface paint [{surface, shape (with s/off or g) | poly | xy, dz, ease}] ----
+  const areas = (def.areas || []).map((a) => {
+    const surf = AREA_SURF[a.surface] || SURF.WASTE;
+    let ells = null;
+    let poly = null;
+    let box;
+    if (a.shape) {
+      const fr = a.g ? (() => {
+        const p = toWorld(gF, a.g[0], a.g[1]);
+        return { ...gF, x: p.x, y: p.y };
+      })() : frameAt(path, a.s || 0, a.off || 0);
+      ells = a.shape.map((sp) => makeEllipse(fr, sp));
+      const pts = [];
+      for (const e of ells) pts.push({ x: e.cx - e.R, y: e.cy - e.R }, { x: e.cx + e.R, y: e.cy + e.R });
+      box = bboxOf(pts, 0);
+    } else {
+      poly = a.xy ? a.xy.map(([x, y]) => ({ x, y })) : (a.poly || []).map(([s0, off]) => {
+        const f = frameAt(path, s0, off);
+        return { x: f.x, y: f.y };
+      });
+      box = poly.length ? bboxOf(poly, 0) : { minX: 1, minY: 1, maxX: 0, maxY: 0 };
+    }
+    return { surf, ells, poly, box, dz: a.dz || 0, ease: a.ease == null ? 3 : Math.max(0.1, a.ease) };
+  });
+  function areaInside(a, x, y) {
+    if (!inBox(a.box, x, y)) return false;
+    if (a.ells) {
+      for (const e of a.ells) if (ellQ(e, x, y) < 1) return true;
+      return false;
+    }
+    return a.poly.length >= 3 && pointInPoly(a.poly, x, y);
+  }
+  function areaSd(a, x, y) {
+    if (a.ells) {
+      let sd = Infinity;
+      for (const e of a.ells) {
+        const d = ellSd(e, x, y);
+        if (d < sd) sd = d;
+      }
+      return sd;
+    }
+    return a.poly.length >= 3 ? polySd(a.poly, x, y) : Infinity;
+  }
+
   // ---- water: polygons authored in (s, off); level relative to the base elevation ----
-  const waters = (def.water || []).map((w) => {
+  function waterPoly(w) {
     const poly = w.xy
       ? w.xy.map(([x, y]) => ({ x, y }))
-      : w.poly.map(([s, off]) => {
-        const f = frameAt(path, s, off);
+      : w.poly.map(([s0, off]) => {
+        const f = frameAt(path, s0, off);
         return { x: f.x, y: f.y };
       });
     const cx = poly.reduce((a, p) => a + p.x, 0) / poly.length;
     const cy = poly.reduce((a, p) => a + p.y, 0) / poly.length;
     const sRef = w.xy ? path.project(cx, cy).s : w.poly.reduce((a, p) => a + p[0], 0) / w.poly.length;
-    const level = prof(Math.min(L, Math.max(0, sRef))) + w.level;
+    return { poly, level: prof(Math.min(L, Math.max(0, sRef))) + (w.level == null ? -1.2 : w.level) };
+  }
+  const waters = (def.water || []).filter((w) => w.fill !== 'outside').map((w) => {
+    const { poly, level } = waterPoly(w);
     const bank = w.bank || 10;
-    return { kind: w.kind || 'red', level, poly, bank, depth: w.depth || 1.4, box: bboxOf(poly, 0), bankBox: bboxOf(poly, bank + 1) };
+    return { kind: w.kind || 'red', level, poly, bank, depth: w.depth || 1.4, sea: !!w.sea, box: bboxOf(poly, 0), bankBox: bboxOf(poly, bank + 1) };
   });
+
+  // ---- flooding: everything outside the islands (water fill:'outside') and, for outside:'water',
+  //      outside the corridor and its non-water areas, is one body of water ----
+  const fillDefs = (def.water || []).filter((w) => w.fill === 'outside');
+  const islands = fillDefs.map((w) => {
+    const { poly, level } = waterPoly(w);
+    return { poly, level, box: bboxOf(poly, 0) };
+  });
+  const floodOutside = outsideSurf === SURF.WATER;
+  const landAreas = floodOutside ? areas : [];
+  let flood = null;
+  if (fillDefs.length || floodOutside) {
+    const w0 = fillDefs[0] || def.outsideWater || {};
+    let level;
+    if (fillDefs.length) level = islands[0].level;
+    else {
+      let lo = Infinity;
+      for (let s0 = 0; s0 <= L; s0 += 5) lo = Math.min(lo, prof(s0));
+      level = lo + (w0.level == null ? -1.2 : w0.level);
+    }
+    flood = {
+      kind: w0.kind || 'red', level, depth: w0.depth || 2, bank: w0.bank || 8, sea: !!w0.sea,
+      water: { kind: w0.kind || 'red', level },
+    };
+  }
+  // Signed distance to dry land (negative on land) and the matching exact wet test.
+  function floodLandSd(x, y) {
+    let d = Infinity;
+    for (const isl of islands) {
+      const sd = polySd(isl.poly, x, y);
+      if (sd < d) d = sd;
+    }
+    if (floodOutside) {
+      const c = corridorSd(x, y);
+      if (c < d) d = c;
+      for (const a of landAreas) {
+        const sd = areaSd(a, x, y);
+        if (sd < d) d = sd;
+      }
+    }
+    return d;
+  }
+  function floodWet(x, y) {
+    for (const isl of islands) if (inBox(isl.box, x, y) && pointInPoly(isl.poly, x, y)) return false;
+    if (floodOutside) {
+      if (corridorSd(x, y) <= 0) return false;
+      for (const a of landAreas) if (areaInside(a, x, y)) return false;
+    }
+    return true;
+  }
 
   // ---- bunkers: unions of ellipses, (s, off) anchored or green-relative (g:[r, f]) ----
   const bunkers = (def.bunkers || []).map((b) => {
@@ -366,13 +620,35 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
       const p = toWorld(gF, b.g[0], b.g[1]);
       return { ...gF, x: p.x, y: p.y };
     })() : frameAt(path, b.s, b.off || 0);
-    const ells = b.shape.map((sp) => makeEllipse(fr, sp));
+    const pot = !!b.pot;
+    const shape = b.shape || [[0, 0, b.r || 2.4, b.r || 2.4, 0]];
+    const ells = shape.map((sp) => makeEllipse(fr, sp));
     let minR = Infinity;
     for (const e of ells) minR = Math.min(minR, e.rx, e.ry);
     const pts = [];
     for (const e of ells) pts.push({ x: e.cx - e.R, y: e.cy - e.R }, { x: e.cx + e.R, y: e.cy + e.R });
-    const depth = b.depth || 0.7;
-    return { ells, depth, ramp: Math.min(1.8, 0.6 * minR), lip: 0.12 + 0.2 * depth, box: bboxOf(pts, 0), lipBox: bboxOf(pts, LIP_W + 0.5) };
+    if (!pot) {
+      const depth = b.depth || 0.7;
+      return { ells, depth, ramp: Math.min(1.8, 0.6 * minR), lip: 0.12 + 0.2 * depth, box: bboxOf(pts, 0), lipBox: bboxOf(pts, LIP_W + 0.5) };
+    }
+    // Pot bunker: deep, with the steep revetted face toward the green (down the hole when the
+    // green is far away) and a gentler sand slope at the back where the player walks in.
+    const c = ells[0];
+    let fx = fr.fx;
+    let fy = fr.fy;
+    const gdx = gF.x - c.cx;
+    const gdy = gF.y - c.cy;
+    const gl = Math.hypot(gdx, gdy);
+    if (gl > 1 && gl < 80) {
+      fx = gdx / gl;
+      fy = gdy / gl;
+    }
+    const depth = Math.min(1.8, Math.max(1.2, b.depth || 1.5));
+    return {
+      ells, depth, pot, cx: c.cx, cy: c.cy, fx, fy,
+      ramp: POT_FACE, rampBack: Math.max(POT_FACE, Math.min(2.2, 0.9 * minR)), lip: 0.06,
+      box: bboxOf(pts, 0), lipBox: bboxOf(pts, LIP_W + 0.5),
+    };
   });
   function bunkerSd(b, x, y) {
     let sd = Infinity;
@@ -384,8 +660,8 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
   }
 
   // ---- mounds [s, off, radius, height] ----
-  const mounds = (def.mounds || []).map(([s, off, r, h]) => {
-    const f = frameAt(path, s, off);
+  const mounds = (def.mounds || []).map(([s0, off, r, h]) => {
+    const f = frameAt(path, s0, off);
     return { x: f.x, y: f.y, r, h };
   });
 
@@ -395,6 +671,7 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     fieldAt(x, y, fs, false);
     if (oobSL(fs.s, fs.lat)) return SURF.OOB;
     for (const w of waters) if (inBox(w.box, x, y) && pointInPoly(w.poly, x, y)) return SURF.WATER;
+    if (flood && floodWet(x, y)) return SURF.WATER;
     for (const b of bunkers) {
       if (!inBox(b.box, x, y)) continue;
       for (const e of b.ells) if (ellQ(e, x, y) < 1) return SURF.BUNKER;
@@ -403,8 +680,10 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
       if (ellQ(gE, x, y) <= 1) return SURF.GREEN;
       if (ellSd(gE, x, y) <= fringe) return SURF.FRINGE;
     }
-    if (teeOutside(x, y) <= 0) return SURF.TEE;
+    if (nearTee(x, y, 0) && teeOutside(x, y) <= 0) return SURF.TEE;
+    for (let i = areas.length - 1; i >= 0; i--) if (areaInside(areas[i], x, y)) return areas[i].surf;
     if (inFairway(fs.s, fs.lat)) return SURF.FAIRWAY;
+    if (hasCorridor && !floodOutside && corridorSd(x, y) > 0) return outsideSurf;
     return SURF.ROUGH;
   }
   function isOOB(x, y) {
@@ -414,12 +693,11 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
   }
   function waterAt(x, y) {
     for (const w of waters) if (inBox(w.box, x, y) && pointInPoly(w.poly, x, y)) return { kind: w.kind, level: w.level };
+    if (flood && floodWet(x, y)) return { kind: flood.kind, level: flood.level };
     return null;
   }
 
   // ---- 1 m height grid ----
-  const nx = maxX - minX + 1;
-  const ny = maxY - minY + 1;
   const heights = new Float32Array(nx * ny);
   const und = def.undulate == null ? 0.6 : def.undulate;
   const cor = def.corridor || {};
@@ -427,6 +705,7 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
   const corH = cor.h == null ? 5 : cor.h;
   const fb4 = { oct: 4, seed: nseed + 1 };
   const fb2 = { oct: 2, seed: nseed + 5 };
+  const fbR = { oct: 2, seed: nseed + 23 };
   for (let iy = 0; iy < ny; iy++) {
     const y = minY + iy;
     for (let ix = 0; ix < nx; ix++) {
@@ -440,15 +719,28 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
       if (d > corW) z += corH * smoothstep(corW, corW + 60, d) * (0.5 + fbm2(x / 110, y / 110, fb2));
       // Rolling undulation plus a fine ripple.
       z += und * (fbm2(x / 45, y / 45, fb4) - 0.5) * 2.4 + 0.08 * (valueNoise2(x / 7, y / 7, nseed + 2) - 0.5) * 2;
+      // Outside the corridor: stony desert or fescue dunes are lumpier than mown rough.
+      if (relief > 0) {
+        const cd = corridorSd(x, y);
+        if (cd > 0) z += relief * (fbm2(x / 9, y / 9, fbR) - 0.5) * 2.4 * smoothstep(0, 6, cd);
+      }
       for (const m of mounds) {
         const dx = x - m.x;
         const dy = y - m.y;
         const q = (dx * dx + dy * dy) / (m.r * m.r);
         if (q < 1) z += m.h * (1 - q) * (1 - q);
       }
+      // Areas with a height offset (raised waste, sunken hollows), eased in from their edge.
+      for (const a of areas) {
+        if (!a.dz || !inBox(a.box, x, y)) continue;
+        const sd = areaSd(a, x, y);
+        if (sd < 0) z += a.dz * smoothstep(0, a.ease, -sd);
+      }
       // Flattened, slightly raised tee box with soft shoulders.
-      const to = teeOutside(x, y);
-      if (to < 4) z += (teeZ - z) * (1 - smoothstep(0, 4, to));
+      if (nearTee(x, y, 4)) {
+        const to = teeOutside(x, y);
+        if (to < 4) z += (teeZ - z) * (1 - smoothstep(0, 4, to));
+      }
       // Blend into the analytic green.
       if (inBox(gBoxW, x, y)) {
         const w = greenW(ellSd(gE, x, y));
@@ -464,12 +756,31 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
           z = zb + (z - zb) * smoothstep(0, w.bank, sd);
         }
       }
-      // Bunkers: bowl of the given depth, raised lip ring just outside.
+      // Flood water: the same bed and banks, measured from the edge of the dry land.
+      if (flood) {
+        const sd = floodLandSd(x, y);
+        if (sd > 0) z = flood.level - flood.depth * smoothstep(0, 7, sd);
+        else if (-sd < flood.bank) {
+          const zb = flood.level - 0.12 * sd;
+          z = zb + (z - zb) * smoothstep(0, flood.bank, -sd);
+        }
+      }
+      // Bunkers: bowl of the given depth, raised lip ring just outside. A pot bunker's ramp runs
+      // from its gentle back to the steep revetted face.
       for (const b of bunkers) {
         if (!inBox(b.lipBox, x, y)) continue;
         const sd = bunkerSd(b, x, y);
-        if (sd < 0) z -= b.depth * smoothstep(0, b.ramp, -sd);
-        else if (sd < LIP_W) {
+        if (sd < 0) {
+          let ramp = b.ramp;
+          if (b.pot) {
+            const dx = x - b.cx;
+            const dy = y - b.cy;
+            const dl = Math.hypot(dx, dy);
+            const t = (1 + (dl > 1e-6 ? (dx * b.fx + dy * b.fy) / dl : 0)) / 2;
+            ramp = b.rampBack + (b.ramp - b.rampBack) * t * t;
+          }
+          z -= b.depth * smoothstep(0, ramp, -sd);
+        } else if (sd < LIP_W) {
           const t = sd / LIP_W;
           z += b.lip * 4 * t * (1 - t);
         }
@@ -546,16 +857,29 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     for (let i = 0; i < snx; i++) sdata[j * snx + i] = surfaceAt(minX + (i + 0.5) * sstep, y);
   }
 
-  // ---- trees ----
+  // ---- trees and objects ----
+  // Object kinds (HoleTerrain.trees entries {kind, x, y, z, trunkR, trunkH, canopy|null, hard?,
+  // scale?, variant?}; canopy.cz is the absolute z of the canopy centre):
+  //   pine, broad  trunk + canopy ellipsoid (the shipped trees)
+  //   palm         thin 0.18 m trunk 8-12 m tall, crown of fronds at the top
+  //   saguaro      a bare column (trunkR 0.25, 4-9 m, canopy null); its arms are visual only
+  //   shrub, gorse no trunk, a low canopy that reaches into the ground (it catches rolling balls)
+  //   rock         hard: true, trunkR = radius, trunkH = height, canopy null
+  //   grass        dune-grass tufts, visual only: they go to `decor`, never to `trees`
   const rng = mulberry32(((def.n || 1) * 0x9e3779b1) ^ (seed >>> 0) ^ 0x5bd1e995);
   const trees = [];
+  const decor = [];
   const HC = 8; // spatial-hash cell, m
   const hnx = Math.ceil((maxX - minX) / HC) + 1;
   const hny = Math.ceil((maxY - minY) / HC) + 1;
   const hash = Array.from({ length: hnx * hny }, () => []);
-  let maxCanopy = 0;
+  let maxReach = 0;
   const NOGROW = new Set([SURF.WATER, SURF.BUNKER, SURF.FAIRWAY, SURF.GREEN, SURF.FRINGE, SURF.TEE]);
   const NOSHADE = new Set([SURF.FAIRWAY, SURF.GREEN, SURF.FRINGE, SURF.TEE]);
+  // How far an object reaches from its axis (treesNear), and its footprint for spacing (a
+  // saguaro's arms spread about a metre).
+  const reachOf = (o) => (o.canopy ? Math.max(o.canopy.rx, o.trunkR) : o.trunkR);
+  const footOf = (o) => (o.canopy ? o.canopy.rx : o.kind === 'saguaro' ? 1 : Math.max(0.3, o.trunkR));
   function cellsAround(x, y, r, fn) {
     const i0 = Math.max(0, Math.floor((x - r - minX) / HC));
     const i1 = Math.min(hnx - 1, Math.floor((x + r - minX) / HC));
@@ -563,19 +887,57 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     const j1 = Math.min(hny - 1, Math.floor((y + r - minY) / HC));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (fn(hash[j * hnx + i]) === false) return;
   }
-  function tryTree(x, y, mix) {
+  // Dimensions of one object, drawn from the rng before the spot is checked (so the sequence does
+  // not depend on the ground). Pine and broad draw exactly as the shipped course did.
+  function shapeOf(kind) {
+    switch (kind) {
+      case 'pine':
+        return { trunkR: 0.2 + rng() * 0.12, trunkH: 2.4 + rng() * 1.6, rx: 2 + rng() * 1.3, rz: 5 + rng() * 3 };
+      case 'palm': {
+        const trunkH = 8 + rng() * 4;
+        const rx = 3 + rng() * 1.4;
+        const rz = 1.3 + rng() * 0.6;
+        // Fronds droop round the crown: the canopy centre sits just above the top of the trunk.
+        return { trunkR: 0.18, trunkH, rx, rz, cz: trunkH + 0.2 * rz, scale: trunkH / 10, variant: rng() };
+      }
+      case 'saguaro': {
+        const trunkH = 4 + rng() * 5;
+        return { trunkR: 0.25, trunkH, rx: 0, rz: 0, noCanopy: true, scale: trunkH / 6.5, variant: rng() };
+      }
+      case 'shrub':
+      case 'gorse': {
+        const gorse = kind === 'gorse';
+        const h = (gorse ? 1.0 : 0.9) + rng() * 0.6;
+        const rx = (gorse ? 1.2 : 1) + rng();
+        // The ellipsoid reaches 0.25 m into the ground so a rolling ball meets it.
+        return { trunkR: 0, trunkH: 0, rx, rz: h / 2 + 0.25, cz: h / 2, scale: h, variant: rng() };
+      }
+      case 'rock': {
+        const u = rng();
+        const r = 0.35 + u * u;
+        const hgt = r * (0.5 + 0.5 * rng());
+        return { trunkR: r, trunkH: hgt, rx: 0, rz: 0, noCanopy: true, hard: true, scale: r, variant: rng() };
+      }
+      default: // 'broad' and anything unknown
+        return { trunkR: 0.28 + rng() * 0.18, trunkH: 2.6 + rng() * 1.4, rx: 3.4 + rng() * 2.4, rz: 3.4 + rng() * 2 };
+    }
+  }
+  const TALL = new Set(['pine', 'broad', 'palm']);
+  function tryKind(kind, x, y) {
     if (x < minX + 2 || x > maxX - 2 || y < minY + 2 || y > maxY - 2) return false;
-    const pine = rng() < mix;
-    const t = pine
-      ? { trunkR: 0.2 + rng() * 0.12, trunkH: 2.4 + rng() * 1.6, rx: 2 + rng() * 1.3, rz: 5 + rng() * 3 }
-      : { trunkR: 0.28 + rng() * 0.18, trunkH: 2.6 + rng() * 1.4, rx: 3.4 + rng() * 2.4, rz: 3.4 + rng() * 2 };
+    if (kind === 'grass') return tryGrass(x, y);
+    if (trees.length >= MAX_OBJECTS) return false;
+    const t = shapeOf(kind);
     if (NOGROW.has(surfaceAt(x, y))) return false;
-    const c = Math.max(2, t.rx * 0.75);
+    // Keep canopies off the fairway, tee and green (and low objects out of their edges).
+    const tall = TALL.has(kind);
+    const c = tall ? Math.max(2, t.rx * 0.75) : Math.max(0.6, t.noCanopy ? (kind === 'saguaro' ? 1 : t.trunkR) : t.rx * 0.6);
     for (const [ox, oy] of [[c, 0], [-c, 0], [0, c], [0, -c]]) if (NOSHADE.has(surfaceAt(x + ox, y + oy))) return false;
+    const foot = t.noCanopy ? (kind === 'saguaro' ? 1 : Math.max(0.3, t.trunkR)) : t.rx;
     let clash = false;
     cellsAround(x, y, 8, (cell) => {
       for (const o of cell) {
-        if (Math.hypot(o.x - x, o.y - y) < 0.55 * (o.canopy.rx + t.rx)) {
+        if (Math.hypot(o.x - x, o.y - y) < 0.55 * (footOf(o) + foot)) {
           clash = true;
           return false;
         }
@@ -584,37 +946,65 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     });
     if (clash) return false;
     const z = heightAt(x, y);
-    const tree = {
-      x, y, z,
-      trunkR: t.trunkR,
-      trunkH: t.trunkH,
-      canopy: { cz: z + t.trunkH + t.rz * 0.8, rx: t.rx, rz: t.rz },
-      kind: pine ? 'pine' : 'broad',
-    };
+    let tree;
+    if (t.cz === undefined && !t.noCanopy) {
+      // The shipped trees (and unknown kinds, which grow as broadleaves).
+      tree = {
+        x, y, z,
+        trunkR: t.trunkR,
+        trunkH: t.trunkH,
+        canopy: { cz: z + t.trunkH + t.rz * 0.8, rx: t.rx, rz: t.rz },
+        kind: kind === 'pine' ? 'pine' : 'broad',
+      };
+    } else {
+      tree = { x, y, z, trunkR: t.trunkR, trunkH: t.trunkH, canopy: t.noCanopy ? null : { cz: z + t.cz, rx: t.rx, rz: t.rz }, kind };
+      if (t.hard) tree.hard = true;
+      tree.scale = t.scale;
+      tree.variant = t.variant;
+    }
     trees.push(tree);
     hash[Math.floor((y - minY) / HC) * hnx + Math.floor((x - minX) / HC)].push(tree);
-    if (t.rx > maxCanopy) maxCanopy = t.rx;
+    const reach = reachOf(tree);
+    if (reach > maxReach) maxReach = reach;
     return true;
   }
-  for (const td of def.trees || []) {
-    const mix = td.mix == null ? 0.5 : td.mix;
+  // The shipped tree rows: a pine with probability mix, else a broadleaf.
+  function tryTree(x, y, mix) {
+    if (x < minX + 2 || x > maxX - 2 || y < minY + 2 || y > maxY - 2) return false;
+    return tryKind(rng() < mix ? 'pine' : 'broad', x, y);
+  }
+  function tryGrass(x, y) {
+    if (decor.length >= MAX_DECOR) return false;
+    const scale = 0.6 + rng() * 0.6;
+    if (NOGROW.has(surfaceAt(x, y))) return false;
+    decor.push({ kind: 'grass', x, y, z: heightAt(x, y), scale });
+    return true;
+  }
+  // Rows and clusters: the shipped `trees` rows (mix) and v2 `objects` rows (kind) share them.
+  function scatterRowOrCluster(td, place) {
     if (td.cluster) {
-      const c = frameAt(path, td.s, td.off);
+      const c = td.g ? toWorld(gF, td.g[0], td.g[1]) : frameAt(path, td.s, td.off || 0);
       const spread = td.spread || 8;
+      let placed = 0;
       for (let k = 0; k < td.cluster * 3 && k < 200; k++) {
         const a = rng() * Math.PI * 2;
         const r = spread * Math.sqrt(rng());
-        tryTree(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, mix);
-        if (trees.filter((t) => Math.hypot(t.x - c.x, t.y - c.y) <= spread + 0.01).length >= td.cluster) break;
+        if (place(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r)) placed++;
+        if (td.countAll ? trees.filter((t) => Math.hypot(t.x - c.x, t.y - c.y) <= spread + 0.01).length >= td.cluster : placed >= td.cluster) break;
       }
     } else {
       const gap = td.gap || 10;
       const jit = td.jitter == null ? 3 : td.jitter;
-      for (let s = td.from; s <= td.to; s += gap * (0.75 + 0.5 * rng())) {
-        const f = frameAt(path, s + (rng() - 0.5) * jit, td.off + (rng() * 2 - 1) * jit);
-        tryTree(f.x, f.y, mix);
+      for (let s0 = td.from; s0 <= td.to; s0 += gap * (0.75 + 0.5 * rng())) {
+        const f = frameAt(path, s0 + (rng() - 0.5) * jit, td.off + (rng() * 2 - 1) * jit);
+        place(f.x, f.y);
       }
     }
+  }
+  for (const td of def.trees || []) {
+    const mix = td.mix == null ? 0.5 : td.mix;
+    // The shipped clusters count every tree within the spread, not only their own.
+    scatterRowOrCluster(td.cluster ? { ...td, countAll: true } : td, (x, y) => tryTree(x, y, mix));
   }
   // Background woodland: jittered grid, clumped by noise, only well outside the playing corridor.
   const forest = def.forest === false ? null : { inner: 42, density: 0.75, mix: 0.5, spacing: 10, ...(def.forest || {}) };
@@ -630,14 +1020,39 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
         const d = Math.hypot(fs.lat, ds);
         const clump = valueNoise2(x / 40, y / 40, nseed + 9);
         const p = forest.density * smoothstep(forest.inner, forest.inner + 25, d) * (clump > 0.45 ? 1 : 0.2);
-        if (keep < p) tryTree(x, y, forest.mix);
+        if (keep < p) {
+          if (forest.kind) tryKind(pickKind(forest.kind, rng), x, y);
+          else tryTree(x, y, forest.mix);
+        }
       }
+    }
+  }
+  // Themed objects: rows, clusters and area scatter {kind, area, density (per 100 m2)}; area is a
+  // surface name ('desert', 'fescue', 'waste', 'rough', 'outside', ...) or an index into areas[].
+  for (const od of def.objects || []) {
+    if (od.area != null) {
+      const dens = Math.max(1e-3, od.density == null ? 0.2 : od.density);
+      const sp = Math.max(1.5, 10 / Math.sqrt(dens));
+      const target = typeof od.area === 'number' ? null : od.area === 'outside' ? outsideSurf : AREA_SURF[od.area] || SURF_BY_NAME[od.area];
+      const ar = typeof od.area === 'number' ? areas[od.area] : null;
+      if (!target && !ar) continue;
+      for (let y0 = minY; y0 < maxY; y0 += sp) {
+        for (let x0 = minX; x0 < maxX; x0 += sp) {
+          const x = x0 + rng() * sp;
+          const y = y0 + rng() * sp;
+          const sf = surfaceAt(x, y);
+          if (ar ? !(areaInside(ar, x, y) && sf === ar.surf) : sf !== target) continue;
+          tryKind(pickKind(od.kind, rng), x, y);
+        }
+      }
+    } else {
+      scatterRowOrCluster(od, (x, y) => tryKind(pickKind(od.kind, rng), x, y));
     }
   }
   function treesNear(x, y, r) {
     const res = [];
-    cellsAround(x, y, r + maxCanopy, (cell) => {
-      for (const t of cell) if (Math.hypot(t.x - x, t.y - y) <= r + t.canopy.rx) res.push(t);
+    cellsAround(x, y, r + maxReach, (cell) => {
+      for (const t of cell) if (Math.hypot(t.x - x, t.y - y) <= r + reachOf(t)) res.push(t);
     });
     return res;
   }
@@ -735,8 +1150,24 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     return null;
   }
 
+  // Theme and conditions of the course this hole belongs to (Hollow Pines without one).
+  const conditions = { ...DEFAULT_CONDITIONS, ...((course && course.conditions) || {}) };
+  const waterList = waters.map((w) => ({ kind: w.kind, level: w.level, poly: w.poly, sea: w.sea, fill: 'inside' }));
+  if (flood) {
+    // One plane over the whole hole at the flood level (the land above it hides it); islands lists
+    // the dry polygons of fill:'outside' water (none for outside:'water').
+    waterList.push({
+      kind: flood.kind, level: flood.level, sea: flood.sea, fill: 'outside',
+      poly: [{ x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY }],
+      islands: islands.map((i) => i.poly),
+    });
+  }
+
   return {
     n: def.n, par: def.par, name: def.name, si: def.si,
+    courseId: (course && course.id) || 'pines',
+    theme: (course && course.theme) || 'parkland',
+    conditions,
     lengthM: L,
     bounds,
     tee, cup, greenCenter,
@@ -748,8 +1179,8 @@ export function buildHole(def, { pinIndex = 0, seed = 1 } = {}) {
     corners,
     heightAt, gradAt, normalAt,
     surfaceAt, isOOB, waterAt,
-    waters: waters.map((w) => ({ kind: w.kind, level: w.level, poly: w.poly })),
-    trees, treesNear,
+    waters: waterList,
+    trees, treesNear, decor,
     stakes,
     raycast, aimPoint,
     grid: { nx, ny, minX, minY, step: 1, heights },

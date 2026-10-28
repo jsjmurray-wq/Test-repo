@@ -30,8 +30,8 @@
 // at least 2 m behind it, on dry ground. The player may instead replay from the previous spot.
 // Both cost one stroke. OB is stroke and distance.
 
-import { SURF, SURFACES, CLUB_LENGTH, BALL_R, G } from './constants.js';
-import { simulateShot } from './physics.js';
+import { SURF, CLUB_LENGTH, BALL_R, G } from './constants.js';
+import { simulateShot, surfaceParams } from './physics.js';
 import { clamp } from './vec3.js';
 
 export const RELIEF_R = 2 * CLUB_LENGTH; // 2.28 m
@@ -66,7 +66,8 @@ export function scoreName(strokes, par) {
   return `+${d}`;
 }
 
-// Somewhere a ball may be dropped: in bounds, not in water and not in a bunker.
+// Somewhere a ball may be dropped: in bounds, not in water and not in a bunker. Waste areas,
+// desert and fescue are not penalty areas (general area): a drop may land there.
 export function isDropOk(terrain, x, y) {
   const s = terrain.surfaceAt(x, y);
   if (s === SURF.WATER || s === SURF.OOB || s === SURF.BUNKER) return false;
@@ -91,9 +92,10 @@ function slopeAt(terrain, x, y) {
 }
 
 // Can a ball sit still here? The downhill pull of a rolling ball, (5/7) g sin(theta), must stay
-// well under the surface's rolling drag a0 (the physics rest test, with a margin).
+// well under the surface's rolling drag a0 (the physics rest test, with a margin; firm courses
+// have less drag, so fewer spots hold).
 export function holdsBall(terrain, x, y) {
-  const surf = SURFACES[terrain.surfaceAt(x, y)] || SURFACES[SURF.ROUGH];
+  const surf = surfaceParams(terrain, terrain.surfaceAt(x, y));
   const t = slopeAt(terrain, x, y);
   return (5 / 7) * G * (t / Math.sqrt(1 + t * t)) < surf.a0 * HOLD_MARGIN;
 }

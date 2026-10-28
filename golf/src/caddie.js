@@ -13,7 +13,8 @@
 //
 // Distances in the table are a stock full swing (power 1, straight, no contact scatter) with the
 // lie's factors, simulated over flat fairway at the ball's height: carry/total with the wind
-// blowing along aimYaw, carry0/total0 without wind; totalG is the total over a flat green.
+// blowing along aimYaw, carry0/total0 without wind; totalG is the total over a flat green. The flat
+// fairway and green carry the hole's course conditions (firm links fairways run further).
 
 import { SURF, BALL_R } from './constants.js';
 import { CLUBS, PUTTER_ID } from './clubs.js';
@@ -36,8 +37,9 @@ const hasWind = (w) => !!w && (Math.abs(w.x) > 1e-6 || Math.abs(w.y) > 1e-6);
 export function clubTable(terrain, pos, lie, wind = ZERO_WIND, opts = {}) {
   const aimYaw = opts.aimYaw ?? (lie && lie.aimYaw !== undefined ? lie.aimYaw : terrain.cup ? yawTo(pos, terrain.cup) : 0);
   const z = terrain.heightAt(pos.x, pos.y);
-  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z });
-  const greenPlane = planeTerrain({ surface: SURF.GREEN, z0: z });
+  const conditions = terrain.conditions || null;
+  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions });
+  const greenPlane = planeTerrain({ surface: SURF.GREEN, z0: z, conditions });
   const start = { x: pos.x, y: pos.y, z: z + BALL_R };
   const windy = hasWind(wind);
   const rows = [];
@@ -93,7 +95,7 @@ export const CURVE_POWERS = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1, 1.1];
 
 export function powerCurve(terrain, pos, lie, wind, clubId, aimYaw) {
   const z = terrain.heightAt(pos.x, pos.y);
-  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z });
+  const plane = planeTerrain({ surface: SURF.FAIRWAY, z0: z, conditions: terrain.conditions || null });
   const start = { x: pos.x, y: pos.y, z: z + BALL_R };
   return CURVE_POWERS.map((power) => {
     const launch = swingToLaunch(clubId, lie, { ...STOCK, power }, aimYaw, null, { pos: start });
@@ -125,11 +127,13 @@ export function predictShot(terrain, pos, lie, wind, clubId, aimYaw, power = 1) 
   return simulateShot(terrain, launch, { wind, seed: CADDIE_SEED, record: false });
 }
 
-// A rest spot the caddie is happy to play from (not wet, not out, not in sand).
+// A rest spot the caddie is happy to play from (not wet, not out, not in sand, not in the desert
+// scrub or the long fescue; firm waste ground is fine).
+const UNSAFE = new Set([SURF.BUNKER, SURF.WATER, SURF.OOB, SURF.DESERT, SURF.FESCUE]);
 export function isSafeRest(res) {
   const f = res.final;
   if (f.outcome === 'water' || f.outcome === 'ob') return false;
-  return f.surface !== SURF.BUNKER && f.surface !== SURF.WATER && f.surface !== SURF.OOB;
+  return !UNSAFE.has(f.surface);
 }
 
 // Where a stock shot is expected to stop, along the line (m).

@@ -24,9 +24,19 @@
 //   mounds    [[s, off, radius, height], ...].
 //   ob        {left, right, from?, to?}: lateral distance of the OB line (null = none).
 //   bounds    {margin}: playable area = centreline bounding box grown by margin.
+// Version 2 fields (outside, rough.w, areas, pot bunkers, sea / fill:'outside' water, objects) are
+// described in terrain.js and docs/architecture.md section 8.2; Hollow Pines uses none of them.
+//
+// Course object (section 8.2): {id, name, tagline, theme, conditions:{firm, greenStimpFt, wind},
+// holes}. The other courses live in course-desert.js, course-water.js and course-links.js and are
+// listed by courses.js.
 
 export const COURSE = {
+  id: 'pines',
   name: 'Hollow Pines',
+  tagline: 'Tree-lined parkland in the rolling hills',
+  theme: 'parkland',
+  conditions: { firm: 1, greenStimpFt: 10.5, wind: 'normal' },
   holes: [
     // 1. Gentle dogleg right. OB left, fairway bunker right in the driving zone, two greenside traps.
     {

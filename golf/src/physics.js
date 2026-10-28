@@ -18,8 +18,12 @@
 //   If the surface drops away faster than free fall (a crest) the ball takes off again.
 // * Cup: swept segment against the cup circle each ground step (no tunnelling at any speed). The
 //   ball is captured if it can fall R before crossing the chord: v <= 2 sqrt(CUP_R^2 - b^2) / t_fall.
-// * Trees: trunks are hard cylinders; canopies are ellipsoids the ball may pass through, with a hit
-//   probability that grows with the path length inside.
+// * Trees and objects: trunks are hard cylinders; canopies are ellipsoids the ball may pass through,
+//   with a hit probability that grows with the path length inside. Low bushes (shrub, gorse) have no
+//   trunk and catch the ball in the air or on the ground and drop it nearly dead; rocks are hard
+//   (e 0.5) with a rounded top that throws the ball off sideways; a saguaro is a bare column.
+// * Course conditions: surfaceParams(terrain, id) is SURFACES with terrain.conditions applied (firm
+//   ground, green speed); everything here reads the surface table through it.
 
 import {
   BALL_R,
@@ -34,6 +38,8 @@ import {
   FLAGSTICK_H,
   FLAGSTICK_R,
   SPIN_TAU,
+  STONE_E,
+  STIMP_REF_FT,
 } from './constants.js';
 import { flightAccel } from './aero.js';
 import { mulberry32 } from './rng.js';
@@ -50,10 +56,61 @@ const STALL_D = 0.015; // m moved over STALL_T below which a creeping ball count
 const LAND_VN = 0.5; // m/s outgoing normal speed below which a bounce becomes ground contact
 const CREST_EPS = 2e-5; // m the free-fall path must clear the ground by to take off from a crest
 const TRUNK_E = 0.4;
+const ROCK_E = 0.5; // restitution of a rock (hard: true)
+const ROCK_SHED = 0.6; // m/s: a ball on a rock's rounded top always runs off at least this fast
+const LOW_LEN = 0.5; // m: path length in a low bush for a 63% chance of being caught (canopies: 3 m)
 const TREE_QUERY_R = 12; // m search radius for treesNear (covers trunk + canopy radius)
 const ZERO_WIND = { x: 0, y: 0 };
 
-const surfOf = (id) => SURFACES[id] || SURFACES[SURF.ROUGH];
+const clampN = (x, a, b) => (x < a ? a : x > b ? b : x);
+const isLow = (tr) => tr.kind === 'shrub' || tr.kind === 'gorse';
+
+// ---------------------------------------------------------------------------------------------
+// Course conditions (docs/architecture.md section 8.2)
+
+// Surfaces whose roll resistance follows the course's firmness (OOB plays as rough).
+const FIRM_SURFS = [SURF.FAIRWAY, SURF.TEE, SURF.ROUGH, SURF.OOB];
+const _tables = new WeakMap(); // terrain -> {key, table}
+const CRATER_FIRM = 0.12;
+
+// The SURFACES table with terrain.conditions applied, cached per terrain. Default conditions (or
+// none) return SURFACES itself, so Hollow Pines is bit-for-bit the shipped game.
+//   firm: roll resistance a0 and kv / firm on fairway, tee and rough (every roll-out on them
+//         scales by firm, see stimpDistance), fairway restitution + (firm - 1) * 0.25, and the
+//         crater tilt x firm^-CRATER_FIRM (firm turf dents less, so a spinning iron checks less:
+//         a links 7-iron releases ~45% further, not just the ~13% the roll terms alone give).
+//   greenStimpFt: green a0 and kv / k with k = greenStimpFt / STIMP_REF_FT, which scales the
+//         green's roll-out from any speed by exactly k (D(v0; a0/k, kv/k) = k D(v0; a0, kv)).
+export function surfaceTable(terrain) {
+  const c = terrain && terrain.conditions;
+  if (!c) return SURFACES;
+  const firm = c.firm ?? 1;
+  const stimp = c.greenStimpFt ?? STIMP_REF_FT;
+  if (firm === 1 && stimp === STIMP_REF_FT) return SURFACES;
+  const key = `${firm}|${stimp}`;
+  const hit = _tables.get(terrain);
+  if (hit && hit.key === key) return hit.table;
+  const table = { ...SURFACES };
+  // Clamped so the bounce and roll stay physical (fairway e x Penner curve stays under ~0.65).
+  const f = clampN(firm, 0.6, 1.8);
+  for (const id of FIRM_SURFS) {
+    const b = SURFACES[id];
+    table[id] = { ...b, a0: b.a0 / f, kv: b.kv / f, crater: b.crater * Math.pow(f, -CRATER_FIRM) };
+  }
+  const fw = table[SURF.FAIRWAY];
+  fw.e = clampN(fw.e + (f - 1) * 0.25, 0.8, 1.2);
+  const k = clampN(stimp / STIMP_REF_FT, 0.6, 1.5);
+  const g = SURFACES[SURF.GREEN];
+  table[SURF.GREEN] = { ...g, a0: g.a0 / k, kv: g.kv / k };
+  _tables.set(terrain, { key, table });
+  return table;
+}
+
+// Ground parameters of surface id on this terrain (unknown ids play as rough).
+export function surfaceParams(terrain, surfId) {
+  const t = surfaceTable(terrain);
+  return t[surfId] || t[SURF.ROUGH];
+}
 
 // ---------------------------------------------------------------------------------------------
 // Flight
@@ -195,6 +252,37 @@ export function bounceImpulse(v, w, n, surf) {
     }
   }
   return v.x * n.x + v.y * n.y + v.z * n.z;
+}
+
+// Unit normal n tilted by `tilt` rad toward azimuth phi (around n), for uneven ground. A tilt that
+// would no longer face the incoming velocity v is halved until it does (else n is kept).
+function tiltNormal(n, v, tilt, phi) {
+  // Tangent basis: t1 = normalize(z x n) (or x for a level-ish normal), t2 = n x t1.
+  let t1x = -n.y;
+  let t1y = n.x;
+  let t1z = 0;
+  let l = Math.hypot(t1x, t1y);
+  if (l < 1e-6) {
+    t1x = 1;
+    t1y = 0;
+    l = 1;
+  }
+  t1x /= l;
+  t1y /= l;
+  const t2x = n.y * t1z - n.z * t1y;
+  const t2y = n.z * t1x - n.x * t1z;
+  const t2z = n.x * t1y - n.y * t1x;
+  const vdn = v.x * n.x + v.y * n.y + v.z * n.z;
+  for (let k = 0; k < 4; k++, tilt *= 0.5) {
+    const c = Math.cos(tilt);
+    const s = Math.sin(tilt);
+    const ux = Math.cos(phi) * t1x + Math.sin(phi) * t2x;
+    const uy = Math.cos(phi) * t1y + Math.sin(phi) * t2y;
+    const uz = Math.cos(phi) * t1z + Math.sin(phi) * t2z;
+    const m = { x: c * n.x + s * ux, y: c * n.y + s * uy, z: c * n.z + s * uz };
+    if (v.x * m.x + v.y * m.y + v.z * m.z < 0.3 * vdn) return m;
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -343,9 +431,10 @@ export function cupCheck(p0, p1, v, cup) {
 // canopy centre (the HoleTerrain convention, also used by the renderer). Returns null,
 // {kind:'trunk', tau, nx, ny, rr, inside} (tau = segment fraction at contact, n = outward
 // horizontal normal, rr = trunk radius + R; inside: p0 already overlapped the trunk),
-// {kind:'cap', tau, nx, ny, rr, top} (the ball dropped onto the top of the trunk, where the
-// branches fork) or {kind:'canopy', len} (p1 inside the canopy; len = chord length of the line
-// through the ellipsoid along the direction of travel).
+// {kind:'cap', tau, nx, ny, rr, top, q} (the ball dropped onto the top of the trunk, where the
+// branches fork, or of a rock; q = distance from the axis / rr) or {kind:'canopy', len} (p1 inside
+// the canopy; len = chord length of the line through the ellipsoid along the direction of travel).
+// Objects without a trunk (trunkR 0) or without a canopy (canopy null) skip that part.
 export function treeHit(tree, p0, p1) {
   const base = tree.z || 0;
   // Trunk: swept circle of radius trunkR + R in the horizontal plane.
@@ -369,7 +458,7 @@ export function treeHit(tree, p0, p1) {
         // Outward from the axis; dead centre: the way the ball was travelling.
         const nx = hl > 1e-6 ? hx / hl : ml > 1e-9 ? dx / ml : 1;
         const ny = hl > 1e-6 ? hy / hl : ml > 1e-9 ? dy / ml : 0;
-        return { kind: 'cap', tau: tt, nx, ny, rr, top };
+        return { kind: 'cap', tau: tt, nx, ny, rr, top, q: hl / rr };
       }
     }
     let tau = -1;
@@ -384,7 +473,8 @@ export function treeHit(tree, p0, p1) {
     }
     if (tau >= 0) {
       const z = p0.z + (p1.z - p0.z) * tau;
-      if (z >= base - R && z <= top) {
+      // A rock is wide: on a slope the ground at its edge sits below the ground at its centre.
+      if (z >= base - R - (tree.hard ? rr : 0) && z <= top) {
         const hx = fx + dx * tau;
         const hy = fy + dy * tau;
         const hl = Math.hypot(hx, hy) || 1;
@@ -418,7 +508,8 @@ export function treeHit(tree, p0, p1) {
 // Synthetic terrain (calibration, tests and caddie tables)
 
 // A HoleTerrain-compatible plane: z = z0 + sx x + sy y with one surface, or custom heightFn /
-// surfaceFn / waterFn / oobFn. trees is an array of tree objects; cup {x,y,z} or null.
+// surfaceFn / waterFn / oobFn. trees is an array of tree objects; cup {x,y,z} or null;
+// conditions (optional) are course conditions for surfaceParams (the caddie passes the hole's).
 export function planeTerrain({
   surface = SURF.FAIRWAY,
   sx = 0,
@@ -430,6 +521,7 @@ export function planeTerrain({
   waterFn = null,
   oobFn = null,
   trees = [],
+  conditions = null,
 } = {}) {
   const heightAt = heightFn || ((x, y) => z0 + sx * x + sy * y);
   const gradAt = (x, y, out = { x: 0, y: 0 }) => {
@@ -448,6 +540,7 @@ export function planeTerrain({
     cup,
     trees,
     waters: [],
+    conditions,
     heightAt,
     gradAt,
     normalAt(x, y) {
@@ -480,6 +573,8 @@ export function simulateShot(terrain, launch, opts = {}) {
   const cup = terrain.cup || null;
   const pinOn = opts.pin ?? launch.mode !== 'roll';
   const hasTrees = !!(terrain.treesNear && terrain.trees && terrain.trees.length);
+  const surfTab = surfaceTable(terrain);
+  const surfOf = (id) => surfTab[id] || surfTab[SURF.ROUGH];
 
   const s = {
     p: { x: launch.pos.x, y: launch.pos.y, z: launch.pos.z },
@@ -648,6 +743,36 @@ export function simulateShot(terrain, launch, opts = {}) {
         canopyInside.delete(tr);
         continue;
       }
+      if (hit.kind === 'cap' && tr.hard) {
+        // Dropped onto a rock: its top is rounded, so the contact normal leans outward with the
+        // distance from the middle. Bounce off it (e = ROCK_E) and always run off the side.
+        const q = Math.min(1, hit.q) * 0.85;
+        const nz = Math.sqrt(1 - q * q);
+        const nx = hit.nx * q;
+        const ny = hit.ny * q;
+        p.x = p0.x + (p.x - p0.x) * hit.tau;
+        p.y = p0.y + (p.y - p0.y) * hit.tau;
+        p.z = hit.top + R;
+        const vn = v.x * nx + v.y * ny + v.z * nz;
+        if (vn < 0) {
+          v.x -= (1 + ROCK_E) * vn * nx;
+          v.y -= (1 + ROCK_E) * vn * ny;
+          v.z -= (1 + ROCK_E) * vn * nz;
+        }
+        v.x *= 0.85;
+        v.y *= 0.85;
+        const vo = v.x * hit.nx + v.y * hit.ny;
+        if (vo < ROCK_SHED) {
+          v.x += (ROCK_SHED - vo) * hit.nx;
+          v.y += (ROCK_SHED - vo) * hit.ny;
+        }
+        w.x *= 0.5;
+        w.y *= 0.5;
+        w.z *= 0.5;
+        emit('tree', gs);
+        changed = true;
+        continue;
+      }
       if (hit.kind === 'cap') {
         // Dropped onto the top of the trunk, where the limbs fork: it glances off outward with a
         // small hop, losing most of its speed (no ball may perch on the trunk).
@@ -691,10 +816,13 @@ export function simulateShot(terrain, launch, opts = {}) {
         }
         const vn = v.x * nx + v.y * ny;
         if (vn < 0) {
-          v.x -= (1 + TRUNK_E) * vn * nx;
-          v.y -= (1 + TRUNK_E) * vn * ny;
-          v.x *= 0.8;
-          v.y *= 0.8;
+          // Bark (and a saguaro's flesh) soaks up more than a rock face.
+          const e = tr.hard ? ROCK_E : TRUNK_E;
+          const keep = tr.hard ? 0.85 : 0.8;
+          v.x -= (1 + e) * vn * nx;
+          v.y -= (1 + e) * vn * ny;
+          v.x *= keep;
+          v.y *= keep;
           w.x *= 0.5;
           w.y *= 0.5;
           w.z *= 0.5;
@@ -703,9 +831,27 @@ export function simulateShot(terrain, launch, opts = {}) {
         }
         continue;
       }
-      // Canopy: one roll per traversal.
-      if (!inAir || canopyInside.has(tr)) continue;
+      // Canopy: one roll per traversal. Tree canopies only meet balls in the air; low bushes also
+      // stop balls running along the ground.
+      const low = isLow(tr);
+      if ((!inAir && !low) || canopyInside.has(tr)) continue;
       canopyInside.add(tr);
+      if (low) {
+        // Shrub or gorse: dense twigs close round the ball (a high chance even on a short path)
+        // and it drops out nearly dead.
+        if (rng() < 1 - Math.exp(-hit.len / LOW_LEN)) {
+          const keep = 0.03 + 0.09 * rng();
+          v.x *= keep;
+          v.y *= keep;
+          v.z = inAir ? -(0.4 + 0.8 * rng()) : v.z * keep;
+          w.x *= 0.1;
+          w.y *= 0.1;
+          w.z *= 0.1;
+          emit('tree', gs);
+          changed = true;
+        }
+        continue;
+      }
       if (rng() < 1 - Math.exp(-hit.len / 3)) {
         const sp = speed();
         if (sp < 1e-6) continue;
@@ -790,8 +936,19 @@ export function simulateShot(terrain, launch, opts = {}) {
       mode = 'ground';
     } else {
       if (!first) emit('bounce', gs, speed(), { angle });
-      const out = bounceImpulse(v, w, n, surf);
-      if (out < LAND_VN) mode = 'ground';
+      let nb = n;
+      let sb = surf;
+      if (surf.erratic) {
+        // Stony, uneven ground (desert): the ball meets a randomly tilted patch, and now and then
+        // a stone, which kicks it away hard instead of swallowing it.
+        const stone = rng() < (surf.stone || 0);
+        const tilt = stone ? 0.25 + 0.35 * rng() : Math.min(0.6, surf.erratic * Math.sqrt(-2 * Math.log(1 - rng() * 0.999)));
+        nb = tiltNormal(n, v, tilt, 2 * Math.PI * rng());
+        if (stone) sb = { ...surf, e: surf.e * STONE_E, crater: 0.3, mu: 0.25, spinKeep: 0.8, plough: 0 };
+      }
+      bounceImpulse(v, w, nb, sb);
+      // Leave the ground only if the ball really moves away from the true surface.
+      if (v.x * n.x + v.y * n.y + v.z * n.z < LAND_VN) mode = 'ground';
     }
     if (mode === 'ground') {
       const d = v.x * n.x + v.y * n.y + v.z * n.z;
