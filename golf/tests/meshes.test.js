@@ -3,10 +3,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   terrainChunks, skirtMesh, icosphere, pineMesh, broadleafMesh, flagMesh, waterMesh, triangulate,
-  greenReadMesh, trailRibbon, aimRibbon, skirtTrees, MeshBuilder, TERRAIN_CHUNK,
+  greenReadMesh, trailRibbon, aimRibbon, skirtTrees, MeshBuilder, TERRAIN_CHUNK, palmMesh, saguaroMesh,
+  bushMesh, rockMesh, grassMesh, skirtObjects, seaSetup,
 } from '../src/meshes.js';
 import { perspective, lookAt, multiply, invert, project, unproject, transformPoint } from '../src/mat4.js';
-import { bakeTerrainColor, bakeClouds, bakeNoise, boxBlur } from '../src/bake.js';
+import { bakeTerrainColor, bakeClouds, bakeNoise, boxBlur, bakeWaterDepth, WATER_DEPTH_MAX } from '../src/bake.js';
+import { THEMES, themeFor } from '../src/themes.js';
+import { SURF } from '../src/constants.js';
+import { courseById } from '../src/courses.js';
+import { buildHole } from '../src/terrain.js';
 import { stubTerrain } from './visual/render-preview.js';
 
 const T = stubTerrain();
@@ -169,4 +174,294 @@ test('bakes: sizes, ranges, determinism', () => {
   assert.equal(bakeNoise(1, 16).data.length, 16 * 16 * 4);
   const bl = boxBlur(new Float32Array([0, 0, 9, 0, 0]), 5, 1, 1);
   assert.ok(Math.abs(bl[2] - 3) < 1e-6 && Math.abs(bl[1] - 3) < 1e-6 && bl[0] === 0);
+});
+
+// ------------------------------------------------------------------ version 2: course themes
+
+const hole = (id, n) => {
+  const c = courseById(id);
+  return buildHole(c.holes[n - 1], { pinIndex: 0, seed: 1, course: c });
+};
+
+// Sum of |xy area| of the triangles of an indexed mesh (pos may be offset; only xy is used).
+function xyArea(pos, idx) {
+  let a = 0;
+  for (let k = 0; k < idx.length; k += 3) {
+    const [p, q, r] = [idx[k] * 3, idx[k + 1] * 3, idx[k + 2] * 3];
+    a += Math.abs((pos[q] - pos[p]) * (pos[r + 1] - pos[p + 1]) - (pos[q + 1] - pos[p + 1]) * (pos[r] - pos[p])) / 2;
+  }
+  return a;
+}
+
+test('themed object meshes: well formed, 4-wide attributes, within the triangle budget', () => {
+  const budget = { palm: 420, saguaro: 600, bush: 420, rock: 100, grass: 60 };
+  const meshes = { palm: palmMesh(), saguaro: saguaroMesh(), bush: bushMesh(), rock: rockMesh(), grass: grassMesh() };
+  for (const [k, m] of Object.entries(meshes)) {
+    const n = m.pos.length / 3;
+    assert.equal(m.nrm.length, n * 3, k);
+    assert.equal(m.attr.length, n * 4, k);
+    for (const v of m.idx) assert.ok(v < n, k);
+    assert.ok(unitNormals(m.nrm, 1e-3), k);
+    assert.ok(Array.from(m.pos).every(Number.isFinite) && Array.from(m.attr).every(Number.isFinite), k);
+    assert.ok(m.idx.length / 3 <= budget[k], `${k}: ${m.idx.length / 3} triangles`);
+  }
+  // Palm: trunk 0..1 high, fronds (part 1) and dead fronds (part 2), u 0..1 along, v -1..1 across.
+  const pa = meshes.palm.attr;
+  const parts = new Set();
+  for (let k = 0; k < pa.length; k += 4) {
+    parts.add(pa[k]);
+    if (pa[k] > 0) assert.ok(pa[k + 2] >= 0 && pa[k + 2] <= 1 && Math.abs(pa[k + 3]) <= 1);
+  }
+  assert.deepEqual([...parts].sort(), [0, 1, 2]);
+  // Saguaro: column z in 0..2 (dome above 1), four arms with ids 1..4.
+  const sa = meshes.saguaro;
+  const arms = new Set();
+  for (let k = 0; k < sa.attr.length; k += 4) {
+    if (sa.attr[k] === 0) assert.ok(sa.pos[(k / 4) * 3 + 2] >= 0 && sa.pos[(k / 4) * 3 + 2] <= 2);
+    else arms.add(sa.attr[k + 3]);
+  }
+  assert.deepEqual([...arms].sort(), [1, 2, 3, 4]);
+  // Rock: flat shaded (every triangle has its own three vertices).
+  assert.equal(meshes.rock.idx.length, meshes.rock.pos.length / 3);
+  // Bush and rock stay inside their unit boxes (the shader scales them by rx / rz).
+  for (const m of [meshes.bush, meshes.rock]) {
+    for (let k = 0; k < m.pos.length; k += 3) assert.ok(Math.hypot(m.pos[k], m.pos[k + 1]) < 1.4 && Math.abs(m.pos[k + 2]) < 1.4);
+  }
+});
+
+test('dense skirt edge meets the grid at every node; same rings and coverage', () => {
+  const a = skirtMesh(T.grid);
+  const b = skirtMesh(T.grid, { dense: true });
+  const n = a.n;
+  assert.equal(b.n, n);
+  // The 4 x n ring vertices are unchanged (skirt objects index them).
+  assert.deepEqual(Array.from(b.pos.subarray(0, n * 12)), Array.from(a.pos));
+  const nv = b.pos.length / 3;
+  assert.ok(nv < 65536);
+  for (const v of b.idx) assert.ok(v < nv);
+  // The extra vertices are grid nodes with their exact heights, one per perimeter node.
+  const g = T.grid;
+  assert.equal(nv - n * 4, 2 * (g.nx - 1) + 2 * (g.ny - 1) - n);
+  for (let v = n * 4; v < nv; v++) {
+    const i = Math.round((b.pos[v * 3] + b.cx - g.minX) / g.step);
+    const j = Math.round((b.pos[v * 3 + 1] + b.cy - g.minY) / g.step);
+    assert.ok(i === 0 || j === 0 || i === g.nx - 1 || j === g.ny - 1);
+    assert.equal(b.pos[v * 3 + 2], g.heights[j * g.nx + i]);
+  }
+  // Same footprint (the fans re-triangulate the first band only).
+  assert.ok(Math.abs(xyArea(a.pos, a.idx) - xyArea(b.pos, b.idx)) < 1e-6 * xyArea(a.pos, a.idx));
+});
+
+test('sea setup: none on parkland, all round on an island, toward the sea water otherwise', () => {
+  assert.equal(seaSetup(T, THEMES.parkland), null);
+  const island = hole('water', 3);
+  const s3 = seaSetup(island, themeFor(island.theme));
+  assert.ok(s3.full && s3.cosHalf < -1);
+  assert.equal(s3.level, island.waters.find((w) => w.fill === 'outside').level);
+  const links = hole('links', 1);
+  const s1 = seaSetup(links, themeFor(links.theme));
+  const sw = links.waters.find((w) => w.sea);
+  assert.ok(!s1.full && s1.level === sw.level);
+  const cx = (s1.rect.minX + s1.rect.maxX) / 2;
+  const cy = (s1.rect.minY + s1.rect.maxY) / 2;
+  const mx = sw.poly.reduce((t, q) => t + q.x, 0) / sw.poly.length;
+  const my = sw.poly.reduce((t, q) => t + q.y, 0) / sw.poly.length;
+  assert.ok((mx - cx) * s1.dir.x + (my - cy) * s1.dir.y > 0);
+  assert.ok(Math.abs(Math.hypot(s1.dir.x, s1.dir.y) - 1) < 1e-9);
+  // An ocean theme without sea water still has a sea, below the whole grid edge.
+  const l2 = hole('links', 2);
+  const s2 = seaSetup(l2, themeFor(l2.theme));
+  const g = l2.grid;
+  let lo = Infinity;
+  for (let i = 0; i < g.nx; i++) lo = Math.min(lo, g.heights[i], g.heights[(g.ny - 1) * g.nx + i]);
+  for (let j = 0; j < g.ny; j++) lo = Math.min(lo, g.heights[j * g.nx], g.heights[j * g.nx + g.nx - 1]);
+  assert.ok(Math.abs(s2.level - (lo - 1.5)) < 1e-6);
+  // A desert hole has no sea.
+  const d1 = hole('desert', 1);
+  assert.equal(seaSetup(d1, themeFor(d1.theme)), null);
+});
+
+test('skirt toward the sea drops below it; landward it stays above', () => {
+  const t = hole('links', 2);
+  const sea = seaSetup(t, themeFor(t.theme));
+  const sk = skirtMesh(t.grid, { sea, dense: true });
+  const n = sk.n;
+  let seaward = 0;
+  let landward = 0;
+  for (let k = 0; k < n; k++) {
+    const x = sk.pos[k * 3];
+    const y = sk.pos[k * 3 + 1];
+    const c = (x * sea.dir.x + y * sea.dir.y) / (Math.hypot(x, y) || 1);
+    const z2 = sk.pos[(2 * n + k) * 3 + 2];
+    if (c > sea.cosHalf + 0.4) {
+      assert.ok(z2 < sea.level - 10, 'seaward ring 2 under the sea');
+      assert.ok(sk.nrm[(n + k) * 3 + 1] > 0.5, 'seaward weight in nrm.y');
+      seaward++;
+    } else if (c < sea.cosHalf - 0.4) {
+      for (let r = 1; r < 4; r++) assert.ok(sk.pos[(r * n + k) * 3 + 2] >= sea.level + 0.8 - 1e-4, 'landward above the sea');
+      landward++;
+    }
+  }
+  assert.ok(seaward > 5 && landward > 5);
+});
+
+test('water mesh with the sea: hole water clipped to the grid, the sea on the skirt with its depth', () => {
+  const t = hole('links', 1);
+  const sea = seaSetup(t, themeFor(t.theme));
+  const sk = skirtMesh(t.grid, { sea, dense: true });
+  const w = waterMesh(t.waters, 1.6, { sea, skirt: sk });
+  const nv = w.pos.length / 3;
+  assert.equal(w.water.length, nv * 2);
+  assert.ok(nv < 65536);
+  for (const v of w.idx) assert.ok(v < nv);
+  const nSk = sk.pos.length / 3;
+  const first = nv - nSk - sk.n; // the hole's own water comes first
+  for (let v = 0; v < first; v++) {
+    assert.equal(w.water[v * 2 + 1], -1000);
+    const x = w.pos[v * 3];
+    const y = w.pos[v * 3 + 1];
+    if (w.water[v * 2] === 1) assert.ok(x >= sea.rect.minX && x <= sea.rect.maxX && y >= sea.rect.minY && y <= sea.rect.maxY);
+  }
+  for (let k = 0; k < nSk; k++) {
+    const v = first + k;
+    assert.equal(w.water[v * 2], 1);
+    assert.ok(Math.abs(w.water[v * 2 + 1] - (sea.level - sk.pos[k * 3 + 2])) < 1e-3);
+    assert.ok(Math.abs(w.pos[v * 3 + 2] - sea.level) < 1e-3);
+  }
+  // Without a sea the layout is the shipped one plus the flags (all 0, texture depth).
+  const p = waterMesh(T.waters);
+  assert.ok(Array.from(p.water).every((x, k) => (k % 2 ? x === -1000 : x === 0)));
+  // An island hole: the flood plane stays (clipped to the grid), the sea ring joins it.
+  const isl = hole('water', 3);
+  const s3 = seaSetup(isl, themeFor(isl.theme));
+  const w3 = waterMesh(isl.waters, 1.6, { sea: s3, skirt: skirtMesh(isl.grid, { sea: s3, dense: true }) });
+  assert.ok(w3.water.length / 2 > 4);
+});
+
+test('skirt objects: themed kinds in the instance layout, none in the sea', () => {
+  const t = hole('water', 9);
+  const th = themeFor(t.theme);
+  const sea = seaSetup(t, th);
+  const sk = skirtMesh(t.grid, { sea, dense: true });
+  const bg = skirtObjects(sk, { kinds: th.skirtObjects.kinds, perVertex: 1.5, grass: 1, minZ: sea.level + 0.6 });
+  let count = 0;
+  for (const [kind, rows] of Object.entries(bg.rows)) {
+    assert.ok(kind in th.skirtObjects.kinds);
+    assert.equal(rows.length % 8, 0);
+    for (let k = 0; k < rows.length; k += 8) {
+      assert.ok(rows[k + 2] + 0.3 >= sea.level + 0.6 - 1e-6);
+      assert.ok(rows[k + 7] >= 0 && rows[k + 7] < 1);
+      count++;
+    }
+  }
+  assert.ok(count > 50);
+  assert.equal(bg.grass.length % 8, 0);
+  // Deterministic.
+  assert.deepEqual(skirtObjects(sk, { kinds: { rock: 1 }, perVertex: 0.5 }), skirtObjects(sk, { kinds: { rock: 1 }, perVertex: 0.5 }));
+});
+
+test('themed bakes: parkland is the shipped bake; new surfaces carry detail; pot faces are sod', () => {
+  // Parkland (the default for a terrain without a theme) is exactly the version 1 bake.
+  const a = bakeTerrainColor(T);
+  const b = bakeTerrainColor(T, { theme: THEMES.parkland });
+  assert.deepEqual(a.data, b.data);
+  assert.equal(a.detail, null);
+  // Hollow Pines' own bunkers never read as revetted faces.
+  const p1 = hole('pines', 1);
+  assert.equal(bakeTerrainColor(p1).detail, null);
+  // Desert: the desert channel where the surface is desert.
+  const d = hole('desert', 2);
+  const bd = bakeTerrainColor(d);
+  assert.ok(bd.detail);
+  const sg = d.sgrid;
+  let hit = 0;
+  let tested = 0;
+  for (let k = 0; k < sg.data.length; k += 97) {
+    if (sg.data[k] !== SURF.DESERT) continue;
+    tested++;
+    if (bd.detail.data[k * 4] > 200) hit++;
+  }
+  assert.ok(tested > 50 && hit / tested > 0.9);
+  // Links: fescue channel, and revetted faces (alpha) next to pot bunkers only.
+  const l = hole('links', 2);
+  const bl = bakeTerrainColor(l);
+  let sod = 0;
+  const lg = l.sgrid;
+  for (let k = 0; k < lg.data.length; k++) {
+    if (bl.detail.data[k * 4 + 3] > 64) {
+      sod++;
+      const i = k % lg.nx;
+      const j = Math.floor(k / lg.nx);
+      let near = false;
+      for (let dj = -6; dj <= 6 && !near; dj++) {
+        for (let di = -6; di <= 6; di++) {
+          const q = (j + dj) * lg.nx + i + di;
+          if (q >= 0 && q < lg.data.length && lg.data[q] === SURF.BUNKER) near = true;
+        }
+      }
+      assert.ok(near, 'sod face away from a bunker');
+    }
+  }
+  assert.ok(sod > 10);
+  // The theme's colours reach the bake: a links fairway is yellower than Hollow Pines'.
+  const texel = (bk, t, surf) => {
+    for (let k = 0; k < t.sgrid.data.length; k += 13) if (t.sgrid.data[k] === surf) return Array.from(bk.data.subarray(k * 4, k * 4 + 3));
+    return null;
+  };
+  const fwL = texel(bl, l, SURF.FAIRWAY);
+  const fwP = texel(bakeTerrainColor(p1), p1, SURF.FAIRWAY);
+  assert.ok(fwL[0] / fwL[1] > fwP[0] / fwP[1]);
+});
+
+test('water depth bake: depth in the water, distance to the shore', () => {
+  const dp = bakeWaterDepth(T);
+  const g = T.grid;
+  assert.equal(dp.width, g.nx);
+  assert.equal(dp.data.length, g.nx * g.ny * 4);
+  const at = (x, y) => {
+    const i = Math.round((x - g.minX) / g.step);
+    const j = Math.round((y - g.minY) / g.step);
+    return Array.from(dp.data.subarray((j * g.nx + i) * 4, (j * g.nx + i) * 4 + 2));
+  };
+  // Pond centre (-30, 150), radius 15, level -0.6: deep and far from the shore; dry ground 0.
+  const c = at(-30, 150);
+  const edge = at(-30 + 13, 150);
+  assert.ok(c[0] > 0 && Math.abs(c[0] / 255 * WATER_DEPTH_MAX - (-0.6 - T.heightAt(-30, 150))) < 0.05);
+  assert.ok(c[1] > edge[1] && c[1] >= 12 && c[1] <= 17);
+  assert.deepEqual(at(0, 0), [0, 0]);
+  // The ocean flood of an island hole: deepest far from the islands.
+  const isl = hole('water', 3);
+  const di = bakeWaterDepth(isl);
+  let maxD = 0;
+  for (let k = 1; k < di.data.length; k += 4) maxD = Math.max(maxD, di.data[k]);
+  assert.ok(maxD > 20);
+});
+
+test('themes carry everything the renderer reads', () => {
+  const kinds = ['pine', 'broad', 'palm', 'saguaro', 'shrub', 'gorse', 'rock', 'grass'];
+  const rgb = (a) => Array.isArray(a) && a.length === 3 && a.every((v) => v >= 0 && v <= 1.3);
+  for (const th of Object.values(THEMES)) {
+    assert.ok(th.clouds && th.clouds.cover > 0, th.id);
+    assert.ok(rgb(th.ridges.far) && rgb(th.ridges.near) && rgb(th.skirt.near) && rgb(th.skirt.far), th.id);
+    assert.equal((th.skirt.detail || [0, 0, 0, 0]).length, 4);
+    for (const k of kinds) assert.ok(rgb(th.tints[k]), `${th.id} ${k}`);
+    assert.ok(rgb(th.trunks.palm) && rgb(th.trunks.saguaro) && rgb(th.revet), th.id);
+    assert.ok(th.water.tint === null || rgb(th.water.tint), th.id);
+    assert.ok(th.water.clarity > 0 && th.water.haze > 0 && th.water.haze <= 1, th.id);
+    assert.ok(th.horizon !== 'ocean' || ['hills', 'mountains', 'mesas', 'dunes'].includes(th.land), th.id);
+    assert.ok(Array.isArray(th.seaAz) && th.seaAz.length > 0, th.id);
+    if (th.skirtObjects) for (const k of Object.keys(th.skirtObjects.kinds)) assert.ok(kinds.includes(k), `${th.id} ${k}`);
+  }
+  // Parkland keeps the shipped look: shipped skirt colours, tree tints, no objects of its own.
+  const P = THEMES.parkland;
+  assert.deepEqual(P.skirt.near, [0.21, 0.37, 0.13]);
+  assert.deepEqual(P.skirt.far, [0.12, 0.22, 0.09]);
+  assert.deepEqual(P.tints.pine, [0.11, 0.2, 0.11]);
+  assert.deepEqual(P.tints.broad, [0.19, 0.3, 0.12]);
+  assert.deepEqual(P.ridges.far, [0.06, 0.1, 0.13]);
+  assert.deepEqual(P.ridges.near, [0.025, 0.05, 0.025]);
+  assert.deepEqual(P.clouds, { cover: 1, shift: 0, grey: 0 });
+  assert.equal(P.skirtObjects, null);
+  assert.equal(P.water.tint, null);
+  assert.ok(!P.fog.highClear);
 });

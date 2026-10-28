@@ -311,7 +311,7 @@ function main() {
   frameDraw();
   const st = renderer.stats();
   info.textContent = `${def ? course.name + ' ' + holeN + ' ' : ''}${terrain.name} ${mode} | build ${tBuild.toFixed(0)} ms, setHole ${tSet.toFixed(0)} ms | ${st.drawCalls} draws, ${(st.tris / 1000).toFixed(0)}k tris, ${renderer.ctx.gl2 ? 'WebGL2' : 'WebGL1'}`;
-  window.__preview = { renderer, rig, terrain, stats: st, tBuild, tSet };
+  window.__preview = { renderer, rig, terrain, stats: st, tBuild, tSet, redraw: frameDraw };
   document.body.dataset.ready = '1';
   if (qs.get('anim') === '1') {
     let last = performance.now();

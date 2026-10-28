@@ -20,6 +20,7 @@ uniform float uExposure;
 uniform vec3 uHaze;     // tint the fog applies to the sky colour near the horizon
 uniform vec4 uFogTint;  // rgb + amount: an explicit fog colour (0 = the sky's own haze)
 uniform float uAerial;  // strength of the far aerial haze (0.8 shipped)
+uniform float uAerialK; // scale of the distances (200..1400 m shipped) over which it builds up
 uniform vec3 uAmbSky;   // hemisphere ambient from above
 uniform vec3 uAmbGround; // and the ground bounce from below
 
@@ -51,7 +52,7 @@ vec3 fogCol(vec3 d) {
 // the tree line and the hills.
 float fogF(float d) {
   float f = 1.0 - exp(-d * d * uFogK * uFogK);
-  return max(f, uAerial * smoothstep(200.0, 1400.0, d));
+  return max(f, uAerial * smoothstep(200.0 * uAerialK, 1400.0 * uAerialK, d));
 }
 vec3 applyFog(vec3 c, vec3 rel) {
   float d = length(rel);
@@ -237,6 +238,9 @@ uniform float uStripe;   // mowing-stripe strength (theme)
 uniform vec3 uSkirtNear; // skirt ground at the grid edge / far out (sRGB albedo, theme)
 uniform vec3 uSkirtFar;
 uniform vec4 uSkirtDetail; // the ground detail the skirt gets
+uniform float uSkirtInv; // 1 / size (m) of the skirt's broad colour variation (97 m shipped)
+uniform float uSkirtBlend; // 1: the skirt starts as the (blurred) colour of the grid's edge and
+                           // turns into its own ground over the first band (no seam; 0 shipped)
 uniform vec4 uBeach;     // x: sea level, y: 1 when there is a sea (the skirt turns to sand there)
 uniform vec3 uSand;      // beach sand albedo
 uniform vec3 uRevet;     // sod colour of revetted bunker faces
@@ -317,7 +321,7 @@ void main() {
   vec2 view = normalize(v.xy + vec2(1e-5));
   vec4 nz = texture2D(uNoise, vWorld / 24.0);
   vec4 nzf = texture2D(uNoise, vWorld / 5.0);
-  vec4 nz2 = texture2D(uNoise, vWorld / 97.0);
+  vec4 nz2 = texture2D(uNoise, vWorld * uSkirtInv);
   vec3 alb;
   float mask = 0.0;
   vec4 dm;
@@ -328,6 +332,10 @@ void main() {
     // (Woodland seen from above is canopy tops in sun, not shadow: a mid green, not near black.)
     alb = mix(uSkirtNear, uSkirtFar, wood) * (0.88 + 0.24 * nz2.r);
     dm = uSkirtDetail;
+    if (uSkirtBlend > 0.5) {
+      vec3 edge = texture2D(uBake, clamp((vWorld - uBakeMin) * uBakeInv, 0.0, 1.0), 4.0).rgb;
+      alb = mix(edge, alb, smoothstep(0.0, 0.45, vN.x));
+    }
     if (uBeach.y > 0.5) {
       // (Below the waterline the sand darkens into the deep sea bed.)
       float b = (1.0 - smoothstep(uBeach.x + 0.6, uBeach.x + 1.8, vZ + (nz.r - 0.5) * 0.5)) * smoothstep(0.05, 0.5, vN.y);
@@ -373,16 +381,19 @@ void main() {
 // ---------------------------------------------------------------- water
 export const WATER_VS = `
 attribute vec3 aPos;     // world
-attribute float aSea;    // 1 = sea water (surf, open-sea horizon)
+attribute vec2 aWater;   // x: 1 = sea water (surf, open-sea horizon); y: depth (m) of the sea
+                         // over the skirt, or -1000 = read the baked depth texture
 uniform mat4 uVP;
 uniform vec3 uEye;
 varying vec3 vRel;
 varying vec2 vWorld;
 varying float vSea;
+varying float vDepth;
 void main() {
   vRel = aPos - uEye;
   vWorld = aPos.xy;
-  vSea = aSea;
+  vSea = aWater.x;
+  vDepth = aWater.y;
   gl_Position = uVP * vec4(vRel, 1.0);
 }`;
 
@@ -402,6 +413,7 @@ uniform vec4 uWaterK;      // x: clarity (m), y: most haze the sea takes, z: sea
 varying vec3 vRel;
 varying vec2 vWorld;
 varying float vSea;
+varying float vDepth;
 
 vec2 slope(vec2 uv) {
   float e = 1.0 / 256.0;
@@ -435,9 +447,10 @@ void main() {
     vec2 uv = (vWorld - uDepthMin) * uDepthInv;
     vec2 o = max(max(-uv, uv - 1.0), 0.0) / uDepthInv;
     vec4 dt = texture2D(uDepth, clamp(uv, 0.0, 1.0));
-    float depth = dt.r * 6.0;
     float shore = dt.g * 255.0 + length(o);
-    float k = 1.0 - exp(-(depth + 0.05 * max(shore - 8.0, 0.0)) / uWaterK.x);
+    // The local depth: baked on the hole, the skirt's own over the sea beyond it.
+    float depth = vDepth > -500.0 ? max(vDepth, 0.0) : dt.r * 6.0;
+    float k = 1.0 - exp(-max(depth, dt.r * 6.0 + 0.05 * max(shore - 8.0, 0.0)) / uWaterK.x);
     vec3 lightW = uSunCol * max(uSun.z, 0.0) * 0.55 + uAmbSky * 1.5;
     deep = mix(toLin(uTint.rgb) * lightW, deep, k);
     alpha = mix(0.42, 0.97, k);
@@ -558,6 +571,7 @@ uniform float uKind;     // 0 palm, 1 saguaro, 2 shrub, 3 gorse, 4 rock, 5 grass
 uniform vec3 uTint;      // main colour (sRGB): fronds, cactus skin, foliage, rock, blades
 uniform vec3 uTint2;     // second colour: palm trunk, saguaro rib grooves
 uniform vec4 uFade;      // near dither fade (start, end); far fade (start, end; 0 = none)
+uniform vec4 uClear;     // xyz: the ball, w: 1 = keep the sight line from the eye to it clear
 varying vec3 vRel;
 varying vec3 vN;
 varying vec3 vCol;
@@ -587,6 +601,7 @@ void main() {
   vec3 n;
   vec3 col = tint;
   float reach = 1.0;
+  float top = iA.w;        // height of the object's top above its base
   if (uKind < 0.5) {
     // Palm: a trunk curving away from the vertical, the crown on its top. The crown sways with
     // the gusts and the fronds bob and stream down-wind, most at their tips.
@@ -611,6 +626,7 @@ void main() {
       col = part < 1.5 ? mix(tint, tint * vec3(1.3, 1.2, 0.55), u * u * 0.5 * fract(seed * 2.9)) : uTint2 * vec3(0.85, 0.66, 0.42);
     }
     reach = rx;
+    top = H + rz;
   } else if (uKind < 1.5) {
     // Saguaro: the ribbed column (thicker on old giants) and up to four arms; young ones have
     // none or one.
@@ -637,6 +653,7 @@ void main() {
     p.xy = rot(p.xy, ang) + wd * (gust * (0.03 + 0.015 * wl) + 0.01 * wl) * k * k * rz;
     n = normalize(vec3(rot(aNrm.xy / rx, ang), aNrm.z / rz));
     reach = rx;
+    top = iA.w + rz;
   } else if (uKind < 4.5) {
     // Rock: stretched and turned per instance, the lower part buried.
     float r = iB.z;
@@ -657,6 +674,7 @@ void main() {
     n = vec3(rot(aNrm.xy, ang), aNrm.z);
     col = mix(tint * vec3(0.78, 0.88, 0.76), tint * vec3(1.18, 1.1, 0.92), v);
     reach = 0.4;
+    top = 0.9 * sc;
   }
   vUV = vec4(aAttr.z, aAttr.w, part, aAttr.y);
   vLocal = aPos * 3.0 + seed * 13.0;
@@ -666,6 +684,17 @@ void main() {
   vZ = iA.z + p.z;
   float hd = length(iA.xy - uEye.xy);
   vFade = smoothstep(uFade.x, uFade.y, length(vRel.xy) - reach * 0.5);
+  if (uClear.w > 0.5) {
+    // Objects standing in the sight line from the camera to the ball and tall enough to block it
+    // (a saguaro behind the tee) dissolve rather than fill the screen.
+    vec2 sb = uClear.xy - uEye.xy;
+    float sl = max(dot(sb, sb), 1e-4);
+    float t = clamp(dot(iA.xy - uEye.xy, sb) / sl, 0.0, 1.0);
+    float off = length(uEye.xy + sb * t - iA.xy);
+    float below = uEye.z + (uClear.z - uEye.z) * t - (iA.z + top);
+    off += step(0.97, t) * 99.0 + max(below, 0.0) * 4.0;
+    vFade *= smoothstep(reach * 0.6 + 0.8, reach * 0.6 + 2.5, off);
+  }
   gl_Position = uVP * vec4(vRel, 1.0);
   if (uFade.w > 0.0) {
     // Far fade for small things (grass): dithered out, then not drawn at all.

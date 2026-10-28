@@ -46,7 +46,7 @@ const OBJ_KINDS = [
 ];
 const HORIZON_KIND = { hills: 0, mountains: 1, mesas: 2, dunes: 3 };
 // Haze mixed into the far and near horizon silhouettes (the shipped 0.86 / 0.78 for hills).
-const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.66, 0.3], dunes: [0.84, 0.72] };
+const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.3], dunes: [0.84, 0.72] };
 
 const ZERO = { x: 0, y: 0, z: 0 };
 
@@ -206,9 +206,10 @@ export class Renderer {
     const stride = this.quality === 'low' ? 2 : 1;
     const sea = seaSetup(terrain, theme);
     const chunks = terrainChunks(terrain.grid, { stride });
-    const skirt = skirtMesh(terrain.grid, sea ? { sea } : {});
+    // (The shipped parkland skirt keeps its sparse edge; the themed ones meet the grid exactly.)
+    const skirt = skirtMesh(terrain.grid, theme.id === 'parkland' && !sea ? {} : { sea, dense: true });
     const bake = bakeTerrainColor(terrain, { sunDir: theme.sky.sunDir, theme });
-    const water = waterMesh(terrain.waters, 1.6, { sea });
+    const water = waterMesh(terrain.waters, 1.6, { sea, skirt });
     const depth = water.idx.length && theme.water.tint ? bakeWaterDepth(terrain) : null;
     const read = greenReadMesh(terrain);
     // Tree instances: [x, y, z, canopy-centre height, rx, rz, trunkR, seed] per tree, by kind.
@@ -310,6 +311,7 @@ export class Renderer {
       haze: f3(th.sky.haze),
       fogTint: f3(fog.color ? [...fog.color, fog.amount == null ? 1 : fog.amount] : [0, 0, 0, 0]),
       aerial: fog.aerial == null ? 0.8 : fog.aerial,
+      highClear: !!fog.highClear,
       fogK: fog.density || 1 / 1100,
       ambSky: f3(th.ambient.sky),
       ambGround: f3(th.ambient.ground),
@@ -327,6 +329,8 @@ export class Renderer {
       skirtNear: f3(th.skirt.near),
       skirtFar: f3(th.skirt.far),
       skirtDetail: f3(th.skirt.detail || [0, 0, 0, 0]),
+      skirtScale: th.skirt.scale || 97,
+      skirtBlend: th.skirt.blend ? 1 : 0,
       beach: f3(sea ? [sea.level, 1, 0, 0] : [0, 0, 0, 0]),
       sand: f3(th.surfaceColors[SURF.WASTE] || [0.9, 0.85, 0.7]),
       revet: f3(th.revet || [0.2, 0.26, 0.12]),
@@ -365,7 +369,7 @@ export class Renderer {
     }));
     res.skirt = { cx: c.skirt.cx, cy: c.skirt.cy, bPos: buf(c.skirt.pos), bNrm: buf(c.skirt.nrm), bIdx: buf(c.skirt.idx, E), count: c.skirt.idx.length };
     res.water = c.water.idx.length
-      ? { bPos: buf(c.water.pos), bSea: buf(c.water.sea), bIdx: buf(c.water.idx, E), count: c.water.idx.length }
+      ? { bPos: buf(c.water.pos), bWater: buf(c.water.water), bIdx: buf(c.water.idx, E), count: c.water.idx.length }
       : null;
     res.read = c.read ? { cx: c.read.cx, cy: c.read.cy, bData: buf(c.read.data), bIdx: buf(c.read.idx, E), count: c.read.idx.length } : null;
     res.props = c.props.idx.length
@@ -501,6 +505,7 @@ export class Renderer {
     if (u.uHaze) gl.uniform3fv(u.uHaze, U.haze);
     if (u.uFogTint) gl.uniform4fv(u.uFogTint, U.fogTint);
     if (u.uAerial) gl.uniform1f(u.uAerial, U.aerial);
+    if (u.uAerialK) gl.uniform1f(u.uAerialK, frame.aerialK);
     if (u.uAmbSky) gl.uniform3fv(u.uAmbSky, U.ambSky);
     if (u.uAmbGround) gl.uniform3fv(u.uAmbGround, U.ambGround);
     if (u.uTime) gl.uniform1f(u.uTime, frame.time);
@@ -606,8 +611,11 @@ export class Renderer {
     // Thinner haze for high cameras (map, flyover): the air above is clearer, and a uniform exp2 fog
     // would wash out a top-down view.
     const agl = this.terrain ? Math.max(0, e.z - this.terrain.heightAt(e.x, e.y)) : 0;
-    const fogK = this.U.fogK / (1 + Math.max(0, agl - 30) / 100);
-    const frame = { sun, fogK, time: scene.time || 0, wind: scene.wind || { x: 0, y: 0 } };
+    const thin = 1 + Math.max(0, agl - 30) / 100;
+    const fogK = this.U.fogK / thin;
+    // The aerial haze thins with height too on the themed courses (the shipped look keeps it).
+    const aerialK = this.U.highClear ? thin : 1;
+    const frame = { sun, fogK, aerialK, time: scene.time || 0, wind: scene.wind || { x: 0, y: 0 } };
 
     gl.viewport(0, 0, W, Hh);
     gl.clearColor(0.75, 0.82, 0.88, 1);
@@ -647,6 +655,8 @@ export class Renderer {
       gl.uniform3fv(u.uSkirtNear, U.skirtNear);
       gl.uniform3fv(u.uSkirtFar, U.skirtFar);
       gl.uniform4fv(u.uSkirtDetail, U.skirtDetail);
+      gl.uniform1f(u.uSkirtInv, 1 / U.skirtScale);
+      gl.uniform1f(u.uSkirtBlend, U.skirtBlend);
       gl.uniform4fv(u.uBeach, U.beach);
       gl.uniform3fv(u.uSand, U.sand);
       gl.uniform3fv(u.uRevet, U.revet);
@@ -707,6 +717,8 @@ export class Renderer {
 
       // ---- themed objects (instanced, one draw per kind present)
       const ob = this.P.obj;
+      const ball = scene.ball;
+      const clear = !!ball && ball.visible !== false && scene.clearView !== false;
       const MESH = { palm: this.G.palm, saguaro: this.G.saguaro, shrub: this.G.bush, gorse: this.G.bush, rock: this.G.rock, grass: this.G.grass };
       for (const o of OBJ_KINDS) {
         const set = R.objs[o.kind];
@@ -717,6 +729,7 @@ export class Renderer {
         gl.uniform3fv(u.uTint, this.U.tints[o.kind] || [0.3, 0.4, 0.2]);
         gl.uniform3fv(u.uTint2, this.U.trunks[o.kind] || this.U.tints[o.kind] || [0.3, 0.3, 0.25]);
         gl.uniform4fv(u.uFade, o.fade);
+        gl.uniform4f(u.uClear, clear ? ball.x : 0, clear ? ball.y : 0, clear ? ball.z : 0, clear ? 1 : 0);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.G.noise);
         gl.uniform1i(u.uNoise, 0);
@@ -802,7 +815,7 @@ export class Renderer {
       gl.depthMask(true);
       gl.disable(gl.CULL_FACE);
       A.bind(wp.a.aPos, R.water.bPos, 3);
-      A.bind(wp.a.aSea, R.water.bSea, 1);
+      A.bind(wp.a.aWater, R.water.bWater, 2);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, R.water.bIdx);
       this._drawElements(R.water.count);
       gl.enable(gl.CULL_FACE);

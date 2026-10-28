@@ -232,8 +232,8 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = 
           break;
         case SURF.DESERT: {
           // Desert floor: iron-red and pale caliche patches, mottled by stones and scrub.
-          c = mix3(cDesert, cDesertRed, sat((nb - 0.56) * 4) * 0.7);
-          c = mix3(c, cDesertPale, sat((0.4 - nb) * 4) * 0.6);
+          c = mix3(cDesert, cDesertRed, sat((nb - 0.56) * 3) * 0.45);
+          c = mix3(c, cDesertPale, sat((0.4 - nb) * 3) * 0.4);
           c = mul3(c, 0.9 + 0.18 * nf);
           detail()[0][k] = 1;
           break;
@@ -269,7 +269,7 @@ export function bakeTerrainColor(terrain, { sunDir = SUN_DIR, seed = 7, theme = 
       if (sandNear[k] > 0.02) {
         const gx = hAt(x + 0.5, y) - hAt(x - 0.5, y);
         const gy = hAt(x, y + 0.5) - hAt(x, y - 0.5);
-        const rv = sat((Math.hypot(gx, gy) - REVET_GRAD) * 5);
+        const rv = sat((Math.hypot(gx, gy) - REVET_GRAD) * 8);
         if (rv > 0) {
           c = mix3(c, mul3(cRevet, 0.9 + 0.15 * nf), rv);
           detail()[3][k] = rv;

@@ -12,7 +12,8 @@
 //   clouds     {cover, shift, grey}: cumulus density = clamp(density * cover + shift); grey turns
 //              the cloud deck into an overcast (0 = sunlit white cumulus)
 //   fog        {color: null (derived from the sky, as shipped) | rgb, density (exp2, 1/m),
-//               aerial (how far past ~200 m the haze takes distant terrain, 0..1)}
+//               aerial (how far past ~200 m the haze takes distant terrain, 0..1), highClear (the
+//               aerial haze thins for high cameras as the fog does; off in the shipped look)}
 //   ambient    {sky, ground}: hemisphere ambient from above and from the ground bounce
 //   surfaceColors {[SURF.*]: rgb}: overrides SURFACES[].color for every surface
 //   revet      sod colour of revetted pot-bunker faces (stacked turf walls)
@@ -30,8 +31,10 @@
 //              line: 0 = beyond the green, 90 = left, -90 = right), per hole number n % length
 //   seaHalf    half-angle of the sea sector (deg)
 //   ridges     {far, near}: colours of the two horizon silhouettes before the haze
-//   skirt      {near, far, detail:[desert, waste, fescue, 0]}: ground beyond the hole (near the
-//              grid edge, far out) and the ground detail it gets
+//   skirt      {near, far, detail:[desert, waste, fescue, 0], scale, blend}: ground beyond the hole
+//              (near the grid edge, far out), the ground detail it gets, the size (m) of its broad
+//              colour variation (97 shipped; larger never aliases into a checker from high up) and
+//              blend (it starts as the grid edge's own colour, so the hole has no visible border)
 //   skirtObjects null (the shipped pine/broad tree line) | {kinds:{kind: weight}, perVertex, grass}
 //              objects on the first skirt band (per 8 m of perimeter) and dune-grass tufts
 //   tints      {pine, broad, palm, saguaro, shrub, gorse, rock, grass}: object colours
@@ -101,7 +104,7 @@ const DESERT = {
     haze: [0.98, 0.95, 0.9],
   },
   clouds: { cover: 0.65, shift: -0.14, grey: 0 },
-  fog: { color: null, density: 1 / 1800, aerial: 0.5 },
+  fog: { color: null, density: 1 / 1800, aerial: 0.5, highClear: true },
   ambient: { sky: [0.22, 0.24, 0.3], ground: [0.13, 0.09, 0.06] },
   surfaceColors: surfaceColors({
     [SURF.TEE]: [0.26, 0.6, 0.22],
@@ -123,8 +126,8 @@ const DESERT = {
   land: 'mesas',
   seaAz: [0],
   seaHalf: 70,
-  ridges: { far: [0.24, 0.22, 0.38], near: [0.36, 0.11, 0.045] },
-  skirt: { near: [0.65, 0.52, 0.41], far: [0.6, 0.48, 0.39], detail: [1, 0, 0, 0] },
+  ridges: { far: [0.24, 0.22, 0.38], near: [0.42, 0.15, 0.05] },
+  skirt: { near: [0.63, 0.5, 0.4], far: [0.6, 0.47, 0.38], detail: [1, 0, 0, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { saguaro: 0.3, shrub: 0.55, rock: 0.15 }, perVertex: 0.8, grass: 0 },
   tints: {
     pine: [0.12, 0.2, 0.1], broad: [0.22, 0.3, 0.12], palm: [0.22, 0.34, 0.12], saguaro: [0.34, 0.43, 0.27],
@@ -146,7 +149,7 @@ const TROPICAL = {
     haze: [0.92, 0.96, 0.98],
   },
   clouds: { cover: 1.3, shift: -0.06, grey: 0 },
-  fog: { color: null, density: 1 / 1500, aerial: 0.62 },
+  fog: { color: null, density: 1 / 1500, aerial: 0.62, highClear: true },
   ambient: { sky: [0.2, 0.25, 0.32], ground: [0.08, 0.09, 0.05] },
   surfaceColors: surfaceColors({
     [SURF.TEE]: [0.3, 0.64, 0.24],
@@ -166,7 +169,7 @@ const TROPICAL = {
   seaAz: [0, 90, -90],
   seaHalf: 75,
   ridges: { far: [0.08, 0.15, 0.17], near: [0.03, 0.08, 0.04] },
-  skirt: { near: [0.2, 0.42, 0.14], far: [0.1, 0.26, 0.08], detail: [0, 0, 0, 0] },
+  skirt: { near: [0.2, 0.42, 0.14], far: [0.1, 0.26, 0.08], detail: [0, 0, 0, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { palm: 0.65, broad: 0.35 }, perVertex: 1.2, grass: 0 },
   tints: {
     pine: [0.1, 0.22, 0.1], broad: [0.16, 0.34, 0.1], palm: [0.3, 0.5, 0.13], saguaro: [0.2, 0.34, 0.16],
@@ -188,7 +191,7 @@ const LINKS = {
     haze: [0.92, 0.94, 0.96],
   },
   clouds: { cover: 1.1, shift: -0.02, grey: 0.5 },
-  fog: { color: null, density: 1 / 1200, aerial: 0.75 },
+  fog: { color: null, density: 1 / 1200, aerial: 0.75, highClear: true },
   ambient: { sky: [0.3, 0.32, 0.36], ground: [0.1, 0.1, 0.07] },
   surfaceColors: surfaceColors({
     [SURF.TEE]: [0.44, 0.58, 0.26],
@@ -204,13 +207,13 @@ const LINKS = {
   }),
   revet: [0.17, 0.22, 0.1],
   detail: { rake: 0.4, pebbles: 0.5, sheen: 1 },
-  water: { deep: [0.01, 0.035, 0.05], shallow: [0.62, 0.58, 0.46], sea: true, tint: [0.22, 0.36, 0.38], clarity: 1.5, haze: 0.45, rough: 0.22 },
+  water: { deep: [0.01, 0.035, 0.05], shallow: [0.62, 0.58, 0.46], sea: true, tint: [0.22, 0.36, 0.38], clarity: 1.5, haze: 0.45, rough: 0.3 },
   horizon: 'ocean',
   land: 'dunes',
   seaAz: [90, 0, -90],
   seaHalf: 65,
   ridges: { far: [0.2, 0.24, 0.28], near: [0.3, 0.31, 0.22] },
-  skirt: { near: [0.64, 0.58, 0.36], far: [0.5, 0.5, 0.32], detail: [0, 0, 1, 0] },
+  skirt: { near: [0.64, 0.58, 0.36], far: [0.5, 0.5, 0.32], detail: [0, 0, 1, 0], scale: 700, blend: true },
   skirtObjects: { kinds: { gorse: 1 }, perVertex: 0.35, grass: 3 },
   tints: {
     pine: [0.1, 0.18, 0.1], broad: [0.18, 0.26, 0.12], palm: [0.2, 0.32, 0.12], saguaro: [0.2, 0.32, 0.16],

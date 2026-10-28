@@ -99,8 +99,11 @@ export function terrainChunks(grid, { chunk = TERRAIN_CHUNK, stride = 1 } = {}) 
 // With `sea` (seaSetup) the land falls away under the sea level toward the sea (all round when
 // sea.full, else within the sea sector and wherever the grid edge is already under water), with
 // the shore a few tens of metres out; landward rings stay above the sea level so the sea plane
-// never shows through them.
-export function skirtMesh(grid, { outer = 4000, every = 8, sea = null } = {}) {
+// never shows through them. `dense` gives the inner edge a vertex at every grid node (fanned to
+// the first ring), so it meets the terrain chunks exactly: no slits along the grid edge to see
+// the sea or sky through. The extra edge vertices follow the 4 x n ring vertices, whose layout
+// (ring r, perimeter vertex k at r·n + k) is unchanged.
+export function skirtMesh(grid, { outer = 4000, every = 8, sea = null, dense = false } = {}) {
   const { nx, ny, minX, minY, step, heights } = grid;
   const maxX = minX + (nx - 1) * step;
   const maxY = minY + (ny - 1) * step;
@@ -181,20 +184,56 @@ export function skirtMesh(grid, { outer = 4000, every = 8, sea = null } = {}) {
       nrm[o + 2] = 1;
     }
   }
-  const idx = new Uint16Array(n * (RINGS - 1) * 6);
-  let q = 0;
-  for (let r = 0; r < RINGS - 1; r++) {
+  if (!dense) {
+    const idx = new Uint16Array(n * (RINGS - 1) * 6);
+    let q = 0;
+    for (let r = 0; r < RINGS - 1; r++) {
+      for (let k = 0; k < n; k++) {
+        const a = r * n + k;
+        const b = r * n + ((k + 1) % n);
+        const c = a + n;
+        const d = b + n;
+        // CCW seen from above (perimeter runs counter-clockwise, rings go outward).
+        idx[q++] = a; idx[q++] = d; idx[q++] = b;
+        idx[q++] = a; idx[q++] = c; idx[q++] = d;
+      }
+    }
+    return { cx, cy, pos, nrm, idx, n };
+  }
+  // Dense inner edge: the grid nodes between consecutive perimeter vertices (always on one side
+  // of the rectangle) become extra vertices, fanned to the two first-ring vertices outside them.
+  const P = Array.from(pos);
+  const Nn = Array.from(nrm);
+  const I = [];
+  for (let k = 0; k < n; k++) {
+    const [i0, j0] = per[k];
+    const [i1, j1] = per[(k + 1) % n];
+    const steps = Math.max(Math.abs(i1 - i0), Math.abs(j1 - j0));
+    const chain = [k];
+    for (let m = 1; m < steps; m++) {
+      const i = i0 + Math.sign(i1 - i0) * m;
+      const j = j0 + Math.sign(j1 - j0) * m;
+      const v = P.length / 3;
+      P.push(minX + i * step - cx, minY + j * step - cy, heights[j * nx + i]);
+      const sw = seaW ? seaW[k] + (seaW[(k + 1) % n] - seaW[k]) * (m / steps) : 0;
+      Nn.push(0, sw, 1);
+      chain.push(v);
+    }
+    chain.push((k + 1) % n);
+    const c = n + k;
+    const d = n + ((k + 1) % n);
+    const half = chain.length >> 1;
+    for (let m = 0; m < chain.length - 1; m++) I.push(chain[m], m < half ? c : d, chain[m + 1]);
+    I.push(chain[half], c, d);
+  }
+  for (let r = 1; r < RINGS - 1; r++) {
     for (let k = 0; k < n; k++) {
       const a = r * n + k;
       const b = r * n + ((k + 1) % n);
-      const c = a + n;
-      const d = b + n;
-      // CCW seen from above (perimeter runs counter-clockwise, rings go outward).
-      idx[q++] = a; idx[q++] = d; idx[q++] = b;
-      idx[q++] = a; idx[q++] = c; idx[q++] = d;
+      I.push(a, b + n, b, a, a + n, b + n);
     }
   }
-  return { cx, cy, pos, nrm, idx, n };
+  return { cx, cy, pos: new Float32Array(P), nrm: new Float32Array(Nn), idx: new Uint16Array(I), n };
 }
 
 // Background tree line on the first skirt band (grid edge -> +60 m), so the course is framed by
@@ -616,10 +655,10 @@ function h01(k) {
 // crown: x, y in crown radii (canopy rx), z in canopy rz, from the crown centre at the trunk top;
 // u = 0 at the crown .. 1 at the tip, v = -1 .. 1 across the blade (the shader cuts the leaflets).
 // Each frond arches up and droops (z = a·u − b·u²), its leaflets folded down in a shallow V.
-export function palmMesh({ fronds = 11, segs = 6 } = {}) {
+export function palmMesh({ fronds = 11, segs = 5 } = {}) {
   const B = objBuilder();
   const S = 7;
-  const RINGS = 9;
+  const RINGS = 7;
   let prev = null;
   for (let r = 0; r <= RINGS; r++) {
     const t = r / RINGS;
@@ -634,14 +673,14 @@ export function palmMesh({ fronds = 11, segs = 6 } = {}) {
     if (prev) B.strip(prev, row);
     prev = row;
   }
-  const frond = (part, phi, a, b, len, wid, shadeBase) => {
+  const frond = (part, phi, a, b, len, wid, shadeBase, ns = segs) => {
     const dx = Math.cos(phi);
     const dy = Math.sin(phi);
     const sx = -dy;
     const sy = dx;
     let r0 = null;
-    for (let k = 0; k <= segs; k++) {
-      const u = k / segs;
+    for (let k = 0; k <= ns; k++) {
+      const u = k / ns;
       const x = len * u;
       const z = a * u - b * u * u;
       const w = wid * Math.sin(Math.PI * Math.min(1, Math.pow(u, 0.75) * 1.05)) + 0.004;
@@ -667,7 +706,7 @@ export function palmMesh({ fronds = 11, segs = 6 } = {}) {
     frond(1, phi, a, b, 0.9 + 0.12 * h01(f + 60), 0.17, upper ? 0.55 : 0.4);
   }
   for (let f = 0; f < 3; f++) {
-    frond(2, (f / 3) * Math.PI * 2 + 0.6, -0.5, 0.9, 0.42, 0.07, 0.25);
+    frond(2, (f / 3) * Math.PI * 2 + 0.6, -0.5, 0.9, 0.42, 0.07, 0.25, 3);
   }
   return B.build();
 }
@@ -679,24 +718,26 @@ export function palmMesh({ fronds = 11, segs = 6 } = {}) {
 // arms as the instance has (none or one when young). u runs round the stem (rib grooves).
 export function saguaroMesh() {
   const B = objBuilder();
-  const N = 12;
+  const N = 12; // column vertices round (6 ribs); arms use NA (4 ribs)
+  const NA = 8;
   const rib = (s) => (s % 2 ? 0.84 : 1);
   const ribShade = (s) => (s % 2 ? 0.55 : 1);
   const ring = (z, rf, part, armId, cxyz = null, frame = null, r = 1) => {
     const row = [];
-    for (let s = 0; s <= N; s++) {
-      const ang = (s / N) * Math.PI * 2;
+    const M = frame ? NA : N;
+    for (let s = 0; s <= M; s++) {
+      const ang = (s / M) * Math.PI * 2;
       const c = Math.cos(ang);
       const sn = Math.sin(ang);
-      const k = rib(s % N) * rf;
+      const k = rib(s % M) * rf;
       if (!frame) {
-        row.push(B.v(c * k, sn * k, z, c, sn, 0, part, ribShade(s % N), s / N, armId));
+        row.push(B.v(c * k, sn * k, z, c, sn, 0, part, ribShade(s % M), s / M, armId));
       } else {
         // Tube ring round cxyz in the plane of frame {n, b} (unit vectors).
         const ox = (frame.n[0] * c + frame.b[0] * sn) * r * k;
         const oy = (frame.n[1] * c + frame.b[1] * sn) * r * k;
         const oz = (frame.n[2] * c + frame.b[2] * sn) * r * k;
-        row.push(B.v(cxyz[0] + ox, cxyz[1] + oy, cxyz[2] + oz, ox, oy, oz, part, ribShade(s % N), s / N, armId));
+        row.push(B.v(cxyz[0] + ox, cxyz[1] + oy, cxyz[2] + oz, ox, oy, oz, part, ribShade(s % M), s / M, armId));
       }
     }
     return row;
@@ -722,7 +763,7 @@ export function saguaroMesh() {
     const ca = Math.cos(az);
     const sa = Math.sin(az);
     // Path in the arm's vertical plane (d = horizontal distance out, z = height).
-    const P = [[0, h0], [out * 0.5, h0 - 0.06], [out * 0.82, h0 + 0.02], [out, h0 + 0.28], [out * 1.02, h0 + 0.28 + up * 0.5], [out, h0 + 0.28 + up]];
+    const P = [[0, h0], [out * 0.55, h0 - 0.05], [out * 0.9, h0 + 0.08], [out, h0 + 0.3 + up * 0.45], [out, h0 + 0.28 + up]];
     const pts = P.map(([d, z]) => [ca * d, sa * d, z]);
     let row0 = null;
     const bvec = [-sa, ca, 0]; // horizontal, perpendicular to the arm's plane
@@ -747,7 +788,7 @@ export function saguaroMesh() {
     const cap = ring(0, 0.62, 1, k + 1, [tip[0], tip[1], tip[2] + r * 0.6], { n: [1, 0, 0], b: [0, 1, 0] }, r);
     B.strip(row0, cap);
     const t = B.v(tip[0], tip[1], tip[2] + r, 0, 0, 1, 1, 1, 0, k + 1);
-    for (let s = 0; s < N; s++) B.i.push(cap[s], cap[s + 1], t);
+    for (let s = 0; s < NA; s++) B.i.push(cap[s], cap[s + 1], t);
   });
   return B.build();
 }
@@ -990,31 +1031,57 @@ export function triangulate(poly) {
   return out;
 }
 
-// All water bodies in one mesh: pos (world xyz), idx, and sea (per vertex: 1 = sea water, which
-// gets surf and the open-sea look). With `sea` (seaSetup) the sea also runs out to `outer` metres:
-// an annulus from the edge of the hole's grid (sea.rect), or a whole disc when sea.full (it then
-// replaces the hole's fill:'outside' flood plane, which lies at the same level). Sea polygons are
-// clipped to the grid rectangle so they never overlap the annulus (a double blend).
-export function waterMesh(waters, pad = 1.6, { sea = null, outer = 5500, segs = 72 } = {}) {
+// All water bodies in one mesh: pos (world xyz), idx, and water (per vertex [sea, depth]: sea = 1
+// for sea water, which gets surf and the open-sea look; depth = the water depth there, or -1000
+// for "read the baked depth texture" (the hole's own water)). With `sea` (seaSetup) the sea also
+// runs out to the horizon: built on the skirt mesh's own vertices and triangles (so its per-vertex
+// depth, sea level minus the skirt height, interpolates exactly like the skirt: the surf line
+// lands on the skirt's shore) plus a last ring out to `outer` metres; without the skirt, an
+// annulus from the grid rectangle. The hole's sea polygons and its fill:'outside' flood are
+// clipped to the grid rectangle so they meet the annulus without overlapping it (a double blend).
+export function waterMesh(waters, pad = 1.6, { sea = null, skirt = null, outer = 6000, segs = 72 } = {}) {
   const p = [];
   const i = [];
   const f = [];
   for (const w of waters || []) {
     if (!w.poly || w.poly.length < 3) continue;
-    if (sea && sea.full && w.fill === 'outside') continue;
     let poly = offsetPoly(w.poly, pad);
-    if (sea && w.sea) {
+    if (sea && (w.sea || w.fill === 'outside')) {
       const r = sea.rect;
       poly = poly.map((q) => ({ x: Math.min(r.maxX, Math.max(r.minX, q.x)), y: Math.min(r.maxY, Math.max(r.minY, q.y)) }));
     }
     const b = p.length / 3;
     for (const q of poly) {
       p.push(q.x, q.y, w.level);
-      f.push(w.sea ? 1 : 0);
+      f.push(w.sea || (sea && sea.full && w.fill === 'outside') ? 1 : 0, -1000);
     }
     for (const t of triangulate(poly)) i.push(b + t);
   }
-  if (sea) {
+  if (sea && skirt) {
+    const b = p.length / 3;
+    const sp = skirt.pos;
+    const nv = sp.length / 3;
+    for (let k = 0; k < nv; k++) {
+      p.push(sp[k * 3] + skirt.cx, sp[k * 3 + 1] + skirt.cy, sea.level);
+      f.push(1, sea.level - sp[k * 3 + 2]);
+    }
+    for (const t of skirt.idx) i.push(b + t);
+    // Beyond the skirt's outer ring (ring 3: vertices 3n .. 4n-1) to the horizon.
+    const n = skirt.n;
+    const o = p.length / 3;
+    for (let k = 0; k < n; k++) {
+      const x = sp[(3 * n + k) * 3];
+      const y = sp[(3 * n + k) * 3 + 1];
+      const l = Math.hypot(x, y) || 1;
+      p.push(skirt.cx + (x / l) * outer, skirt.cy + (y / l) * outer, sea.level);
+      f.push(1, 200);
+    }
+    for (let k = 0; k < n; k++) {
+      const a = b + 3 * n + k;
+      const c = b + 3 * n + ((k + 1) % n);
+      i.push(a, o + ((k + 1) % n), c, a, o + k, o + ((k + 1) % n));
+    }
+  } else if (sea) {
     const r = sea.rect;
     const cx = (r.minX + r.maxX) / 2;
     const cy = (r.minY + r.maxY) / 2;
@@ -1025,33 +1092,23 @@ export function waterMesh(waters, pad = 1.6, { sea = null, outer = 5500, segs = 
     angs.sort((a, b) => a - b);
     const b = p.length / 3;
     const m = angs.length;
-    if (sea.full) {
-      p.push(cx, cy, sea.level);
-      f.push(1);
-      for (const a of angs) {
-        p.push(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer, sea.level);
-        f.push(1);
-      }
-      for (let k = 0; k < m; k++) i.push(b, b + 1 + k, b + 1 + ((k + 1) % m));
-    } else {
-      const hx = (r.maxX - r.minX) / 2;
-      const hy = (r.maxY - r.minY) / 2;
-      for (const a of angs) {
-        const ca = Math.cos(a);
-        const sa = Math.sin(a);
-        // Ray from the centre to the rectangle's edge.
-        const t = Math.min(Math.abs(ca) > 1e-9 ? hx / Math.abs(ca) : Infinity, Math.abs(sa) > 1e-9 ? hy / Math.abs(sa) : Infinity);
-        p.push(cx + ca * t, cy + sa * t, sea.level, cx + ca * outer, cy + sa * outer, sea.level);
-        f.push(1, 1);
-      }
-      for (let k = 0; k < m; k++) {
-        const a0 = b + k * 2;
-        const a1 = b + ((k + 1) % m) * 2;
-        i.push(a0, a1, a0 + 1, a1, a1 + 1, a0 + 1);
-      }
+    const hx = (r.maxX - r.minX) / 2;
+    const hy = (r.maxY - r.minY) / 2;
+    for (const a of angs) {
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      // Ray from the centre to the rectangle's edge.
+      const t = Math.min(Math.abs(ca) > 1e-9 ? hx / Math.abs(ca) : Infinity, Math.abs(sa) > 1e-9 ? hy / Math.abs(sa) : Infinity);
+      p.push(cx + ca * t, cy + sa * t, sea.level, cx + ca * outer, cy + sa * outer, sea.level);
+      f.push(1, -1000, 1, 200);
+    }
+    for (let k = 0; k < m; k++) {
+      const a0 = b + k * 2;
+      const a1 = b + ((k + 1) % m) * 2;
+      i.push(a0, a1, a0 + 1, a1, a1 + 1, a0 + 1);
     }
   }
-  return { pos: new Float32Array(p), idx: new Uint16Array(i), sea: new Float32Array(f) };
+  return { pos: new Float32Array(p), idx: new Uint16Array(i), water: new Float32Array(f) };
 }
 
 // Where the sea lies for one hole, or null when it has none: {level, dir:{x,y} (unit, from the
