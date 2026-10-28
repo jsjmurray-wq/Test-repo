@@ -757,3 +757,183 @@ input.resize(); input.destroy()
 and `handle(eventOrEvents)` for shot events `{type, surface, v, kind?}` (`launch` → impact with
 `ev.kind` or `ev.club.kind`, else guessed from speed; `land`/`bounce`/`tree`/`pin`/`lipout`/`cup`/
 `water`; also synthetic `{type:'swing', power}` and `{type:'applause', strength}`).
+
+---
+
+## 8. Version 2: easier swing, three new courses, special shots (contracts)
+
+Version 2 adds four things to the shipped game (Hollow Pines):
+1. A more forgiving swing gesture, plus a tap-meter alternative.
+2. Three new 9-hole courses: **desert**, **water** and **links**, chosen from the menu.
+3. Course themes in the renderer.
+4. Special shots: **draw, cut, stinger, punch, flop, bump & run**.
+
+Everything here is additive. Hollow Pines must play exactly as before unless a section says so.
+
+### 8.1 Swing ease (`input.js`, `swing.js` `interpretSwing`, `ui.js` power arc, `main.js` wiring)
+
+Players reported two problems on a real phone:
+- (a) **Power is hard to judge.** Full power was about 100 px of travel, so 10 px changed power by 10%.
+- (b) **The swipe is not recognised.** A strike needed the finger to cross the touchdown line upward at 400 px/s or faster.
+
+**Power travel**
+- Full power sits at a comfortable thumb distance: `fullPowerPx(padH) = clamp(0.55·padH, 140, 220)` CSS px.
+- Putts use their own constant, about 0.5·padH clamped to 110–200 px.
+- `swingProgress` and `interpretSwing` must use the same function. Export it from `input.js`.
+
+**Detent at full power**
+- Raw power between 0.95 and 1.06 reads as exactly 1.0.
+- Overswing (up to 1.1) needs travel past about 1.12× the full-power distance.
+- The gauge shows ticks at 25, 50, 75 and 100%.
+
+**Target notch**
+- `main.js` computes the power that reaches the target and passes it to `ui.setPower({..., target})`. The target is the pin, or the aim point when the pin is out of reach. The power comes from the inverse of the caddie power curve (`curveAt`/`powerCurve`).
+- The arc draws a notch at that power. It glows when the live power is within ±3% of it.
+- On Easy, power within ±5% of the target snaps to it.
+
+**Strike recognition** replaces the "cross the impact line at 400 px/s" rule.
+- After the deepest point of the backswing, the swing strikes once the finger has climbed by at least `max(24 px, 0.25·depth)` at an average speed of 120 px/s or more.
+- It also strikes on release while moving up at 150 px/s or more over the last 80 ms.
+- The finger does **not** need to reach the touchdown line.
+- A slow but clear upswing strikes with tempo `'decel'` (speed × 0.95) instead of failing as `tooSlow`.
+- Cancel only on:
+  - release at the bottom with no upward movement (`reason 'cancel'`, toast "Swing cancelled — swipe up to hit");
+  - `pointercancel`;
+  - dragging more than 90 px sideways out of the pad during the backswing.
+- Use pointer capture so leaving the pad never drops a swing.
+
+**Larger pad:** the pad covers the lower 45% of the height in portrait. Keep it clear of the club and shot pickers.
+
+**Tap meter (`settings.swing = 'swipe' | 'tap'`, default `'swipe'`)**
+- The first tap in the pad starts a power bar that fills 0 → 1.1 over 1.4 s, then falls back.
+- The second tap sets the power and hits.
+- Direction and curve are 0. Contact scatter still applies.
+- `interpretSwing` is not used. `main.js` builds `{ok:true, kind, power, startDir:0, faceToPath:0, tempo:'smooth', label:'Tap swing'}`.
+- Putting works the same way with the putt range.
+
+### 8.2 Courses (`courses.js`, `course*.js`, `terrain.js`)
+
+```js
+// courses.js
+export const COURSES = [PINES, DESERT, WATER, LINKS];   // menu order
+export function courseById(id)                           // falls back to COURSES[0]
+export const DEFAULT_COURSE_ID = 'pines';
+// Course object (each course-*.js exports one; course.js keeps `COURSE` = Hollow Pines and adds id/theme)
+{ id:'pines'|'desert'|'water'|'links', name, tagline, theme:'parkland'|'desert'|'tropical'|'links',
+  conditions:{ firm: 1.0,          // fairway/rough firmness: >1 = more bounce & roll (links ~1.45, desert ~1.25)
+               greenStimpFt: 10.5, // green speed
+               wind: 'normal'|'windy' },  // 'windy' adds +3 m/s to the Light/Breezy ranges (links)
+  holes:[HoleDef × 9] }
+```
+
+- **Files:**
+  - `course.js` (Hollow Pines): `COURSE.id = 'pines'`, theme `'parkland'`, conditions `{firm: 1, greenStimpFt: 10.5, wind: 'normal'}`.
+  - `course-desert.js` exports `DESERT`, `course-water.js` exports `WATER`, `course-links.js` exports `LINKS`.
+- **Building holes:** `buildHole(def, {pinIndex, seed, course})`. HoleTerrain gains `theme`, `conditions` and `courseId`.
+  - Without `course`, it defaults to the Hollow Pines values.
+- **Physics** takes surface parameters through `surfaceParams(terrain, surfId)` (exported from `physics.js`). It applies `terrain.conditions`:
+  - `firm` scales roll resistance `a0`/`kv` by 1/firm on fairway, tee and rough, and raises fairway restitution `e` by `(firm−1)·0.25`. Clamp so the bounce stays physical.
+  - `greenStimpFt` rescales the green's `a0`/`kv` so that `stimpDistance(1.83)` matches.
+  - Defaults reproduce the current values exactly. All existing tests stay green.
+
+**New surfaces** (append to `SURF`, `SURF_NAMES` and `SURFACES` in `constants.js`):
+
+| id | Surface | Plays like | Lie factors (speed / spin / launch Δ / sdir) |
+|---|---|---|---|
+| 9 `WASTE` | Desert hardpan, waste sand, beach sand. No penalty, grounding allowed | Firm sand: low bounce, quick stop | 0.93 / 0.75 / +1 / 1.2 |
+| 10 `DESERT` | Natural desert scrub with stones | Erratic, dead bounces | 0.75 / 0.5 / +2 / 3.0 |
+| 11 `FESCUE` | Links long fescue, marram and gorse edges | Ball stops almost dead | 0.70 / 0.45 / +3 / 3.0 |
+
+- None of the three counts as a penalty area. Lie labels: "Waste area", "Desert", "Fescue".
+- `bake.js` and the renderer need colours for them. Each theme may override every surface's colour.
+
+**New HoleDef fields** (all optional; existing holes are unaffected)
+
+- `outside: 'rough'|'desert'|'fescue'|'waste'|'water'`: what lies beyond the rough band.
+  - Desert courses use `'desert'`. Links uses `'fescue'`.
+  - `'water'` floods everything outside the corridor to a sea or lake level, for island holes and ocean edges.
+- `rough: {w}`: half-width of the rough band beyond the fairway edge before `outside` begins (default 18 m).
+- `areas: [{surface:'waste'|'desert'|'fescue'|'bunker'|'rough'|'fairway', shape|poly|xy, dz?}]`: free-form surface painting, with an optional height offset. Areas paint before bunkers, water and greens, which still win.
+- Bunkers may set `pot: true`: a deep (1.2–1.8 m) round bunker with a steep revetted face. The physics lie stays BUNKER.
+- Water may set `sea: true` (renders as ocean with surf and a horizon).
+- The `fill: 'outside'` form floods everything outside its polygon, for island greens.
+- Object scatter replaces the pine/broad `mix` for themed courses. The old rows still work.
+  - `objects: [{kind, from, to, off, gap, jitter} | {kind, s, off, cluster, spread} | {kind, area, density}]`
+  - `kind` is `'pine'|'broad'|'palm'|'saguaro'|'shrub'|'rock'|'gorse'|'grass'`.
+  - `kind` may also be a weight map such as `{palm: 0.7, broad: 0.3}`.
+
+**HoleTerrain objects** (the `trees` array keeps its name for compatibility). Each entry:
+
+```js
+{ kind, x, y, z, trunkR, trunkH, canopy:{cz, rx, rz}|null, hard?:boolean, scale? }
+```
+
+- **palm:** thin trunk (0.18 m) about 8–12 m tall, with a canopy ellipsoid at the top.
+- **saguaro:** a hard column, trunkR 0.25, trunkH 4–9 m, `canopy: null`. Its arms are visual only.
+- **shrub / gorse:** no trunk (`trunkR: 0`), a low canopy (cz about 0.6 m, rx 1–2 m).
+  - A ball entering one has a high hit probability and drops nearly dead.
+- **rock:** `hard: true`, trunkR is the rock radius and trunkH its height. Collision is a hard cylinder with e = 0.5. No canopy.
+- **grass:** dune grass tufts, visual only. Leave them out of `trees`, or give them `trunkR: 0` and `canopy: null`.
+- Physics must accept `trunkR: 0` and `canopy: null`.
+
+### 8.3 Themes (`themes.js` data, consumed by `render.js`/`bake.js`/`shaders.js`)
+
+```js
+export const THEMES = { parkland, desert, tropical, links };
+// theme fields:
+{ id, sky:{zenith, horizon, sunColor, sunDir:{x,y,z}, haze}, fog:{color, density}, ambient:{sky, ground},
+  surfaceColors:{[SURF.*]: [r,g,b]},  // overrides SURFACES[].color
+  water:{deep, shallow, sea?:boolean}, horizon:'hills'|'mountains'|'ocean'|'dunes'|'mesas',
+  stripe:1.0 }                       // mowing-stripe strength multiplier (links ~0.4: firmer, browner, fewer stripes)
+```
+
+- `parkland` must look exactly like the current Hollow Pines.
+- **desert:** hot pale sky, terracotta and tan desert floor, emerald fairways, red mesas and mountains, saguaro, rocks, shrubs.
+- **tropical:** deep blue sky, turquoise water with a sandy shallow edge, palms, white beaches (WASTE), lush green.
+- **links:** grey-blue overcast sky, a sea horizon, tawny fescue, firm yellow-green fairways, pot bunkers, gorse, dune grass, almost no trees.
+
+### 8.4 Special shots (`shots.js`; hooks in `swing.js`, `caddie.js`, `game.js`, `ui.js`, `main.js`)
+
+```js
+export const SHOTS = [ {id:'normal', name:'Normal', blurb}, {id:'draw',...}, {id:'cut',...},
+                       {id:'stinger',...}, {id:'punch',...}, {id:'flop',...}, {id:'bump', name:'Bump & run', ...} ];
+export function shotsFor(club, lie)                    // eligible shot ids for this club and lie ('normal' always)
+export function applyShot(p, shotId, club, lie, opts)  // p = {ballSpeed, launchDeg, spinRpm, startDirDeg, faceToPathDeg}
+                                                       // returns a new p; opts {handed:'R'|'L', power}
+```
+
+`swingToLaunch(..., opts.shot)` calls `applyShot` after `applyLie` and `partialSwing`, before the D-plane. The intended curve adds to the swipe's own `faceToPath`.
+
+**Eligibility**
+- **draw / cut:** every full-swing club except the putter.
+- **stinger:** D, 3W, 5W, 4H, 5i and 6i. Not from a bunker or from fescue.
+- **punch:** 4H, all irons, PW and GW.
+- **flop:** GW, SW and LW. Not from WASTE or DESERT hardpan; a flop needs a cushion of grass.
+- **bump:** 7i to SW.
+
+**Target behaviour** (full power, flat, no wind; the tests use these ranges)
+
+| Shot | Change | Result |
+|---|---|---|
+| Draw (RH) | Path +3° right, face-to-path −4° | 7i finishes 6–15 yd left of a normal shot. Spin −8%, about 3–8 yd more roll |
+| Cut (RH) | Path −3° left, face-to-path +4° | 7i finishes 6–15 yd right. Spin +8%, launch +1°, carry −2–4% |
+| Stinger | Launch × 0.5, spin × 0.6, ball speed × 0.97 | Driver apex under 15 m, carry 15–25% shorter, roll 2–4× normal; total within −12%…+5% of normal on a firm fairway |
+| Punch | Launch × 0.6, spin × 0.75, ball speed × 0.9 | Apex under 60% of normal, carry 80–90%. A 5 m/s headwind costs at most half what it costs the normal shot |
+| Flop | Launch +14°, spin × 1.1, ball speed × 0.72 | Landing angle 55° or more; rolls 3 yd or less on the green |
+| Bump & run | Launch × 0.45, spin × 0.3, ball speed × 0.85 | Carry is 25–45% of the total |
+
+- Left-handed play mirrors draw and cut.
+- `caddie` functions accept `opts.shot`. The aim preview and carry/total readouts must reflect the selected shot, including the curve of a draw or cut.
+- **Game:**
+  - `game.setShot(id)` and `game.shotType` (default `'normal'`) are serialized.
+  - The shot resets to `'normal'` after every stroke, and whenever the club changes to one that isn't eligible.
+  - `game.shotsAvailable()` lists the eligible shots.
+- **UI:** a shot chip next to the club picker ("Shot: Normal ▾") opens a sheet of the eligible shots, each with a tiny flight-shape icon and a one-line blurb.
+  - Shot toasts name the special shot: "7i Stinger · 140/178 yd".
+
+### 8.5 Menu and saves
+
+- The main menu gets a course picker: four cards with name, tagline, par and yards, and a theme-coloured thumbnail (CSS gradient). New round starts the selected course.
+- The save (`golf.save.v1`) stores `courseId`. Old saves without it load as Hollow Pines.
+- The best round is kept per course: `golf.best.v1` becomes a map `{[courseId]: best}`. An old single value counts as Hollow Pines.
+- `?course=desert|water|links|pines` URL parameter.
