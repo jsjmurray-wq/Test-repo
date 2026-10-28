@@ -133,7 +133,14 @@ for (const t of holes) {
     // Palms everywhere; water on every hole, all of it red (lateral relief).
     assert.ok(t.trees.filter((o) => o.kind === 'palm').length >= 5, 'palms');
     assert.ok(t.waters.length >= 1, 'water');
-    for (const w of t.waters) assert.ok(w.kind === 'red' && w.poly.length >= 3 && Number.isFinite(w.level));
+    for (const w of t.waters) {
+      assert.ok(w.kind === 'red' && w.poly.length >= 3 && Number.isFinite(w.level));
+      // Lagoons lie inside the height grid (the renderer draws them as their own planes); seas
+      // run out past it to the horizon.
+      if (w.sea || w.fill === 'outside') continue;
+      const b = t.bounds;
+      for (const q of w.poly) assert.ok(Math.min(q.x - b.minX, b.maxX - q.x, q.y - b.minY, b.maxY - q.y) >= 8, 'lagoon inside the grid');
+    }
     // Dry land never sits below a flood's water level (it would draw as flooded).
     const flood = t.waters.find((w) => w.fill === 'outside');
     if (flood) {

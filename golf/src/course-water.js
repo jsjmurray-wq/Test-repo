@@ -1,11 +1,12 @@
 // Coral Cay: the water course (theme 'tropical', docs/architecture.md section 8.2). A lagoon and
 // ocean resort nine where water is the defining hazard on every hole, yet each hole keeps a dry,
 // sensible line for the player who wants one:
-//   1  Palm Walk     par 4  opener bending left round a lagoon with a beach on its near shore
-//   2  The Fork      par 5  the fairway splits round a lagoon: the left branch runs between the
-//                          lagoon and the beach straight at an open green, the wide right branch
-//                          leaves a pitch over the lagoon's top arm; from a good drive the green
-//                          is in range over the water
+//   1  Palm Walk     par 4  opener from a dune tee over a lagoon's tail, then bending left round
+//                          the lagoon with a beach on its near shore
+//   2  The Fork      par 5  the fairway splits round a lagoon: the narrow left branch runs between
+//                          the lagoon and the beach straight at an open green (in range in two
+//                          from a good drive), the wide right branch beyond the lagoon's foot
+//                          leaves a pitch over its top arm
 //   3  The Island    par 3  island green in the lagoon (fill: 'outside'), the tee on its own islet
 //   4  Mangroves     par 4  forced carry over a lagoon inlet, then the lagoon all down the inside
 //                          of a dogleg right to the green; the bail-out is left
@@ -15,7 +16,7 @@
 //   7  Breakers      par 4  a coral spit in the ocean (outside: 'water'): a carry over the cove
 //                          (or the long way round by the left-hand beach), surf on both sides
 //   8  Reef Run      par 5  cape hole: the sea bay down the left; bite off as much as you dare
-//   9  Sunset        par 4  home along a lagoon to a green over its arm, the sea behind
+//   9  Sunset        par 4  home along a lagoon to a green over its arm, the sea beyond the palms
 // Conditions: lush and soft (firm 0.95), greens 10.5 ft, normal trade winds.
 //
 // Authoring helpers (pure data; only WATER is exported): shores are drawn as coarse polygons and
@@ -171,8 +172,8 @@ const P9 = [[0, 0], [90, 150], [150, 262], [176, 326]];
 const G9 = { rx: 13, ry: 15, rot: -10 };
 const F9 = greenFrame(P9);
 
-// A raised tee on a dune: a mound of height h (m) and radius r under the tee box, which sits
-// `lift` m above the mound's crown (use as tee.raise = h + lift).
+// A raised tee on a dune: a mound of height h (m) and radius r (m) under the tee box. terrain.js
+// flattens the box at the centreline elevation plus tee.raise, so raise includes h (h + ~0.5).
 const dune = (h, r = 30) => [0, 0, r, h];
 
 export const WATER = {
@@ -182,8 +183,9 @@ export const WATER = {
   theme: 'tropical',
   conditions: { firm: 0.95, greenStimpFt: 10.5, wind: 'normal' },
   holes: [
-    // 1. Opener, a gentle dogleg left from a dune tee. A lagoon fills the inside of the corner with
-    //    a white beach on its near shore: the bold line flirts with it, the fairway right is
+    // 1. Opener, a gentle dogleg left from a dune tee. The drive carries the tail of a lagoon (an
+    //    easy 85 m, a white beach below the tee), and the lagoon then fills the inside of the corner
+    //    with a beach on its near shore: the bold line flirts with it, the fairway right is
     //    generous (a bunker guards the outside of the corner).
     {
       n: 1, par: 4, name: 'Palm Walk', si: 6,
@@ -202,7 +204,7 @@ export const WATER = {
         kind: 'red', level: -1.1, bank: 7, depth: 1.8,
         xy: smooth([
           [36, 54], [30, 72], [10, 80], [-16, 84], [-32, 100], [-34, 128], [-24, 150], [-20, 192], [-25, 232], [-38, 262], [-60, 278],
-          [-90, 276], [-110, 256], [-118, 224], [-106, 200], [-112, 172], [-94, 148], [-74, 122], [-70, 92], [-72, 64], [-52, 48], [-20, 44], [10, 42],
+          [-86, 276], [-100, 256], [-104, 226], [-96, 200], [-100, 174], [-88, 148], [-74, 122], [-70, 92], [-72, 64], [-52, 48], [-20, 44], [10, 42],
         ], 2),
       }],
       areas: [
@@ -224,13 +226,13 @@ export const WATER = {
       mounds: [dune(3), [190, 30, 12, 1.2], [300, 28, 10, 0.9]],
       forest: FOREST,
       ob: { left: null, right: null },
-      bounds: { margin: 75 },
+      bounds: { margin: 82 },
     },
 
-    // 2. Split-fairway par 5. Beyond the landing area a lagoon divides the hole: the left branch,
-    //    between the lagoon and the beach (the sea beyond it), runs straight at an open green; the
-    //    wide right branch is safe but leaves a pitch over the lagoon's top arm. From a good drive
-    //    the green is in range over the water.
+    // 2. Split-fairway par 5. Beyond the landing area a lagoon divides the hole. The left branch,
+    //    between the lagoon and the beach (the sea beyond it), is narrow but runs straight at an
+    //    open green, in range in two from a good drive; the wide right branch, across the lagoon's
+    //    foot, is the safer second but leaves a pitch over the lagoon's top arm.
     {
       n: 2, par: 5, name: 'The Fork', si: 3,
       path: P2,
@@ -277,6 +279,7 @@ export const WATER = {
         { kind: 'palm', s: 500, off: 0, cluster: 7, spread: 16 },
         { kind: 'palm', s: 360, off: 125, cluster: 6, spread: 14 },
         { kind: 'palm', s: -14, off: -14, cluster: 3, spread: 5 },
+        { kind: 'palm', from: 30, to: 520, off: -56, gap: 26, jitter: 5 },
       ],
       mounds: [dune(2.5), [150, 30, 12, 1.0]],
       forest: { ...FOREST, inner: 70 },
@@ -454,6 +457,8 @@ export const WATER = {
         { kind: 'palm', s: 150, off: -38, cluster: 5, spread: 9 },
         { kind: 'palm', from: 30, to: 120, off: 24, gap: 22, jitter: 4 },
         { kind: 'palm', s: -14, off: -12, cluster: 3, spread: 5 },
+        { kind: 'palm', g: [-10, 27], cluster: 3, spread: 5 },
+        { kind: 'palm', g: [22, -34], cluster: 2, spread: 4 },
       ],
       mounds: [dune(3.8, 32), [140, -36, 10, 1.4]],
       forest: FOREST,
@@ -483,9 +488,9 @@ export const WATER = {
       },
       areas: [
         // The beach on the right of the spit.
-        { surface: 'waste', poly: smooth([[140, 18], [200, 22], [260, 22], [300, 20], [330, 16], [334, 30], [300, 38], [230, 44], [170, 40], [138, 30]], 2) },
+        { surface: 'waste', poly: smooth([[140, 18], [200, 22], [260, 22], [300, 20], [330, 16], [334, 30], [300, 38], [230, 44], [170, 40], [138, 30]], 1) },
         // The beach round the left of the cove, from the tee to the spit.
-        { surface: 'waste', poly: smooth([[-10, -6], [20, -22], [60, -28], [100, -28], [130, -22], [152, -18], [150, -36], [110, -44], [60, -46], [20, -40], [-12, -22]], 2) },
+        { surface: 'waste', poly: smooth([[-10, -6], [20, -22], [60, -28], [100, -28], [130, -22], [152, -18], [150, -36], [110, -44], [60, -46], [20, -40], [-12, -22]], 1) },
         // A crescent of sand on the point behind the green.
         { surface: 'waste', poly: smooth([[L7 + 17, 18], [L7 + 30, 20], [L7 + 40, 6], [L7 + 37, -10], [L7 + 25, -18], [L7 + 17, -14], [L7 + 20, 0]], 2) },
       ],
@@ -546,6 +551,7 @@ export const WATER = {
         { kind: 'palm', from: 20, to: 210, off: -24, gap: 16, jitter: 3 },
         { kind: 'palm', s: 480, off: 26, cluster: 6, spread: 12 },
         { kind: 'palm', s: -14, off: 14, cluster: 3, spread: 5 },
+        { kind: 'palm', from: 30, to: 430, off: -30, gap: 28, jitter: 4 },
       ],
       mounds: [dune(3), [210, 34, 12, 1.2], [330, 36, 12, 1.0]],
       forest: FOREST,
@@ -588,6 +594,7 @@ export const WATER = {
         { kind: { palm: 0.85, broad: 0.15 }, from: 20, to: 320, off: 36, gap: 12, jitter: 4 },
         { kind: 'palm', from: 20, to: 130, off: -34, gap: 14, jitter: 3 },
         { kind: 'palm', s: 362, off: 0, cluster: 9, spread: 18 },
+        { kind: 'palm', from: 150, to: 300, off: -28, gap: 24, jitter: 3 },
         { kind: 'palm', s: -14, off: 14, cluster: 3, spread: 5 },
       ],
       mounds: [dune(3), [200, 34, 12, 1.2]],
