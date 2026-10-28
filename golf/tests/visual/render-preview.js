@@ -1,15 +1,17 @@
 // Visual preview for the renderer and camera rig, plus a synthetic HoleTerrain stub that the unit
 // tests share (the DOM part only runs in a browser).
 //
-// URL params: ?hole=N (real course hole 1..9; default: the stub), ?mode=address|putt|read|flight|
-// holed|map|flyover, ?t=S (advance the simulated clock by S seconds before the screenshot),
-// ?gl1=1 (force WebGL1), ?read=1 (green-read overlay), ?wind=x,y (m/s).
+// URL params: ?course=pines|desert|water|links (default pines) and ?hole=N (1..9; without either
+// the synthetic stub), ?cam= (or ?mode=) address|putt|read|flight|holed|map|flyover|free (with
+// &eye=x,y,dz&at=x,y,dz: a fixed close-up camera, dz above the ground), ?t=S (advance
+// the simulated clock by S seconds before the screenshot), ?gl1=1 (force WebGL1), ?read=1
+// (green-read overlay), ?wind=x,y (m/s), ?pin=0..2, ?quality=low, ?anim=1 (keep animating).
 
 import { Renderer } from '../../src/render.js';
 import { CameraRig } from '../../src/camera.js';
 import { buildPath } from '../../src/spline.js';
 import { SURF } from '../../src/constants.js';
-import { COURSE } from '../../src/course.js';
+import { courseById } from '../../src/courses.js';
 import { buildHole } from '../../src/terrain.js';
 
 // ------------------------------------------------------------------------------------------
@@ -215,15 +217,17 @@ if (typeof document !== 'undefined') main();
 
 function main() {
   const qs = new URLSearchParams(location.search);
-  const holeN = parseInt(qs.get('hole') || '0', 10);
-  const mode = qs.get('mode') || 'address';
+  const course = courseById(qs.get('course') || 'pines');
+  const holeN = parseInt(qs.get('hole') || (qs.get('course') ? '1' : '0'), 10);
+  const mode = qs.get('cam') || qs.get('mode') || 'address';
   const tAdv = parseFloat(qs.get('t') || '0');
   const windQ = (qs.get('wind') || '3,1.5').split(',').map(Number);
   const wind = { x: windQ[0] || 0, y: windQ[1] || 0 };
   const canvas = document.getElementById('c');
   const info = document.getElementById('info');
   const t0 = performance.now();
-  const terrain = holeN >= 1 && holeN <= 9 ? buildHole(COURSE.holes[holeN - 1], { pinIndex: 0, seed: 1 }) : stubTerrain();
+  const def = holeN >= 1 ? course.holes[holeN - 1] : null;
+  const terrain = def ? buildHole(def, { pinIndex: parseInt(qs.get('pin') || '0', 10), seed: 1, course }) : stubTerrain();
   const tBuild = performance.now() - t0;
   const renderer = new Renderer(canvas, { test: true, gl1: qs.get('gl1') === '1', quality: qs.get('quality') || 'auto' });
   if (!renderer.ok) {
@@ -279,6 +283,19 @@ function main() {
   // Advance the clock in fixed steps before the first frame (deterministic screenshots).
   let cam = step(0);
   for (let t = 0; t < tAdv; t += 1 / 30) cam = step(1 / 30);
+  // ?cam=free&eye=x,y,dz&at=x,y,dz: a fixed camera (dz above the ground) for close-ups.
+  if (mode === 'free') {
+    const v = (k, d) => (qs.get(k) || d).split(',').map(Number);
+    const [ex, ey, ez] = v('eye', '0,-20,8');
+    const [ax, ay, az] = v('at', '0,60,0');
+    cam = {
+      ...cam,
+      eye: { x: ex, y: ey, z: terrain.heightAt(ex, ey) + ez },
+      target: { x: ax, y: ay, z: terrain.heightAt(ax, ay) + az },
+      up: { x: 0, y: 0, z: 1 },
+      shiftX: 0,
+    };
+  }
   const frameDraw = () => {
     renderer.draw({
       time: simT,
@@ -293,7 +310,7 @@ function main() {
   };
   frameDraw();
   const st = renderer.stats();
-  info.textContent = `${terrain.name} ${mode} | build ${tBuild.toFixed(0)} ms, setHole ${tSet.toFixed(0)} ms | ${st.drawCalls} draws, ${(st.tris / 1000).toFixed(0)}k tris, ${renderer.ctx.gl2 ? 'WebGL2' : 'WebGL1'}`;
+  info.textContent = `${def ? course.name + ' ' + holeN + ' ' : ''}${terrain.name} ${mode} | build ${tBuild.toFixed(0)} ms, setHole ${tSet.toFixed(0)} ms | ${st.drawCalls} draws, ${(st.tris / 1000).toFixed(0)}k tris, ${renderer.ctx.gl2 ? 'WebGL2' : 'WebGL1'}`;
   window.__preview = { renderer, rig, terrain, stats: st, tBuild, tSet };
   document.body.dataset.ready = '1';
   if (qs.get('anim') === '1') {

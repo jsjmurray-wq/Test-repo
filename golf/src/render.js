@@ -4,8 +4,16 @@
 // - One GLSL 100 code path for WebGL2 and WebGL1 (+ ANGLE_instanced_arrays). Uint16 indices only.
 // - Camera-relative rendering: every vertex shader works with p - eye, and the view matrix holds the
 //   rotation only. Terrain chunks carry chunk-local positions plus a per-chunk offset uniform.
-// - Draw-call budget <= 25: terrain <= 10 chunks (frustum culled) + skirt, sky, water, 2 tree kinds
-//   (instanced), props (stakes, tee markers, cup), flag, ball, blob shadow, read grid, aim, trail.
+// - Draw-call budget <= 30: terrain <= 10 chunks (frustum culled) + skirt, sky, water, 2 tree kinds
+//   and up to 6 themed object kinds (instanced; a hole only draws the kinds it has: Hollow Pines
+//   pine + broad, desert saguaro + shrub + rock, tropical palm + broad, links gorse + grass), props
+//   (stakes, tee markers, cup), flag, ball, blob shadow, read grid, aim, trail.
+// - The look comes from the hole's course theme (themes.js, terrain.theme): sky, sun, clouds, fog,
+//   ambient, surface colours, water, horizon silhouettes, the ground beyond the hole and its
+//   objects. 'parkland' reproduces the shipped Hollow Pines exactly. Themes with an ocean horizon
+//   (and any hole with sea water) get a sea out to the horizon: the skirt falls below the sea level
+//   toward it (seaSetup in meshes.js), an annulus of sea joins the hole's water, and the sky shader
+//   draws the open sea beyond the far plane.
 // - Every GPU resource is rebuilt from CPU copies on webglcontextrestored.
 // - Resolution: DPR capped at 2 times an adaptive renderScale (0.6..1) driven by the frame interval.
 
@@ -13,26 +21,56 @@ import { createContext, contextExtensions, createProgram, makeBuffer, makeTextur
 import { perspective, lookAt, multiply, invert, project as projectPt, unproject } from './mat4.js';
 import {
   terrainChunks, skirtMesh, icosphere, MeshBuilder, pineMesh, broadleafMesh, flagMesh, waterMesh,
-  greenReadMesh, trailRibbon, aimRibbon, skirtTrees,
+  greenReadMesh, trailRibbon, aimRibbon, skirtTrees, skirtObjects, seaSetup, palmMesh, saguaroMesh,
+  bushMesh, rockMesh, grassMesh,
 } from './meshes.js';
-import { bakeTerrainColor, bakeClouds, bakeNoise, SUN_DIR } from './bake.js';
+import { bakeTerrainColor, bakeClouds, bakeNoise, bakeWaterDepth } from './bake.js';
 import {
   SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, PROP_VS, PROP_FS,
-  FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS,
+  FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, OBJ_VS, OBJ_FS,
 } from './shaders.js';
-import { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R } from './constants.js';
+import { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R, SURF } from './constants.js';
+import { themeFor } from './themes.js';
 
-// Lighting (linear). Tuned against screenshots for a bright broadcast look.
-const SUN_COL = [1.0 * 1.08, 0.95 * 1.08, 0.86 * 1.08];
-const ZENITH = [0.07, 0.19, 0.56];
-const HORIZON = [0.46, 0.6, 0.78];
-const FOG_K = 1 / 1100;
 const EXPOSURE = 1.0;
 
-const PINE_TINT = [0.11, 0.2, 0.11];
-const BROAD_TINT = [0.19, 0.3, 0.12];
+// Themed object kinds drawn by the object program, in draw order: shader kind index, near dither
+// fade (start, end, m) and far fade (start, end, m; 0 = none).
+const OBJ_KINDS = [
+  { kind: 'palm', id: 0, fade: [2.5, 7, 0, 0] },
+  { kind: 'saguaro', id: 1, fade: [1.2, 3, 0, 0] },
+  { kind: 'shrub', id: 2, fade: [0.6, 1.8, 0, 0] },
+  { kind: 'gorse', id: 3, fade: [0.6, 1.8, 0, 0] },
+  { kind: 'rock', id: 4, fade: [0.4, 1.2, 0, 0] },
+  { kind: 'grass', id: 5, fade: [0.3, 1.0, 70, 120] },
+];
+const HORIZON_KIND = { hills: 0, mountains: 1, mesas: 2, dunes: 3 };
+// Haze mixed into the far and near horizon silhouettes (the shipped 0.86 / 0.78 for hills).
+const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.66, 0.3], dunes: [0.84, 0.72] };
 
 const ZERO = { x: 0, y: 0, z: 0 };
+
+// Instance row [x, y, z, h, rx, rz, r, seed] for one terrain object, by kind (null for pine and
+// broad, which keep the shipped tree layout).
+function objectRow(t, seed) {
+  const c = t.canopy;
+  const sd = t.variant != null ? t.variant : seed;
+  switch (t.kind) {
+    case 'palm':
+      return [t.x, t.y, t.z, t.trunkH || 9, c ? c.rx : 3.5, c ? c.rz : 1.6, t.trunkR || 0.18, sd];
+    case 'saguaro':
+      return [t.x, t.y, t.z, t.trunkH || 6, 0, 0, t.trunkR || 0.25, sd];
+    case 'shrub':
+    case 'gorse': {
+      const hh = c ? Math.max(0.3, c.cz - t.z) : 0.6;
+      return [t.x, t.y, t.z, hh, c ? c.rx : 1.3, hh * 1.05, 0, sd];
+    }
+    case 'rock':
+      return [t.x, t.y, t.z, t.trunkH || 0.6, t.trunkR || 0.6, t.trunkH || 0.6, t.trunkR || 0.6, sd];
+    default:
+      return null;
+  }
+}
 
 export class Renderer {
   constructor(canvas, { quality = 'auto', test = false, gl1 = false } = {}) {
@@ -45,7 +83,9 @@ export class Renderer {
     this.renderScale = quality === 'low' ? 0.75 : 1;
     this.maxScale = this.renderScale;
     this.terrain = null;
+    this.theme = themeFor('parkland');
     this.cpu = null;
+    this._themeUniforms();
     this.res = null;
     this.lost = false;
     this.eye = { x: 0, y: 0, z: 0 };
@@ -97,6 +137,7 @@ export class Renderer {
       flag: createProgram(gl, FLAG_VS, FLAG_FS),
       overlay: createProgram(gl, OVERLAY_VS, OVERLAY_FS),
       read: createProgram(gl, READ_VS, READ_FS),
+      obj: createProgram(gl, OBJ_VS, OBJ_FS),
     };
     // Static meshes (built once on the CPU and kept for restore).
     if (!this.static) {
@@ -107,6 +148,11 @@ export class Renderer {
         pine: pineMesh(),
         broad: broadleafMesh(),
         flag: flagMesh(),
+        palm: palmMesh(),
+        saguaro: saguaroMesh(),
+        bush: bushMesh(),
+        rock: rockMesh(),
+        grass: grassMesh(),
       };
     }
     const s = this.static;
@@ -129,6 +175,13 @@ export class Renderer {
       pine: mesh(s.pine, 'attr'),
       broad: mesh(s.broad, 'attr'),
       flag: mesh(s.flag, 'attr'),
+      palm: mesh(s.palm, 'attr'),
+      saguaro: mesh(s.saguaro, 'attr'),
+      bush: mesh(s.bush, 'attr'),
+      rock: mesh(s.rock, 'attr'),
+      grass: mesh(s.grass, 'attr'),
+      // Stand-ins for a hole without themed ground detail or water depth.
+      black: makeTexture(gl, { width: 1, height: 1, data: new Uint8Array(4) }),
       trail: gl.createBuffer(),
       aim: gl.createBuffer(),
       quad: gl.createBuffer(),
@@ -148,24 +201,55 @@ export class Renderer {
   // ------------------------------------------------------------------ hole data
   setHole(terrain) {
     this.terrain = terrain;
+    const theme = themeFor(terrain.theme);
+    this.theme = theme;
     const stride = this.quality === 'low' ? 2 : 1;
+    const sea = seaSetup(terrain, theme);
     const chunks = terrainChunks(terrain.grid, { stride });
-    const skirt = skirtMesh(terrain.grid);
-    const bake = bakeTerrainColor(terrain, { sunDir: SUN_DIR });
-    const water = waterMesh(terrain.waters);
+    const skirt = skirtMesh(terrain.grid, sea ? { sea } : {});
+    const bake = bakeTerrainColor(terrain, { sunDir: theme.sky.sunDir, theme });
+    const water = waterMesh(terrain.waters, 1.6, { sea });
+    const depth = water.idx.length && theme.water.tint ? bakeWaterDepth(terrain) : null;
     const read = greenReadMesh(terrain);
     // Tree instances: [x, y, z, canopy-centre height, rx, rz, trunkR, seed] per tree, by kind.
+    // Themed objects: [x, y, z, h, rx, rz, r, seed] (objectRow), by kind.
     const pines = [];
     const broads = [];
+    const objs = {};
+    for (const o of OBJ_KINDS) objs[o.kind] = [];
     (terrain.trees || []).forEach((t, k) => {
-      const c = t.canopy || { cz: t.z + 6, rx: 3, rz: 3 };
       const seed = ((Math.sin(k * 12.9898 + t.x * 0.37 + t.y * 0.11) * 43758.5453) % 1 + 1) % 1;
+      const orow = objectRow(t, seed);
+      if (orow) {
+        objs[t.kind].push(...orow);
+        return;
+      }
+      const c = t.canopy || { cz: t.z + 6, rx: 3, rz: 3 };
       const row = [t.x, t.y, t.z, c.cz - t.z, c.rx, c.rz, t.trunkR || 0.25, seed];
       (t.kind === 'pine' ? pines : broads).push(...row);
     });
-    const bg = skirtTrees(skirt, { perVertex: this.quality === 'low' ? 0.6 : 1.3 });
-    pines.push(...bg.pines);
-    broads.push(...bg.broads);
+    (terrain.decor || []).forEach((d, k) => {
+      if (d.kind === 'grass') objs.grass.push(d.x, d.y, d.z, d.scale || 1, 0, 0, 0, (Math.sin(k * 78.233 + d.x) * 43758.5453 % 1 + 1) % 1);
+    });
+    // The ground beyond the hole: the shipped pine/broad tree line, or the theme's objects.
+    const low = this.quality === 'low';
+    if (theme.skirtObjects) {
+      const so = theme.skirtObjects;
+      const bg = skirtObjects(skirt, {
+        kinds: so.kinds, perVertex: so.perVertex * (low ? 0.5 : 1), grass: so.grass * (low ? 0.5 : 1),
+        minZ: sea ? sea.level + 0.6 : -Infinity,
+      });
+      for (const kind of Object.keys(bg.rows)) {
+        if (kind === 'pine') pines.push(...bg.rows[kind]);
+        else if (kind === 'broad') broads.push(...bg.rows[kind]);
+        else if (objs[kind]) objs[kind].push(...bg.rows[kind]);
+      }
+      objs.grass.push(...bg.grass);
+    } else {
+      const bg = skirtTrees(skirt, { perVertex: low ? 0.6 : 1.3 });
+      pines.push(...bg.pines);
+      broads.push(...bg.broads);
+    }
     // Static furniture: OOB stakes, tee markers and the cup (dark hole with a white liner rim).
     const mb = new MeshBuilder();
     const H = (x, y) => terrain.heightAt(x, y);
@@ -198,46 +282,108 @@ export class Renderer {
     const ml = Math.hypot(mx, my) || 1;
     mx /= ml;
     my /= ml;
+    const objF = {};
+    for (const k of Object.keys(objs)) if (objs[k].length) objF[k] = new Float32Array(objs[k]);
     this.cpu = {
-      chunks, skirt, bake, water, read, props,
-      pines: new Float32Array(pines), broads: new Float32Array(broads),
+      chunks, skirt, bake, water, depth, read, props,
+      pines: new Float32Array(pines), broads: new Float32Array(broads), objs: objF,
       mow: [mx, my],
+      sea,
     };
+    this._themeUniforms();
     if (this.ok && !this.lost) this._uploadHole();
+  }
+
+  // Per-hole uniform values from the theme (kept as typed arrays: no per-frame allocation).
+  _themeUniforms() {
+    const th = this.theme;
+    const sea = this.cpu ? this.cpu.sea : null;
+    const f3 = (a) => new Float32Array(a);
+    const fog = th.fog || {};
+    const hz = th.horizon === 'ocean' ? th.land || 'hills' : th.horizon;
+    const rh = RIDGE_HAZE[hz] || RIDGE_HAZE.hills;
+    const tint = th.water.tint;
+    this.U = {
+      sunCol: f3(th.sky.sunColor),
+      zenith: f3(th.sky.zenith),
+      horizon: f3(th.sky.horizon),
+      haze: f3(th.sky.haze),
+      fogTint: f3(fog.color ? [...fog.color, fog.amount == null ? 1 : fog.amount] : [0, 0, 0, 0]),
+      aerial: fog.aerial == null ? 0.8 : fog.aerial,
+      fogK: fog.density || 1 / 1100,
+      ambSky: f3(th.ambient.sky),
+      ambGround: f3(th.ambient.ground),
+      cloud: f3([th.clouds ? th.clouds.cover : 1, th.clouds ? th.clouds.shift : 0, th.clouds ? th.clouds.grey : 0, 0]),
+      ridgeFar: f3(th.ridges.far),
+      ridgeNear: f3(th.ridges.near),
+      hz: f3([HORIZON_KIND[hz] || 0, rh[0], rh[1], 0]),
+      sea: f3(sea ? [sea.dir.x, sea.dir.y, sea.cosHalf, 1] : [1, 0, 2, 0]),
+      seaLevel: sea ? sea.level : 0,
+      seaHaze: th.water.haze == null ? 1 : th.water.haze,
+      seaCol: f3(th.water.deep),
+      deep: f3(th.water.deep),
+      tint: f3(tint ? [...tint, 1] : [0, 0, 0, 0]),
+      waterK: f3([th.water.clarity || 2, th.water.haze == null ? 1 : th.water.haze, th.water.rough || 0.12, 0]),
+      skirtNear: f3(th.skirt.near),
+      skirtFar: f3(th.skirt.far),
+      skirtDetail: f3(th.skirt.detail || [0, 0, 0, 0]),
+      beach: f3(sea ? [sea.level, 1, 0, 0] : [0, 0, 0, 0]),
+      sand: f3(th.surfaceColors[SURF.WASTE] || [0.9, 0.85, 0.7]),
+      revet: f3(th.revet || [0.2, 0.26, 0.12]),
+      detailK: f3([th.detail ? th.detail.rake : 1, th.detail ? th.detail.pebbles : 1, th.detail ? th.detail.sheen : 1, 0]),
+      stripe: th.stripe == null ? 1 : th.stripe,
+      tints: th.tints,
+      trunks: th.trunks || {},
+    };
   }
 
   _uploadHole() {
     const gl = this.gl;
     const c = this.cpu;
-    // Free the previous hole's buffers.
+    // Free the previous hole's buffers and textures.
     if (this.res) {
       for (const b of this.res.buffers) gl.deleteBuffer(b);
-      gl.deleteTexture(this.res.bake);
+      for (const t of this.res.textures) gl.deleteTexture(t);
     }
     const buffers = [];
+    const textures = [];
     const buf = (data, target) => {
       const b = makeBuffer(gl, data, target);
       buffers.push(b);
       return b;
     };
+    const tex = (img, opts) => {
+      const t = makeTexture(gl, img, { ...opts, gl2: this.ctx.gl2 });
+      textures.push(t);
+      return t;
+    };
     const E = gl.ELEMENT_ARRAY_BUFFER;
-    const res = { buffers };
+    const res = { buffers, textures };
     res.chunks = c.chunks.map((ch) => ({
       ...ch,
       bPos: buf(ch.pos), bNrm: buf(ch.nrm), bIdx: buf(ch.idx, E), count: ch.idx.length,
     }));
     res.skirt = { cx: c.skirt.cx, cy: c.skirt.cy, bPos: buf(c.skirt.pos), bNrm: buf(c.skirt.nrm), bIdx: buf(c.skirt.idx, E), count: c.skirt.idx.length };
-    res.water = c.water.idx.length ? { bPos: buf(c.water.pos), bIdx: buf(c.water.idx, E), count: c.water.idx.length } : null;
+    res.water = c.water.idx.length
+      ? { bPos: buf(c.water.pos), bSea: buf(c.water.sea), bIdx: buf(c.water.idx, E), count: c.water.idx.length }
+      : null;
     res.read = c.read ? { cx: c.read.cx, cy: c.read.cy, bData: buf(c.read.data), bIdx: buf(c.read.idx, E), count: c.read.idx.length } : null;
     res.props = c.props.idx.length
       ? { bPos: buf(c.props.pos), bNrm: buf(c.props.nrm), bCol: buf(c.props.col), bIdx: buf(c.props.idx, E), count: c.props.idx.length }
       : null;
     res.pines = c.pines.length ? { b: buf(c.pines), n: c.pines.length / 8, cpu: c.pines } : null;
     res.broads = c.broads.length ? { b: buf(c.broads), n: c.broads.length / 8, cpu: c.broads } : null;
+    res.objs = {};
+    for (const k of Object.keys(c.objs)) res.objs[k] = { b: buf(c.objs[k]), n: c.objs[k].length / 8, cpu: c.objs[k] };
     const bk = c.bake;
-    res.bake = makeTexture(gl, bk, { mip: true, gl2: this.ctx.gl2 });
+    res.bake = tex(bk, { mip: true });
     res.bakeMin = [bk.minX, bk.minY];
     res.bakeInv = [1 / (bk.width * bk.step), 1 / (bk.height * bk.step)];
+    res.detail = bk.detail ? tex(bk.detail, { mip: true }) : this.G.black;
+    const dp = c.depth;
+    res.depth = dp ? tex(dp, {}) : this.G.black;
+    res.depthMin = dp ? [dp.minX, dp.minY] : [0, 0];
+    res.depthInv = dp ? [1 / (dp.width * dp.step), 1 / (dp.height * dp.step)] : [1, 1];
     this.res = res;
   }
 
@@ -344,13 +490,19 @@ export class Renderer {
     const gl = this.gl;
     gl.useProgram(p.prog);
     const u = p.u;
+    const U = this.U;
     if (u.uVP) gl.uniformMatrix4fv(u.uVP, false, this.vp);
     if (u.uSun) gl.uniform3f(u.uSun, frame.sun.x, frame.sun.y, frame.sun.z);
-    if (u.uSunCol) gl.uniform3fv(u.uSunCol, SUN_COL);
-    if (u.uZenith) gl.uniform3fv(u.uZenith, ZENITH);
-    if (u.uHorizon) gl.uniform3fv(u.uHorizon, HORIZON);
+    if (u.uSunCol) gl.uniform3fv(u.uSunCol, U.sunCol);
+    if (u.uZenith) gl.uniform3fv(u.uZenith, U.zenith);
+    if (u.uHorizon) gl.uniform3fv(u.uHorizon, U.horizon);
     if (u.uFogK) gl.uniform1f(u.uFogK, frame.fogK);
     if (u.uExposure) gl.uniform1f(u.uExposure, EXPOSURE);
+    if (u.uHaze) gl.uniform3fv(u.uHaze, U.haze);
+    if (u.uFogTint) gl.uniform4fv(u.uFogTint, U.fogTint);
+    if (u.uAerial) gl.uniform1f(u.uAerial, U.aerial);
+    if (u.uAmbSky) gl.uniform3fv(u.uAmbSky, U.ambSky);
+    if (u.uAmbGround) gl.uniform3fv(u.uAmbGround, U.ambGround);
     if (u.uTime) gl.uniform1f(u.uTime, frame.time);
     if (u.uWind) gl.uniform2f(u.uWind, frame.wind.x, frame.wind.y);
     if (u.uEye) gl.uniform3f(u.uEye, this.eye.x, this.eye.y, this.eye.z);
@@ -365,6 +517,29 @@ export class Renderer {
     else gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, 0);
     this._stats.drawCalls++;
     this._stats.tris += (count / 3) * (instances || 1);
+  }
+
+  // Instanced draw of meshG with per-instance rows [iA(4), iB(4)] from set (attributes iA, iB of
+  // program p); without the instancing extension, constant attributes per instance (rare WebGL1
+  // fallback, counted as one draw call).
+  _drawInstanced(p, meshG, set) {
+    const gl = this.gl;
+    const A = this.attribs;
+    if (this.ctx.inst) {
+      A.bind(p.a.iA, set.b, 4, 32, 0, 1);
+      A.bind(p.a.iB, set.b, 4, 32, 16, 1);
+      this._drawElements(meshG.count, set.n);
+      return;
+    }
+    A.end();
+    for (let k = 0; k < set.n; k++) {
+      const o = k * 8;
+      gl.vertexAttrib4f(p.a.iA, set.cpu[o], set.cpu[o + 1], set.cpu[o + 2], set.cpu[o + 3]);
+      gl.vertexAttrib4f(p.a.iB, set.cpu[o + 4], set.cpu[o + 5], set.cpu[o + 6], set.cpu[o + 7]);
+      gl.drawElements(gl.TRIANGLES, meshG.count, gl.UNSIGNED_SHORT, 0);
+    }
+    this._stats.drawCalls++;
+    this._stats.tris += (meshG.count / 3) * set.n;
   }
 
   _drawStrip(n) {
@@ -425,13 +600,13 @@ export class Renderer {
     multiply(proj, view, this.vp);
     invert(this.vp, this.invVP);
     this.pxPerRad = this.cssH / (2 * Math.tan(fovY / 2));
-    let sun = scene.sunDir || SUN_DIR;
+    let sun = scene.sunDir || this.theme.sky.sunDir;
     const sl = Math.hypot(sun.x, sun.y, sun.z) || 1;
     sun = { x: sun.x / sl, y: sun.y / sl, z: sun.z / sl };
     // Thinner haze for high cameras (map, flyover): the air above is clearer, and a uniform exp2 fog
     // would wash out a top-down view.
     const agl = this.terrain ? Math.max(0, e.z - this.terrain.heightAt(e.x, e.y)) : 0;
-    const fogK = FOG_K / (1 + Math.max(0, agl - 30) / 100);
+    const fogK = this.U.fogK / (1 + Math.max(0, agl - 30) / 100);
     const frame = { sun, fogK, time: scene.time || 0, wind: scene.wind || { x: 0, y: 0 } };
 
     gl.viewport(0, 0, W, Hh);
@@ -460,10 +635,22 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.G.noise);
       gl.uniform1i(u.uNoise, 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, R.detail);
+      gl.uniform1i(u.uDetail, 2);
       gl.uniform2fv(u.uBakeMin, R.bakeMin);
       gl.uniform2fv(u.uBakeInv, R.bakeInv);
       gl.uniform2fv(u.uMow, this.cpu.mow);
       gl.uniform1f(u.uSkirt, 0);
+      const U = this.U;
+      gl.uniform1f(u.uStripe, U.stripe);
+      gl.uniform3fv(u.uSkirtNear, U.skirtNear);
+      gl.uniform3fv(u.uSkirtFar, U.skirtFar);
+      gl.uniform4fv(u.uSkirtDetail, U.skirtDetail);
+      gl.uniform4fv(u.uBeach, U.beach);
+      gl.uniform3fv(u.uSand, U.sand);
+      gl.uniform3fv(u.uRevet, U.revet);
+      gl.uniform4fv(u.uDetailK, U.detailK);
       for (const ch of R.chunks) {
         if (!this._boxVisible(pl, ch.minX - e.x, ch.minY - e.y, ch.minZ - e.z - 0.1, ch.maxX - e.x, ch.maxY - e.y, ch.maxZ - e.z + 0.1)) continue;
         gl.uniform3f(u.uOff, ch.ox - e.x, ch.oy - e.y, -e.z);
@@ -513,25 +700,32 @@ export class Renderer {
         A.bind(tp.a.aNrm, meshG.nrm, 3);
         A.bind(tp.a.aAttr, meshG.attr, 2);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshG.idx);
-        if (this.ctx.inst) {
-          A.bind(tp.a.iA, set.b, 4, 32, 0, 1);
-          A.bind(tp.a.iB, set.b, 4, 32, 16, 1);
-          this._drawElements(meshG.count, set.n);
-        } else {
-          // No instancing extension: constant attributes per tree (rare WebGL1 fallback).
-          A.end();
-          for (let k = 0; k < set.n; k++) {
-            const o = k * 8;
-            gl.vertexAttrib4f(tp.a.iA, set.cpu[o], set.cpu[o + 1], set.cpu[o + 2], set.cpu[o + 3]);
-            gl.vertexAttrib4f(tp.a.iB, set.cpu[o + 4], set.cpu[o + 5], set.cpu[o + 6], set.cpu[o + 7]);
-            gl.drawElements(gl.TRIANGLES, meshG.count, gl.UNSIGNED_SHORT, 0);
-          }
-          st.drawCalls++;
-          st.tris += (meshG.count / 3) * set.n;
-        }
+        this._drawInstanced(tp, meshG, set);
       };
-      drawTrees(this.G.pine, R.pines, PINE_TINT);
-      drawTrees(this.G.broad, R.broads, BROAD_TINT);
+      drawTrees(this.G.pine, R.pines, this.U.tints.pine);
+      drawTrees(this.G.broad, R.broads, this.U.tints.broad);
+
+      // ---- themed objects (instanced, one draw per kind present)
+      const ob = this.P.obj;
+      const MESH = { palm: this.G.palm, saguaro: this.G.saguaro, shrub: this.G.bush, gorse: this.G.bush, rock: this.G.rock, grass: this.G.grass };
+      for (const o of OBJ_KINDS) {
+        const set = R.objs[o.kind];
+        if (!set) continue;
+        const meshG = MESH[o.kind];
+        u = this._use(ob, frame);
+        gl.uniform1f(u.uKind, o.id);
+        gl.uniform3fv(u.uTint, this.U.tints[o.kind] || [0.3, 0.4, 0.2]);
+        gl.uniform3fv(u.uTint2, this.U.trunks[o.kind] || this.U.tints[o.kind] || [0.3, 0.3, 0.25]);
+        gl.uniform4fv(u.uFade, o.fade);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.G.noise);
+        gl.uniform1i(u.uNoise, 0);
+        A.bind(ob.a.aPos, meshG.pos, 3);
+        A.bind(ob.a.aNrm, meshG.nrm, 3);
+        A.bind(ob.a.aAttr, meshG.attr, 4);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshG.idx);
+        this._drawInstanced(ob, meshG, set);
+      }
 
       gl.enable(gl.CULL_FACE);
     }
@@ -572,6 +766,14 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.G.noise);
       gl.uniform1i(u.uNoise, 1);
+      const U = this.U;
+      gl.uniform4fv(u.uCloud, U.cloud);
+      gl.uniform3fv(u.uRidgeFar, U.ridgeFar);
+      gl.uniform3fv(u.uRidgeNear, U.ridgeNear);
+      gl.uniform4fv(u.uHz, U.hz);
+      gl.uniform4fv(u.uSea, U.sea);
+      gl.uniform4f(u.uSea2, Math.max(0.5, e.z - U.seaLevel), U.seaHaze, U.waterK[2], 0);
+      gl.uniform3fv(u.uSeaCol, U.seaCol);
       gl.depthMask(false);
       A.bind(sp.a.aPos, this.G.skyTri, 2);
       this.attribs.end();
@@ -589,9 +791,18 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.G.noise);
       gl.uniform1i(u.uNoise, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, R.depth);
+      gl.uniform1i(u.uDepth, 1);
+      gl.uniform2fv(u.uDepthMin, R.depthMin);
+      gl.uniform2fv(u.uDepthInv, R.depthInv);
+      gl.uniform3fv(u.uDeep, this.U.deep);
+      gl.uniform4fv(u.uTint, this.U.tint);
+      gl.uniform4fv(u.uWaterK, this.U.waterK);
       gl.depthMask(true);
       gl.disable(gl.CULL_FACE);
       A.bind(wp.a.aPos, R.water.bPos, 3);
+      A.bind(wp.a.aSea, R.water.bSea, 1);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, R.water.bIdx);
       this._drawElements(R.water.count);
       gl.enable(gl.CULL_FACE);

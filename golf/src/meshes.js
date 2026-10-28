@@ -12,6 +12,11 @@ import { FLAGSTICK_H } from './constants.js';
 // biggest hole (about 540 x 180 m) needs at most 10 chunks of the 25 draw-call budget.
 export const TERRAIN_CHUNK = 128;
 
+const smoothstep01 = (t) => {
+  const u = t < 0 ? 0 : t > 1 ? 1 : t;
+  return u * u * (3 - 2 * u);
+};
+
 // ---------------------------------------------------------------------------------------------
 // Terrain
 
@@ -91,7 +96,11 @@ export function terrainChunks(grid, { chunk = TERRAIN_CHUNK, stride = 1 } = {}) 
 // Skirt ring from the edge of the height grid out to `outer` metres from the hole centre, so the
 // course sits in a continuous landscape that dissolves into fog. Positions relative to (cx, cy, 0).
 // Rings: grid edge (exact heights) -> +60 m (gently rolling, fbm-free sines) -> outer (low hills).
-export function skirtMesh(grid, { outer = 4000, every = 8 } = {}) {
+// With `sea` (seaSetup) the land falls away under the sea level toward the sea (all round when
+// sea.full, else within the sea sector and wherever the grid edge is already under water), with
+// the shore a few tens of metres out; landward rings stay above the sea level so the sea plane
+// never shows through them.
+export function skirtMesh(grid, { outer = 4000, every = 8, sea = null } = {}) {
   const { nx, ny, minX, minY, step, heights } = grid;
   const maxX = minX + (nx - 1) * step;
   const maxY = minY + (ny - 1) * step;
@@ -111,6 +120,28 @@ export function skirtMesh(grid, { outer = 4000, every = 8 } = {}) {
   const RINGS = 4;
   const pos = new Float32Array(n * RINGS * 3);
   const nrm = new Float32Array(n * RINGS * 3);
+  // Seaward weight of each perimeter node: inside the sea sector, or an edge already under water;
+  // smoothed along the perimeter so the coastline bends gently.
+  let seaW = null;
+  if (sea) {
+    const raw = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      const [i, j] = per[k];
+      const x = minX + i * step;
+      const y = minY + j * step;
+      const l = Math.hypot(x - cx, y - cy) || 1;
+      const c = ((x - cx) * sea.dir.x + (y - cy) * sea.dir.y) / l;
+      const sector = sea.full ? 1 : smoothstep01((c - (sea.cosHalf - 0.15)) / 0.3);
+      raw[k] = Math.max(sector, heights[j * nx + i] < sea.level + 0.3 ? 1 : 0);
+    }
+    seaW = new Float32Array(n);
+    const R = 3;
+    for (let k = 0; k < n; k++) {
+      let acc = 0;
+      for (let q = -R; q <= R; q++) acc += raw[(k + q + n) % n];
+      seaW[k] = acc / (2 * R + 1);
+    }
+  }
   for (let k = 0; k < n; k++) {
     const [i, j] = per[k];
     const x = minX + i * step;
@@ -129,14 +160,24 @@ export function skirtMesh(grid, { outer = 4000, every = 8 } = {}) {
       [x + dx * 400, y + dy * 400, avg + roll * 1.5 + 8],
       [cx + dx * outer, cy + dy * outer, avg + 70 + roll * 10],
     ];
+    if (seaW) {
+      // Landward: never below the sea (+0.8 m). Seaward: a beach, then the shelf drops away.
+      const s = seaW[k];
+      const seaZ = [z, Math.min(z, sea.level) - 3, sea.level - 25, sea.level - 90];
+      for (let r = 1; r < RINGS; r++) {
+        const land = Math.max(ring[r][2], sea.level + 0.8);
+        ring[r][2] = land + (seaZ[r] - land) * s;
+      }
+    }
     for (let r = 0; r < RINGS; r++) {
       const o = (r * n + k) * 3;
       pos[o] = ring[r][0] - cx;
       pos[o + 1] = ring[r][1] - cy;
       pos[o + 2] = ring[r][2];
       // The skirt is lit as flat ground; nrm.x carries a 0..1 "distance from the course" factor
-      // the terrain shader uses to blend rough into woodland.
+      // the terrain shader uses to blend rough into woodland, nrm.y the seaward weight (beaches).
       nrm[o] = [0, 0.6, 1, 1][r];
+      nrm[o + 1] = seaW ? seaW[k] : 0;
       nrm[o + 2] = 1;
     }
   }
@@ -197,6 +238,94 @@ export function skirtTrees(skirt, { perVertex = 1.3, seed = 99 } = {}) {
     }
   }
   return { pines, broads };
+}
+
+// Themed background objects on the first skirt band (version 2), in place of skirtTrees' pine and
+// broadleaf line. kinds: weight map {pine|broad|palm|saguaro|shrub|gorse|rock: w}; perVertex
+// objects per perimeter vertex (every 8 m); grass dune-grass tufts per vertex; nothing below minZ
+// (the sea). Returns {rows: {kind: [instance rows]}, grass: [rows]} in the renderer's instance
+// layout [x, y, z, h, rx, rz, r, seed] (pine/broad as skirtTrees; see render.js for the others).
+export function skirtObjects(skirt, { kinds = { broad: 1 }, perVertex = 1, grass = 0, seed = 99, minZ = -Infinity } = {}) {
+  let st = seed >>> 0;
+  const rnd = () => {
+    st = (st + 0x6d2b79f5) >>> 0;
+    let t = st;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const names = Object.keys(kinds);
+  const total = names.reduce((s, k) => s + kinds[k], 0) || 1;
+  const pick = () => {
+    let r = rnd() * total;
+    for (const k of names) {
+      r -= kinds[k];
+      if (r <= 0) return k;
+    }
+    return names[names.length - 1];
+  };
+  const { pos, n, cx, cy } = skirt;
+  const V = (r, k) => {
+    const o = (r * n + (k % n)) * 3;
+    return [pos[o], pos[o + 1], pos[o + 2]];
+  };
+  const place = (k, a, b) => {
+    const p00 = V(0, k);
+    const p01 = V(0, k + 1);
+    const p10 = V(1, k);
+    const p11 = V(1, k + 1);
+    const lerp = (i) => (p00[i] * (1 - b) + p01[i] * b) * (1 - a) + (p10[i] * (1 - b) + p11[i] * b) * a;
+    return [lerp(0) + cx, lerp(1) + cy, lerp(2) - 0.3];
+  };
+  const rows = {};
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const cnt = Math.floor(perVertex + rnd());
+    for (let m = 0; m < cnt; m++) {
+      const [x, y, z] = place(k, 0.12 + rnd() * 0.88, rnd());
+      const kind = pick();
+      let row;
+      switch (kind) {
+        case 'pine':
+        case 'broad': {
+          const pine = kind === 'pine';
+          const rx = pine ? 2.2 + rnd() * 1.4 : 3.6 + rnd() * 2.6;
+          const rz = pine ? 5.5 + rnd() * 3 : 3.6 + rnd() * 2;
+          const th = pine ? 2.6 + rnd() * 1.6 : 2.8 + rnd() * 1.4;
+          row = [x, y, z, th + rz * 0.8, rx, rz, pine ? 0.25 : 0.32, rnd()];
+          break;
+        }
+        case 'palm':
+          row = [x, y, z + 0.2, 8 + rnd() * 4, 3 + rnd() * 1.4, 1.3 + rnd() * 0.6, 0.18, rnd()];
+          break;
+        case 'saguaro':
+          row = [x, y, z + 0.2, 4 + rnd() * 5, 0, 0, 0.25, rnd()];
+          break;
+        case 'shrub':
+        case 'gorse': {
+          const h = (kind === 'gorse' ? 1.0 : 0.9) + rnd() * 0.6;
+          row = [x, y, z + 0.2, h / 2, (kind === 'gorse' ? 1.2 : 1) + rnd(), h / 2, 0, rnd()];
+          break;
+        }
+        default: {
+          // rock
+          const u = rnd();
+          const r = 0.35 + u * u;
+          const h = r * (0.5 + 0.5 * rnd());
+          row = [x, y, z + 0.2, h, r, h, r, rnd()];
+        }
+      }
+      if (z < minZ) continue;
+      (rows[kind] || (rows[kind] = [])).push(...row);
+    }
+    const g = Math.floor(grass + rnd());
+    for (let m = 0; m < g; m++) {
+      const [x, y, z] = place(k, rnd() * 0.7, rnd());
+      if (z < minZ) continue;
+      out.push(x, y, z + 0.25, 0.6 + rnd() * 0.6, 0, 0, 0, rnd());
+    }
+  }
+  return { rows, grass: out };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -446,6 +575,298 @@ export function broadleafMesh() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Themed objects (version 2): palm, saguaro, bush (shrub and gorse), rock and dune-grass tufts.
+// Unit meshes drawn instanced by the object shader (shaders.js OBJ_VS), which scales and bends
+// them per instance. Per-vertex attr = {part, shade, u, v}: shade is baked ambient occlusion
+// (0 dark .. 1 lit); u, v are the kind's own surface coordinates (see each builder).
+
+function objBuilder() {
+  const p = [];
+  const n = [];
+  const a = [];
+  const i = [];
+  return {
+    p, n, a, i,
+    v(x, y, z, nx, ny, nz, part, shade, u, w) {
+      p.push(x, y, z);
+      const l = Math.hypot(nx, ny, nz) || 1;
+      n.push(nx / l, ny / l, nz / l);
+      a.push(part, shade, u, w);
+      return p.length / 3 - 1;
+    },
+    // Quad strip between two rows of vertex indices (same length).
+    strip(r0, r1) {
+      for (let k = 0; k < r0.length - 1; k++) i.push(r0[k], r0[k + 1], r1[k], r0[k + 1], r1[k + 1], r1[k]);
+    },
+    build() {
+      return { pos: new Float32Array(p), nrm: new Float32Array(n), attr: new Float32Array(a), idx: new Uint16Array(i) };
+    },
+  };
+}
+
+// Deterministic 0..1 hash of an integer (stable mesh variety without an rng).
+function h01(k) {
+  const s = Math.sin(k * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// Palm. part 0 = trunk: x, y in trunk radii (tapered, a swollen foot), z = 0..1 of the trunk
+// height; the shader bends it into a curve and scales it (u = round the trunk, v = height
+// fraction, for the leaf-scar rings). part 1 = live fronds, part 2 = dead fronds hanging under the
+// crown: x, y in crown radii (canopy rx), z in canopy rz, from the crown centre at the trunk top;
+// u = 0 at the crown .. 1 at the tip, v = -1 .. 1 across the blade (the shader cuts the leaflets).
+// Each frond arches up and droops (z = a·u − b·u²), its leaflets folded down in a shallow V.
+export function palmMesh({ fronds = 11, segs = 6 } = {}) {
+  const B = objBuilder();
+  const S = 7;
+  const RINGS = 9;
+  let prev = null;
+  for (let r = 0; r <= RINGS; r++) {
+    const t = r / RINGS;
+    const rad = (1.2 - 0.4 * t) * (1 + 0.55 * Math.max(0, 1 - t / 0.08));
+    const row = [];
+    for (let s = 0; s <= S; s++) {
+      const ang = (s / S) * Math.PI * 2;
+      const c = Math.cos(ang);
+      const sn = Math.sin(ang);
+      row.push(B.v(c * rad, sn * rad, t, c, sn, 0.15, 0, 0.45 + 0.45 * t, s / S, t));
+    }
+    if (prev) B.strip(prev, row);
+    prev = row;
+  }
+  const frond = (part, phi, a, b, len, wid, shadeBase) => {
+    const dx = Math.cos(phi);
+    const dy = Math.sin(phi);
+    const sx = -dy;
+    const sy = dx;
+    let r0 = null;
+    for (let k = 0; k <= segs; k++) {
+      const u = k / segs;
+      const x = len * u;
+      const z = a * u - b * u * u;
+      const w = wid * Math.sin(Math.PI * Math.min(1, Math.pow(u, 0.75) * 1.05)) + 0.004;
+      const drop = 1.1 * w; // leaflets hang below the rachis (rz units)
+      // Normals: up, tilted out to each side over the fold.
+      const sh = shadeBase + (1 - shadeBase) * u;
+      const L = B.v(dx * x + sx * w, dy * x + sy * w, z - drop, sx * 0.55, sy * 0.55, 1, part, sh, u, -1);
+      const M = B.v(dx * x, dy * x, z, 0, 0, 1, part, sh, u, 0);
+      const R = B.v(dx * x - sx * w, dy * x - sy * w, z - drop, -sx * 0.55, -sy * 0.55, 1, part, sh, u, 1);
+      const row = [L, M, R];
+      if (r0) {
+        B.i.push(r0[0], r0[1], row[1], r0[0], row[1], row[0]);
+        B.i.push(r0[1], r0[2], row[2], r0[1], row[2], row[1]);
+      }
+      r0 = row;
+    }
+  };
+  for (let f = 0; f < fronds; f++) {
+    const upper = f % 2 === 0;
+    const phi = (f / fronds) * Math.PI * 2 + (h01(f) - 0.5) * 0.35;
+    const a = upper ? 1.15 + 0.5 * h01(f + 20) : 0.35 + 0.4 * h01(f + 20);
+    const b = upper ? 2.1 + 0.5 * h01(f + 40) : 1.75 + 0.4 * h01(f + 40);
+    frond(1, phi, a, b, 0.9 + 0.12 * h01(f + 60), 0.17, upper ? 0.55 : 0.4);
+  }
+  for (let f = 0; f < 3; f++) {
+    frond(2, (f / 3) * Math.PI * 2 + 0.6, -0.5, 0.9, 0.42, 0.07, 0.25);
+  }
+  return B.build();
+}
+
+// Saguaro. part 0 = the ribbed column: x, y in column radii (12 vertices round, alternate ridge
+// and groove, the grooves darker in `shade`), z = 0..1 of the height, and the domed top encoded as
+// z in 1..2 (the shader puts it at H + (z − 1)·R·1.15). part 1 = arms, in metres for a reference
+// 6.5 m saguaro (the shader scales them by H / 6.5), v = arm id 1..4: the shader shows as many
+// arms as the instance has (none or one when young). u runs round the stem (rib grooves).
+export function saguaroMesh() {
+  const B = objBuilder();
+  const N = 12;
+  const rib = (s) => (s % 2 ? 0.84 : 1);
+  const ribShade = (s) => (s % 2 ? 0.55 : 1);
+  const ring = (z, rf, part, armId, cxyz = null, frame = null, r = 1) => {
+    const row = [];
+    for (let s = 0; s <= N; s++) {
+      const ang = (s / N) * Math.PI * 2;
+      const c = Math.cos(ang);
+      const sn = Math.sin(ang);
+      const k = rib(s % N) * rf;
+      if (!frame) {
+        row.push(B.v(c * k, sn * k, z, c, sn, 0, part, ribShade(s % N), s / N, armId));
+      } else {
+        // Tube ring round cxyz in the plane of frame {n, b} (unit vectors).
+        const ox = (frame.n[0] * c + frame.b[0] * sn) * r * k;
+        const oy = (frame.n[1] * c + frame.b[1] * sn) * r * k;
+        const oz = (frame.n[2] * c + frame.b[2] * sn) * r * k;
+        row.push(B.v(cxyz[0] + ox, cxyz[1] + oy, cxyz[2] + oz, ox, oy, oz, part, ribShade(s % N), s / N, armId));
+      }
+    }
+    return row;
+  };
+  let prev = null;
+  for (const z of [0, 0.1, 0.35, 0.6, 0.85, 1]) {
+    const row = ring(z, 1, 0, 0);
+    if (prev) B.strip(prev, row);
+    prev = row;
+  }
+  for (const [z, rf] of [[1.4, 0.9], [1.75, 0.62], [1.95, 0.3]]) {
+    const row = ring(z, rf, 0, 0);
+    B.strip(prev, row);
+    prev = row;
+  }
+  const top = B.v(0, 0, 2, 0, 0, 1, 0, 1, 0, 0);
+  for (let s = 0; s < N; s++) B.i.push(prev[s], prev[s + 1], top);
+  // Arms: out from the stem with a slight sag, an elbow, then up to a domed tip. [azimuth deg,
+  // attach height, reach, rise, radius] in metres for the 6.5 m reference.
+  const ARMS = [[10, 2.6, 0.78, 1.9, 0.19], [175, 3.2, 0.62, 1.5, 0.18], [95, 3.9, 0.5, 1.15, 0.16], [262, 2.2, 0.9, 2.1, 0.19]];
+  ARMS.forEach(([azd, h0, out, up, r], k) => {
+    const az = (azd * Math.PI) / 180;
+    const ca = Math.cos(az);
+    const sa = Math.sin(az);
+    // Path in the arm's vertical plane (d = horizontal distance out, z = height).
+    const P = [[0, h0], [out * 0.5, h0 - 0.06], [out * 0.82, h0 + 0.02], [out, h0 + 0.28], [out * 1.02, h0 + 0.28 + up * 0.5], [out, h0 + 0.28 + up]];
+    const pts = P.map(([d, z]) => [ca * d, sa * d, z]);
+    let row0 = null;
+    const bvec = [-sa, ca, 0]; // horizontal, perpendicular to the arm's plane
+    for (let q = 0; q < pts.length; q++) {
+      const a = pts[Math.max(0, q - 1)];
+      const b = pts[Math.min(pts.length - 1, q + 1)];
+      let tx = b[0] - a[0];
+      let ty = b[1] - a[1];
+      let tz = b[2] - a[2];
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      tx /= tl;
+      ty /= tl;
+      tz /= tl;
+      // n = b x t (in the arm's plane, perpendicular to the path)
+      const nvec = [bvec[1] * tz - bvec[2] * ty, bvec[2] * tx - bvec[0] * tz, bvec[0] * ty - bvec[1] * tx];
+      const row = ring(0, 1, 1, k + 1, pts[q], { n: nvec, b: bvec }, r * (q === 0 ? 0.92 : 1));
+      if (row0) B.strip(row0, row);
+      row0 = row;
+    }
+    // Domed tip.
+    const tip = pts[pts.length - 1];
+    const cap = ring(0, 0.62, 1, k + 1, [tip[0], tip[1], tip[2] + r * 0.6], { n: [1, 0, 0], b: [0, 1, 0] }, r);
+    B.strip(row0, cap);
+    const t = B.v(tip[0], tip[1], tip[2] + r, 0, 0, 1, 1, 1, 0, k + 1);
+    for (let s = 0; s < N; s++) B.i.push(cap[s], cap[s + 1], t);
+  });
+  return B.build();
+}
+
+// Bush (shrub / creosote and gorse): a low, lumpy cluster of blobs filling the unit canopy
+// (x, y in canopy radii, z −1..1 of the half-height round the canopy centre), flattened where it
+// meets the ground. part 1, shade = AO.
+export function bushMesh() {
+  const B = objBuilder();
+  const ico = icosphere(1);
+  const blobs = [
+    [0, 0, 0.05, 0.78],
+    [0.5, 0.18, -0.25, 0.52],
+    [-0.46, 0.3, -0.2, 0.55],
+    [0.08, -0.52, -0.28, 0.52],
+    [-0.2, -0.22, 0.42, 0.48],
+  ];
+  blobs.forEach(([bx, by, bz, br], k) => {
+    const b = B.p.length / 3;
+    for (let q = 0; q < ico.pos.length; q += 3) {
+      const nx = ico.pos[q];
+      const ny = ico.pos[q + 1];
+      const nz = ico.pos[q + 2];
+      const lump = 1 + 0.16 * Math.sin(nx * 6 + k * 1.7) * Math.cos(ny * 5 - k) + 0.1 * Math.sin(nz * 8 + k * 2);
+      const x = (bx + nx * br * lump) / 1.05;
+      const y = (by + ny * br * lump) / 1.05;
+      let z = bz + nz * br * lump;
+      if (z < -0.92) z = -0.92 + (z + 0.92) * 0.25;
+      const shade = 0.3 + 0.7 * Math.min(1, Math.max(0, 0.45 + 0.5 * z + 0.3 * Math.hypot(x, y)));
+      B.v(x, y, z, x * 0.6 + nx, y * 0.6 + ny, z * 0.6 + nz, 1, shade, 0, 0);
+    }
+    for (let q = 0; q < ico.idx.length; q++) B.i.push(b + ico.idx[q]);
+  });
+  return B.build();
+}
+
+// Rock: a faceted boulder (displaced icosphere, flat-shaded: every face has its own vertices and
+// normal). Unit: x, y −1..1 (radius), z −1..1 (the shader buries the lower third). part 0.
+export function rockMesh() {
+  const B = objBuilder();
+  const ico = icosphere(1);
+  const P = [];
+  for (let q = 0; q < ico.pos.length; q += 3) {
+    const x = ico.pos[q];
+    const y = ico.pos[q + 1];
+    const z = ico.pos[q + 2];
+    const d = 1 + 0.17 * Math.sin(3.1 * x + 1.3) * Math.cos(2.7 * y - 0.4) + 0.11 * Math.sin(5.3 * z + 2) + 0.07 * Math.cos(7.1 * x - 3.3 * y);
+    P.push([x * d, y * d, z * d * (z > 0 ? 0.9 : 1)]);
+  }
+  for (let q = 0; q < ico.idx.length; q += 3) {
+    const a = P[ico.idx[q]];
+    const b = P[ico.idx[q + 1]];
+    const c = P[ico.idx[q + 2]];
+    const ux = b[0] - a[0];
+    const uy = b[1] - a[1];
+    const uz = b[2] - a[2];
+    const vx = c[0] - a[0];
+    const vy = c[1] - a[1];
+    const vz = c[2] - a[2];
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    const mx = a[0] + b[0] + c[0];
+    const my = a[1] + b[1] + c[1];
+    const mz = a[2] + b[2] + c[2];
+    const flip = nx * mx + ny * my + nz * mz < 0;
+    if (flip) {
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
+    }
+    const shade = 0.5 + 0.5 * Math.min(1, Math.max(0, mz / 3 * 0.6 + 0.55));
+    const verts = flip ? [a, c, b] : [a, b, c];
+    for (const v of verts) B.i.push(B.v(v[0], v[1], v[2], nx, ny, nz, 0, shade, 0, 0));
+  }
+  return B.build();
+}
+
+// Dune-grass (marram) tuft: three clumps of thin tapering blades curving outward, spread over
+// about a metre; metres for a tuft of scale 1 (about 0.8 m tall). part 0, shade and v = height
+// fraction (base dark, tips light), u = blade index fraction.
+export function grassMesh({ clumps = 3, blades = 6 } = {}) {
+  const B = objBuilder();
+  const total = clumps * blades;
+  for (let c = 0; c < clumps; c++) {
+    const ca = (c / clumps) * Math.PI * 2 + 0.4;
+    const cr = c === 0 ? 0 : 0.28 + 0.12 * h01(c + 77);
+    const ox = Math.cos(ca) * cr;
+    const oy = Math.sin(ca) * cr;
+    const hs = c === 0 ? 1 : 0.75 + 0.15 * h01(c + 5);
+    for (let b = 0; b < blades; b++) {
+      const k = c * blades + b;
+      const ang = (b / blades) * Math.PI * 2 + (h01(k + 3) - 0.5) * 0.9 + c;
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+      const sx = -dy;
+      const sy = dx;
+      const r0 = 0.02 + 0.06 * h01(k + 11);
+      const lean = 0.18 + 0.32 * h01(k + 23);
+      const h = (0.65 + 0.3 * h01(k + 31)) * hs;
+      const pts = [[r0, 0, 0.04], [r0 + lean * 0.3 * h, 0.55 * h, 0.028], [r0 + lean * h, h, 0]];
+      const u = k / total;
+      const row = pts.map(([d, z, w], q) => {
+        const v = q / 2;
+        const nx = dx * 0.45;
+        const ny = dy * 0.45;
+        const x = ox + dx * d;
+        const y = oy + dy * d;
+        if (w === 0) return [B.v(x, y, z, nx, ny, 1, 0, v, u, v)];
+        return [B.v(x + sx * w, y + sy * w, z, nx, ny, 1, 0, v, u, v), B.v(x - sx * w, y - sy * w, z, nx, ny, 1, 0, v, u, v)];
+      });
+      B.i.push(row[0][0], row[0][1], row[1][1], row[0][0], row[1][1], row[1][0]);
+      B.i.push(row[1][0], row[1][1], row[2][0]);
+    }
+  }
+  return B.build();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Flagstick + cloth. attr = {part, u, v}: part 0 = pole (x,y unit radius, z metres), part 1 = cloth
 // (u along the flag 0..1 away from the pole, v 0..1 bottom to top; the shader places and waves it).
 
@@ -569,18 +990,116 @@ export function triangulate(poly) {
   return out;
 }
 
-// All water bodies in one mesh: pos (world xyz), idx.
-export function waterMesh(waters, pad = 1.6) {
+// All water bodies in one mesh: pos (world xyz), idx, and sea (per vertex: 1 = sea water, which
+// gets surf and the open-sea look). With `sea` (seaSetup) the sea also runs out to `outer` metres:
+// an annulus from the edge of the hole's grid (sea.rect), or a whole disc when sea.full (it then
+// replaces the hole's fill:'outside' flood plane, which lies at the same level). Sea polygons are
+// clipped to the grid rectangle so they never overlap the annulus (a double blend).
+export function waterMesh(waters, pad = 1.6, { sea = null, outer = 5500, segs = 72 } = {}) {
   const p = [];
   const i = [];
+  const f = [];
   for (const w of waters || []) {
     if (!w.poly || w.poly.length < 3) continue;
-    const poly = offsetPoly(w.poly, pad);
+    if (sea && sea.full && w.fill === 'outside') continue;
+    let poly = offsetPoly(w.poly, pad);
+    if (sea && w.sea) {
+      const r = sea.rect;
+      poly = poly.map((q) => ({ x: Math.min(r.maxX, Math.max(r.minX, q.x)), y: Math.min(r.maxY, Math.max(r.minY, q.y)) }));
+    }
     const b = p.length / 3;
-    for (const q of poly) p.push(q.x, q.y, w.level);
+    for (const q of poly) {
+      p.push(q.x, q.y, w.level);
+      f.push(w.sea ? 1 : 0);
+    }
     for (const t of triangulate(poly)) i.push(b + t);
   }
-  return { pos: new Float32Array(p), idx: new Uint16Array(i) };
+  if (sea) {
+    const r = sea.rect;
+    const cx = (r.minX + r.maxX) / 2;
+    const cy = (r.minY + r.maxY) / 2;
+    // Angles: a regular fan plus the four rectangle corners (so the inner edge follows the rect).
+    const angs = [];
+    for (let k = 0; k < segs; k++) angs.push((k / segs) * Math.PI * 2 - Math.PI);
+    for (const [x, y] of [[r.minX, r.minY], [r.maxX, r.minY], [r.maxX, r.maxY], [r.minX, r.maxY]]) angs.push(Math.atan2(y - cy, x - cx));
+    angs.sort((a, b) => a - b);
+    const b = p.length / 3;
+    const m = angs.length;
+    if (sea.full) {
+      p.push(cx, cy, sea.level);
+      f.push(1);
+      for (const a of angs) {
+        p.push(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer, sea.level);
+        f.push(1);
+      }
+      for (let k = 0; k < m; k++) i.push(b, b + 1 + k, b + 1 + ((k + 1) % m));
+    } else {
+      const hx = (r.maxX - r.minX) / 2;
+      const hy = (r.maxY - r.minY) / 2;
+      for (const a of angs) {
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        // Ray from the centre to the rectangle's edge.
+        const t = Math.min(Math.abs(ca) > 1e-9 ? hx / Math.abs(ca) : Infinity, Math.abs(sa) > 1e-9 ? hy / Math.abs(sa) : Infinity);
+        p.push(cx + ca * t, cy + sa * t, sea.level, cx + ca * outer, cy + sa * outer, sea.level);
+        f.push(1, 1);
+      }
+      for (let k = 0; k < m; k++) {
+        const a0 = b + k * 2;
+        const a1 = b + ((k + 1) % m) * 2;
+        i.push(a0, a1, a0 + 1, a1, a1 + 1, a0 + 1);
+      }
+    }
+  }
+  return { pos: new Float32Array(p), idx: new Uint16Array(i), sea: new Float32Array(f) };
+}
+
+// Where the sea lies for one hole, or null when it has none: {level, dir:{x,y} (unit, from the
+// grid centre), cosHalf (sector half-angle), full (sea all round: an island hole or an ocean
+// flood), rect (the height grid's extent)}. An 'ocean' theme always has a sea: at the level of the
+// hole's own sea water (toward it), else 1.5 m below the lowest point of the grid edge, in the
+// theme's direction for this hole (theme.seaAz, relative to the tee -> green line).
+export function seaSetup(terrain, theme) {
+  const ws = terrain.waters || [];
+  const flood = ws.find((w) => w.fill === 'outside');
+  const seaW = ws.find((w) => w.sea && w.fill !== 'outside');
+  const ocean = !!theme && theme.horizon === 'ocean';
+  if (!ocean && !seaW && !(flood && flood.sea)) return null;
+  const g = terrain.grid;
+  const rect = { minX: g.minX, minY: g.minY, maxX: g.minX + (g.nx - 1) * g.step, maxY: g.minY + (g.ny - 1) * g.step };
+  const cx = (rect.minX + rect.maxX) / 2;
+  const cy = (rect.minY + rect.maxY) / 2;
+  const half = ((theme && theme.seaHalf) || 70) * (Math.PI / 180);
+  if (flood && (flood.sea || ocean)) return { level: flood.level, dir: { x: 1, y: 0 }, cosHalf: -2, full: true, rect };
+  let level;
+  let dx;
+  let dy;
+  if (seaW) {
+    level = seaW.level;
+    let sx = 0;
+    let sy = 0;
+    for (const q of seaW.poly) {
+      sx += q.x;
+      sy += q.y;
+    }
+    dx = sx / seaW.poly.length - cx;
+    dy = sy / seaW.poly.length - cy;
+  } else {
+    let lo = Infinity;
+    const H = (i, j) => g.heights[j * g.nx + i];
+    for (let i = 0; i < g.nx; i++) lo = Math.min(lo, H(i, 0), H(i, g.ny - 1));
+    for (let j = 0; j < g.ny; j++) lo = Math.min(lo, H(0, j), H(g.nx - 1, j));
+    level = lo - 1.5;
+    const tee = terrain.tee || { x: cx, y: cy };
+    const end = terrain.greenCenter || terrain.cup || { x: cx, y: cy + 1 };
+    const az = (theme.seaAz || [0])[(terrain.n || 0) % (theme.seaAz || [0]).length] * (Math.PI / 180);
+    const hx = end.x - tee.x;
+    const hy = end.y - tee.y;
+    dx = hx * Math.cos(az) - hy * Math.sin(az);
+    dy = hx * Math.sin(az) + hy * Math.cos(az);
+  }
+  const l = Math.hypot(dx, dy) || 1;
+  return { level, dir: { x: dx / l, y: dy / l }, cosHalf: Math.cos(half), full: false, rect };
 }
 
 // ---------------------------------------------------------------------------------------------
