@@ -827,3 +827,83 @@ body[data-layout="square"] .card { max-width: 620px; }
   .tb-info { padding: 0 8px; }
   .ic-num { font-size: 32px; }
 }
+
+/* ================================================================ green reading (section 8.9) */
+/* Caddie read card: under the info card while putting (play and Read views). Only its button takes
+   touches, so an aim drag over it still reaches the canvas. */
+#readcard {
+  top: calc(var(--sat) + 150px);
+  left: calc(var(--sal) + 10px);
+  max-width: calc(100vw - var(--sal) - var(--sar) - 10px - 56px - 10px - 8px);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 14px;
+}
+#hud #readcard { pointer-events: none; }
+#hud #readcard .rc-aim { pointer-events: auto; }
+#readcard[hidden], #hud:not([data-phase="address"]) #readcard, #hud[data-map="1"] #readcard { display: none; }
+.rc-text { min-width: 0; }
+.rc-k { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.rc-l1 { font-size: 13.5px; font-weight: 700; line-height: 1.25; margin-top: 2px; }
+.rc-l2 { font-size: 15px; font-weight: 800; line-height: 1.25; color: #fff; }
+#readcard[data-pending="1"] .rc-l1 { color: var(--muted); font-weight: 600; }
+.rc-aim {
+  flex: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-width: 64px; height: 50px; padding: 0 8px;
+  border-radius: 11px;
+  background: rgba(255, 210, 90, 0.95); color: #1b1606;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.02em; line-height: 1.05;
+}
+.rc-aim[hidden] { display: none; }
+.rc-aim svg { width: 18px; height: 18px; fill: none; stroke: #1b1606; stroke-width: 2; stroke-linecap: round; }
+.rc-aim:active { transform: scale(0.96); }
+/* Result toasts while putting go under the read card. */
+body:not([data-layout="landscape"]) #hud[data-putt="1"][data-readcard="1"] #toast { top: calc(var(--sat) + 236px); }
+
+/* Read cameras: a segmented row at the bottom of the Read view; the drag hint sits above it. */
+#read-cams {
+  display: none;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--sab) + 18px);
+  padding: 3px; gap: 3px;
+  border-radius: 14px;
+}
+#hud[data-read="1"] #read-cams { display: flex; }
+#read-cams button {
+  height: 40px; padding: 0 13px; border-radius: 11px;
+  font-size: 13px; font-weight: 700; white-space: nowrap; color: rgba(255, 255, 255, 0.85);
+}
+#read-cams button[aria-pressed="true"] { background: rgba(255, 210, 90, 0.95); color: #1b1606; }
+#read-cams button:active { background: rgba(255, 255, 255, 0.14); }
+#hud[data-read="1"] #read-hint { bottom: calc(var(--sab) + 72px); }
+
+/* Slope tags at the ball and the cup: percent plus a downhill arrow, coloured by steepness. */
+.slope-tag {
+  left: 0; top: 0;
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 5px; border-radius: 999px;
+  background: rgba(6, 12, 10, 0.72);
+  font-size: 12px; font-weight: 800; white-space: nowrap;
+  pointer-events: none;
+  --band: #3ddc84;
+  box-shadow: inset 0 0 0 1.5px var(--band);
+}
+.slope-tag[hidden] { display: none; }
+.slope-tag[data-band="1"] { --band: #ffd23f; }
+.slope-tag[data-band="2"] { --band: #ff9a3c; }
+.slope-tag[data-band="3"] { --band: #ff4d4d; }
+.slope-tag i {
+  display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--band);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M1 5.6h7V2l5 5-5 5V8.4H1z'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M1 5.6h7V2l5 5-5 5V8.4H1z'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+}
+#hud:not([data-phase="address"]) .slope-tag, #hud[data-map="1"] .slope-tag { display: none; }
+
+.seg[data-setting="puttAid"] button { min-width: 46px; padding: 0 8px; }
+
+body[data-layout="landscape"] #readcard { top: calc(var(--sat) + 132px); max-width: min(420px, calc(var(--pad-x) - var(--sal) - 20px)); }
+body[data-layout="landscape"] #hud[data-putt="1"][data-readcard="1"][data-phase="address"] #toast { bottom: calc(var(--sab) + 130px); }
+body[data-layout="landscape"] #read-cams { bottom: calc(var(--sab) + 12px); }
+body[data-layout="landscape"] #hud[data-read="1"] #read-hint { bottom: calc(var(--sab) + 14px); }
+body[data-layout="square"] #readcard { top: calc(var(--sat) + 166px); }

@@ -55,6 +55,20 @@
     </div>
   </section>
 
+  <!-- Caddie read (putting, section 8.9): break, slope, plays-like and aim, with "Aim at read". -->
+  <section id="readcard" class="glass" aria-label="Caddie read" aria-live="polite" hidden>
+    <div class="rc-text">
+      <div class="rc-k">Caddie read</div>
+      <div class="rc-l1" data-f="read1">Reading the green…</div>
+      <div class="rc-l2" data-f="read2"></div>
+    </div>
+    <button class="rc-aim" type="button" data-act="aim-read" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.2"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></svg><span>Aim at read</span>
+    </button>
+  </section>
+  <div class="slope-tag" hidden><i aria-hidden="true"></i><span></span></div>
+  <div class="slope-tag" hidden><i aria-hidden="true"></i><span></span></div>
+
   <nav id="tools" aria-label="Tools">
     <button class="tool glass" type="button" data-act="read" aria-label="Read the green">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Read</span>
@@ -112,6 +126,11 @@
   </div>
 
   <div id="read-hint" class="pill glass">Drag to look around the green</div>
+  <nav id="read-cams" class="glass" aria-label="Read cameras">
+    <button type="button" data-cam="ball" aria-pressed="false">Behind ball</button>
+    <button type="button" data-cam="hole" aria-pressed="false">Behind hole</button>
+    <button type="button" data-cam="overhead" aria-pressed="false">Overhead</button>
+  </nav>
   <div id="toast" aria-live="polite"></div>
   <div id="banner" aria-live="polite"><div class="banner-t"></div><div class="banner-s"></div></div>
 
@@ -191,6 +210,7 @@
       <div class="set-row"><span>Wind</span><div class="seg" data-setting="wind"><button type="button" data-v="off">Off</button><button type="button" data-v="light">Light</button><button type="button" data-v="breezy">Breezy</button></div></div>
       <div class="set-row"><span>Swing control</span><div class="seg" data-setting="swing"><button type="button" data-v="swipe">Swipe</button><button type="button" data-v="tap">Tap meter</button></div></div>
       <div class="set-row"><span>Difficulty</span><div class="seg" data-setting="difficulty"><button type="button" data-v="easy">Easy</button><button type="button" data-v="normal">Normal</button><button type="button" data-v="pro">Pro</button></div></div>
+      <div class="set-row"><span>Putt preview</span><div class="seg" data-setting="puttAid"><button type="button" data-v="auto">Auto</button><button type="button" data-v="full">Full</button><button type="button" data-v="partial">Part</button><button type="button" data-v="off">Off</button></div></div>
       <div class="set-row"><span>Golfer</span><div class="seg" data-setting="handed"><button type="button" data-v="R">Right</button><button type="button" data-v="L">Left</button></div></div>
       <div class="set-row"><span>Sound</span><div class="seg" data-setting="sound"><button type="button" data-v="on">On</button><button type="button" data-v="off">Off</button></div></div>
       <div class="set-row"><span>Graphics</span><div class="seg" data-setting="quality"><button type="button" data-v="auto">Auto</button><button type="button" data-v="low">Low</button></div></div>
@@ -209,7 +229,7 @@
       <div class="ht"><b>Swing</b><span>On the lower pad, drag <em>down</em> to take the club back: the arc shows the power, the gold notch is the power that reaches the pin, and full power clicks into place (the 100% mark lights up green). Then swipe <em>up</em>: a short flick is enough, you don't need to get back to where you started. A straight swipe flies straight; a curved one draws or fades. Pulling well past full is an overswing: more power, less control. To cancel, hold still at the bottom and let go.</span></div>
       <div class="ht"><b>Tap meter</b><span>Prefer tapping? Choose <em>Swing control: Tap meter</em> in Settings. Tap the pad to start the power bar, then tap again when it reaches the power you want (it fills, hangs at full, then falls back). The shot flies straight.</span></div>
       <div class="ht"><b>Tempo</b><span>A brisk, even flick is right. Only a frantic snap is <em>Rushed</em> (the face wanders); creeping back up is <em>Decel</em> (a little less distance).</span></div>
-      <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Changed your mind? Slide back up to the start, or off to the side, before you let go. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
+      <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Changed your mind? Slide back up to the start, or off to the side, before you let go. Use <em>Read</em> to see the slope (the streaks run downhill: green gentle, yellow, orange, red steep) and the caddie's read, tap <em>Aim at read</em> to line up on it, and &minus;/+ to change the putt range. The dotted preview line shows where your putt rolls (all of it on Easy, the start on Normal; see Settings).</span></div>
       <div class="ht"><b>Clubs</b><span>The caddie picks a club for every lie. Use &#9664; &#9654; to change it.</span></div>
       <div class="ht"><b>Shots</b><span>Tap <em>Shot</em> beside the club for a special shot: a <em>Draw</em> or <em>Cut</em> that bends around trouble (aim away from the target and the curved line shows where it lands), a low <em>Stinger</em> or <em>Punch</em> under the wind, a high <em>Flop</em> that stops dead, or a <em>Bump &amp; run</em>. It lasts one stroke.</span></div>
       <div class="ht"><b>Courses</b><span>Pick a course on the main menu before a new round: parkland, desert, island or links. <em>Mixed</em> plays 9 or 18 random holes from all four courses (tap <em>9 holes</em> or <em>18 holes</em> on its card). Each keeps its own best round.</span></div>

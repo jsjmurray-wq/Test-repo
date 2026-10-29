@@ -100,7 +100,7 @@ import { fmtDist, fmtWind, mToYd, SURF_NAMES } from './constants.js';
 import { padRectFor, readSafeInsets, layoutMode, onTarget, MAX_POWER } from './input.js';
 
 const SETTINGS_KEY = 'golf.settings.v1';
-const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto', swing: 'swipe' });
+const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto', swing: 'swipe', puttAid: 'auto' });
 const CHOICES = {
   units: ['yd', 'm'],
   wind: ['off', 'light', 'breezy'],
@@ -109,6 +109,7 @@ const CHOICES = {
   sound: [true, false],
   quality: ['auto', 'low'],
   swing: ['swipe', 'tap'],
+  puttAid: ['auto', 'full', 'partial', 'off'], // putt preview line (section 8.9)
 };
 const HINTS = {
   swipe: { full: 'Drag down, then swipe up', putt: 'Drag down, release · slide back to cancel' },
@@ -209,6 +210,7 @@ export class UI {
       nogl: $('#nogl'), pad: $('#pad'), toast: $('#toast'), banner: $('#banner'), intro: $('#intro'),
       windArrow: $('.wind-arrow'), wind: $('.wind'), lie: $('[data-f="lie"]'),
       shots: $('#shots'), shot: $('#shot'), coursePick: $('#menu .course-pick'),
+      readcard: $('#readcard'), readCams: $('#read-cams'), slopeTags: [...root.querySelectorAll('.slope-tag')],
     };
     this.f = {};
     for (const n of root.querySelectorAll('[data-f]')) this.f[n.dataset.f] = n;
@@ -218,6 +220,8 @@ export class UI {
     this._hud = { units: null };
     this._controls = { phase: 'address', putt: false, canRead: null, read: false, map: false };
     this._canResume = false;
+    this._readCard = null;
+    this._tagKeys = ['', ''];
     this._decision = null;
     this._target = null;
     this._courses = [];
@@ -275,6 +279,11 @@ export class UI {
     // A tap on the shot sheet's backdrop (outside the panel) closes it.
     if (e.target === this.el.shots) {
       this._closeShots();
+      return;
+    }
+    const cam = e.target.closest('[data-cam]');
+    if (cam) {
+      this.emit('read-cam', cam.dataset.cam);
       return;
     }
     const mix = e.target.closest('[data-mix]');
@@ -656,6 +665,52 @@ export class UI {
     this._hint = text || null;
     const h = HINTS[this._settings.swing] || HINTS.swipe;
     this.f.hint.textContent = this._hint || (this._controls.putt ? h.putt : h.full);
+  }
+
+  // ------------------------------------------------------------------ green reading (8.9)
+  // The caddie's read card under the info card: null hides it; {pending: true} shows "Reading the
+  // green…"; else {line1, line2, canAim} (canAim shows the "Aim at read" button). DOM writes only
+  // on change.
+  setReadCard(r) {
+    const el = this.el.readcard;
+    if (!el) return;
+    const key = r ? JSON.stringify(r) : '';
+    if (key === this._readCard) return;
+    this._readCard = key;
+    el.hidden = !r;
+    this.el.hud.dataset.readcard = r ? '1' : '0';
+    if (!r) return;
+    el.dataset.pending = r.pending ? '1' : '0';
+    this.f.read1.textContent = r.pending ? 'Reading the green…' : r.line1 || '';
+    this.f.read2.textContent = r.pending ? '' : r.line2 || '';
+    this.f.read2.hidden = r.pending || !r.line2;
+    el.querySelector('[data-act="aim-read"]').hidden = !!r.pending || !r.canAim;
+  }
+
+  // Active read camera button ('orbit' lights none).
+  setReadCam(v) {
+    const box = this.el.readCams;
+    if (!box) return;
+    for (const b of box.querySelectorAll('[data-cam]')) b.setAttribute('aria-pressed', b.dataset.cam === v ? 'true' : 'false');
+  }
+
+  // Slope tags near the ball and the cup: [{x, y (CSS px), text, angle (screen rad, 0 = right,
+  // clockwise positive: the downhill arrow), band 0..3}] (at most two; missing ones hide).
+  setSlopeTags(list) {
+    const tags = this.el.slopeTags || [];
+    for (let i = 0; i < tags.length; i++) {
+      const t = list && list[i];
+      const el = tags[i];
+      const key = t ? `${Math.round(t.x)},${Math.round(t.y)},${t.text},${Math.round(t.angle * 20)},${t.band}` : '';
+      if (key === this._tagKeys[i]) continue;
+      this._tagKeys[i] = key;
+      el.hidden = !t;
+      if (!t) continue;
+      el.style.transform = `translate(${Math.round(t.x)}px, ${Math.round(t.y)}px) translate(-50%, -50%)`;
+      el.dataset.band = String(t.band);
+      el.querySelector('span').textContent = t.text;
+      el.querySelector('i').style.transform = `rotate(${((t.angle * 180) / Math.PI).toFixed(1)}deg)`;
+    }
   }
 
   setControls(c = {}) {

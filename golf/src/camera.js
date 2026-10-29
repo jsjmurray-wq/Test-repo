@@ -7,7 +7,11 @@
 //            whenever a ridge would hide the landing area
 //   putt     low behind the ball (further back and higher for long putts), looking along the
 //            putt line with the ball low on the screen
-//   read     orbit above the green (orbit(dyaw) from a drag); target between ball and cup
+//   read     reading the putt (setReadView): 'orbit' above the green (orbit(dyaw) from a drag;
+//            the default), 'ball' low behind the ball looking down the line at the hole, 'hole'
+//            low behind the hole looking back at the ball, 'overhead' straight down on ball and
+//            hole with the line running up the screen (ctx.lineLat: the read's bulge, m, so a
+//            big breaker fits). A drag in a preset view continues as an orbit from where it is.
 //   flight   TV sequence: (1) tracking shot from behind the golfer that tilts up with the ball,
 //            (2) a lagging chase cam, (3) a cut to a landing camera set up beside and beyond
 //            shot.landing (known in advance), which then follows the ball until it stops
@@ -83,6 +87,30 @@ export function addressFraming(aspect, { dist = 0, dz = 0, h = null } = {}) {
   return { back, h: hh, pitch: Math.atan(hh / back) - below, yBall, yTarget, dist: D };
 }
 
+// Framing for a low view down a line (the read cameras): from the near point (projected at NDC
+// y = yNear) to the far one `dist` m away and `dz` m higher (at NDC y = yFar), seen from `h` m
+// above the near point. Solves the distance back like addressFraming (no 40 m floor).
+// Returns {back, h, pitch}.
+export function lineFraming(aspect, { dist = 5, dz = 0, h = 1.2, yNear = -0.55, yFar = 0.2 } = {}) {
+  const T = Math.tan(fovForAspect(aspect) / 2);
+  const D = Math.max(0.5, dist);
+  const below = Math.atan(-yNear * T);
+  const want = below + Math.atan(yFar * T);
+  const sep = (b) => Math.atan(h / b) - Math.atan((h - dz) / (b + D));
+  let lo = 0.3;
+  let hi = 40;
+  if (sep(hi) > want) lo = hi;
+  for (let i = 0; i < 40 && lo < hi; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (sep(mid) > want) lo = mid;
+    else hi = mid;
+  }
+  const back = 0.5 * (lo + hi);
+  return { back, h, pitch: Math.atan(h / back) - below };
+}
+
+export const READ_VIEWS = ['orbit', 'ball', 'hole', 'overhead'];
+
 // Is the straight line from eye to p clear of the terrain (with a margin)?
 function sightClear(terrain, eye, p, margin = 0.3) {
   if (!terrain || !terrain.heightAt) return true;
@@ -133,6 +161,7 @@ export class CameraRig {
     this.up = { x: 0, y: 0, z: 1 };
     this.fovY = 60 * DEG;
     this.readYaw = 0;
+    this.readView = 'orbit';
     this.snap = true; // first update jumps straight to the goal
     this.flight = null;
     this.framing = null; // last address framing (tests, HUD)
@@ -150,13 +179,33 @@ export class CameraRig {
       const b = c.ball || c.cup;
       const cup = c.cup || b;
       this.readYaw = b && cup && (b.x !== cup.x || b.y !== cup.y) ? Math.atan2(b.y - cup.y, b.x - cup.x) : (c.aimYaw || 0) + Math.PI;
+      this.readView = 'orbit';
     }
     if (mode === 'flight') this._setupFlight();
     if (mode === 'flyover') this.snap = true; // the flyover starts with a cut to the tee
   }
 
   orbit(dyaw) {
+    if (this.mode === 'read' && this.readView !== 'orbit') {
+      // Carry on from where the preset view is, as an orbit round the ball-cup midpoint.
+      const c = this.ctx;
+      const b = c.ball || { x: 0, y: 0 };
+      const cup = c.cup || b;
+      this.readYaw = Math.atan2(this.eye.y - (b.y + cup.y) / 2, this.eye.x - (b.x + cup.x) / 2);
+      this.readView = 'orbit';
+    }
     this.readYaw += dyaw;
+  }
+
+  // Read sub-view: 'orbit' | 'ball' | 'hole' | 'overhead' (see the header).
+  setReadView(v) {
+    if (!READ_VIEWS.includes(v)) return;
+    if (v === 'orbit' && this.readView !== 'orbit') {
+      this.readView = 'ball';
+      this.orbit(0);
+      return;
+    }
+    this.readView = v;
   }
 
   _setupFlight() {
@@ -215,6 +264,12 @@ export class CameraRig {
         break;
       }
       case 'read': {
+        if (this.readView !== 'orbit') {
+          ({ eye, target, up } = this._readGoal(ball, cup));
+          lambda = 4.5;
+          clear = 0.4;
+          break;
+        }
         const mx = (ball.x + cup.x) / 2;
         const my = (ball.y + cup.y) / 2;
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
@@ -315,6 +370,53 @@ export class CameraRig {
       }
     }
     return { eye, target, lambda, up, clear };
+  }
+
+  // The preset read views (behind the ball, behind the hole, overhead).
+  _readGoal(ball, cup) {
+    const c = this.ctx;
+    const T = c.terrain;
+    const aspect = c.aspect || 1;
+    const wide = aspect >= 1;
+    let d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
+    let ux = d > 0.05 ? (cup.x - ball.x) / d : Math.cos(c.aimYaw || 0);
+    let uy = d > 0.05 ? (cup.y - ball.y) / d : Math.sin(c.aimYaw || 0);
+    d = Math.max(d, 0.5);
+    const gb = groundZ(T, ball.x, ball.y);
+    const gc = groundZ(T, cup.x, cup.y);
+    if (this.readView === 'overhead') {
+      const Tn = Math.tan(fovForAspect(aspect) / 2);
+      const lat = Math.abs(c.lineLat || 0);
+      // The line runs up the screen: its length fits the height, its bulge the width, inside the
+      // band the read card and the camera buttons leave free.
+      const h = clamp(Math.max((d / 2 + 1.4) / (Tn * (wide ? 0.62 : 0.5)), (lat + 1.2) / (Tn * aspect * 0.8), 5), 5, 90);
+      const mx = (ball.x + cup.x) / 2;
+      const my = (ball.y + cup.y) / 2;
+      const gz = groundZ(T, mx, my);
+      const off = wide ? 0.08 * h * Tn : 0.2 * h * Tn; // look a little beyond: the pair sits lower
+      const target = { x: mx + ux * off, y: my + uy * off, z: gz };
+      const eye = { x: target.x - ux * h * 0.12, y: target.y - uy * h * 0.12, z: gz + h };
+      return { eye, target, up: { x: ux, y: uy, z: 0 } };
+    }
+    const fromBall = this.readView === 'ball';
+    const near = fromBall ? { x: ball.x, y: ball.y, z: gb } : { x: cup.x, y: cup.y, z: gc };
+    const far = fromBall ? { x: cup.x, y: cup.y, z: gc } : { x: ball.x, y: ball.y, z: gb };
+    if (!fromBall) {
+      ux = -ux;
+      uy = -uy;
+    }
+    const dir = { x: ux, y: uy };
+    let h = clamp(0.75 + d * 0.06, 0.8, 3.2);
+    const yNear = wide ? -0.5 : -0.42;
+    const yFar = wide ? 0.25 : 0.12;
+    let f = lineFraming(aspect, { dist: d, dz: far.z - near.z, h, yNear, yFar });
+    let g = behindBall(near, dir, f.back, f.h, f.pitch);
+    for (let k = 0; k < 8 && !sightClear(T, g.eye, { x: far.x, y: far.y, z: far.z + 0.15 }, 0.1); k++) {
+      h += 0.5;
+      f = lineFraming(aspect, { dist: d, dz: far.z - near.z, h, yNear, yFar });
+      g = behindBall(near, dir, f.back, f.h, f.pitch);
+    }
+    return { eye: g.eye, target: g.target, up: { x: 0, y: 0, z: 1 } };
   }
 
   _flightGoal() {
