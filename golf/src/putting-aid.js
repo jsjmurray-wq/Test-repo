@@ -122,6 +122,33 @@ export function passAt(path, cup) {
   return { dist: best, lat, past, i: bi, x: bx, y: by };
 }
 
+// Where a path crosses the hole's line (through the cup, square to the chord ball -> cup): the
+// miss along it (lat, + = right of the hole seen from the ball) and the pace (past: path length
+// from the crossing to the rest; when it never gets there, minus how far short it stops).
+export function crossAt(path, ball, cup) {
+  const n = path.length / 4;
+  const d = Math.hypot(cup.x - ball.x, cup.y - ball.y) || 1;
+  const ux = (cup.x - ball.x) / d;
+  const uy = (cup.y - ball.y) / d;
+  const along = (i) => (path[i * 4 + 1] - ball.x) * ux + (path[i * 4 + 2] - ball.y) * uy;
+  for (let i = 0; i < n - 1; i++) {
+    const s0 = along(i);
+    const s1 = along(i + 1);
+    if (s0 < d && s1 >= d) {
+      const f = (d - s0) / (s1 - s0 || 1);
+      const x = path[i * 4 + 1] + (path[i * 4 + 5] - path[i * 4 + 1]) * f;
+      const y = path[i * 4 + 2] + (path[i * 4 + 6] - path[i * 4 + 2]) * f;
+      let past = (1 - f) * Math.hypot(path[i * 4 + 5] - path[i * 4 + 1], path[i * 4 + 6] - path[i * 4 + 2]);
+      for (let k = i + 1; k < n - 1; k++) past += Math.hypot(path[k * 4 + 5] - path[k * 4 + 1], path[k * 4 + 6] - path[k * 4 + 2]);
+      return { lat: (x - cup.x) * uy - (y - cup.y) * ux, past, i, x, y };
+    }
+  }
+  const j = n - 1;
+  const x = path[j * 4 + 1];
+  const y = path[j * 4 + 2];
+  return { lat: (x - cup.x) * uy - (y - cup.y) * ux, past: along(j) - d, i: j, x, y };
+}
+
 // Largest signed distance of a path from the chord ball -> cup, up to the sample i (+ = right).
 function bulge(path, ball, cup, iMax) {
   const d = Math.hypot(cup.x - ball.x, cup.y - ball.y) || 1;
@@ -179,35 +206,60 @@ export class PuttReader {
     const ball = this.ball;
     const cup = t.cup;
     const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
+    const D = Math.max(0.5, d);
     const yaw0 = Math.atan2(cup.y - ball.y, cup.x - ball.x);
     const target = this.past;
-    let yaw = yaw0;
+    // Unknowns in metres: a = yaw·D (the aim moved across at the hole), F; errors: the miss across
+    // the hole line and the pace error. Broyden's method from the flat-green Jacobian.
+    let a = yaw0 * D;
     let F = d + target;
+    let J = [-1, 0, 0, 1]; // d(lat)/da, d(lat)/dF, d(pace)/da, d(pace)/dF
     let prev = null;
     let best = null;
     const score = (m) => Math.abs(m.lat) / 0.012 + Math.abs(m.past - target) / 0.05;
     for (let it = 0; it < this.maxIter; it++) {
+      const yaw = a / D;
       const pv = this._sim(yaw, F, null);
-      const m = passAt(pv.path, cup);
+      const m = crossAt(pv.path, ball, cup);
       yield;
-      const cand = { yaw, F, m, path: pv.path, sc: score(m) };
+      const cand = { yaw, F, a, m, path: pv.path, sc: score(m) };
       if (!best || cand.sc < best.sc) best = cand;
       if (cand.sc <= 1.2) break;
-      // Aim: turn by the miss seen from the ball (a putt passing right turns left: + yaw).
-      let dYaw = 0.92 * Math.atan2(m.lat, Math.max(0.5, d));
-      // Pace: more flat roll for a putt that stops short of the 'past' mark.
-      let dF = 0.92 * (target - m.past);
+      const e0 = m.lat;
+      const e1 = m.past - target;
       if (prev) {
-        const sy = (m.lat - prev.m.lat) / (yaw - prev.yaw || 1e-9);
-        if (Math.abs(yaw - prev.yaw) > 1e-6 && sy < -0.15 * d && sy > -4 * d - 2) dYaw = -m.lat / sy;
-        const sf = (m.past - prev.m.past) / (F - prev.F || 1e-9);
-        if (Math.abs(F - prev.F) > 1e-4 && sf > 0.15 && sf < 6) dF = (target - m.past) / sf;
+        const dx0 = a - prev.a;
+        const dx1 = F - prev.F;
+        const n2 = dx0 * dx0 + dx1 * dx1;
+        if (n2 > 1e-10) {
+          const r0 = e0 - prev.e0 - (J[0] * dx0 + J[1] * dx1);
+          const r1 = e1 - prev.e1 - (J[2] * dx0 + J[3] * dx1);
+          J = [J[0] + (r0 * dx0) / n2, J[1] + (r0 * dx1) / n2, J[2] + (r1 * dx0) / n2, J[3] + (r1 * dx1) / n2];
+        }
       }
-      dYaw = Math.max(-0.25, Math.min(0.25, dYaw));
-      dF = Math.max(-0.45 * F, Math.min(0.6 * F + 1, dF));
-      prev = cand;
-      yaw += dYaw;
-      F = Math.max(0.1, F + dF);
+      const det = J[0] * J[3] - J[1] * J[2];
+      let s0;
+      let s1;
+      if (Math.abs(det) > 1e-6) {
+        s0 = -(J[3] * e0 - J[1] * e1) / det;
+        s1 = -(-J[2] * e0 + J[0] * e1) / det;
+      } else {
+        J = [-1, 0, 0, 1];
+        s0 = e0;
+        s1 = -e1;
+      }
+      // A step that would undo progress (worse than the best so far) is halved from the best.
+      prev = { a, F, e0, e1 };
+      if (cand.sc > best.sc * 2 && cand !== best) {
+        a = best.a + 0.5 * (a - best.a);
+        F = best.F + 0.5 * (F - best.F);
+        prev = null;
+        J = [-1, 0, 0, 1];
+        continue;
+      }
+      const lim = 0.25 * D;
+      a += Math.max(-lim, Math.min(lim, 0.95 * s0));
+      F = Math.max(0.1, F + Math.max(-0.45 * F, Math.min(0.6 * F + 1, 0.95 * s1)));
     }
     // Check the best line with the real hole; if it does not drop, try a small ring around it.
     let pv = this._sim(best.yaw, best.F, undefined);
@@ -227,7 +279,7 @@ export class PuttReader {
         }
       }
     }
-    const pass = passAt(best.path, cup);
+    const pass = crossAt(best.path, ball, cup);
     const dz = t.heightAt(cup.x, cup.y) - t.heightAt(ball.x, ball.y);
     const delta = normalizeAngle(aim.yaw - yaw0);
     return {

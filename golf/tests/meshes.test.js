@@ -465,3 +465,22 @@ test('themes carry everything the renderer reads', () => {
   assert.equal(P.water.tint, null);
   assert.ok(!P.fog.highClear);
 });
+
+test('pathRibbon: a dotted strip through draped points, u in strip widths, with an end ring', async () => {
+  const { pathRibbon } = await import('../src/meshes.js');
+  const pts = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0.1, 0, 3, 0.3, 0]);
+  const out = new Float32Array(2000);
+  const eye = { x: -3, y: 0, z: 1.5 };
+  const n = pathRibbon(pts, 4, eye, out, { width: 0.04, minPx: 1, pxPerRad: 1000 });
+  assert.equal(n, 8);
+  // u grows along the strip in units of the width (0.04 m wide: 1 m = 25 widths).
+  assert.ok(Math.abs(out[1 * 6 + 3] - 0) < 1e-6 && Math.abs(out[3 * 6 + 3] - 25) < 1e-3);
+  assert.equal(out[4], -1);
+  assert.equal(out[10], 1);
+  const nr = pathRibbon(pts, 4, eye, out, { width: 0.04, ring: true, ringR: 0.1 });
+  assert.equal(nr, 8 + 2 + 33 * 2);
+  for (let k = 0; k < nr * 6; k++) assert.ok(Number.isFinite(out[k]));
+  assert.ok(out[(nr - 1) * 6 + 3] < 0, 'ring vertices have u < 0');
+  assert.equal(pathRibbon(pts, 4, eye, new Float32Array(10)), 0, 'too small a buffer draws nothing');
+  assert.equal(pathRibbon(pts, 1, eye, out), 0);
+});

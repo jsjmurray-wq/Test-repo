@@ -166,3 +166,60 @@ test('read: orbit moves the eye around the green', () => {
   assert.ok(Math.hypot(a.eye.x - b.eye.x, a.eye.y - b.eye.y) > 5);
   assert.ok(b.eye.z > T.heightAt(b.eye.x, b.eye.y) + 5);
 });
+
+test('read cameras: behind the ball, behind the hole and overhead frame ball and cup; a drag orbits on', () => {
+  const ndc = (cam, p, aspect) => {
+    // Project with the rig's own frame (no lens shift in read views).
+    const f = { x: cam.target.x - cam.eye.x, y: cam.target.y - cam.eye.y, z: cam.target.z - cam.eye.z };
+    const fl = Math.hypot(f.x, f.y, f.z);
+    const fw = { x: f.x / fl, y: f.y / fl, z: f.z / fl };
+    let r = { x: fw.y * cam.up.z - fw.z * cam.up.y, y: fw.z * cam.up.x - fw.x * cam.up.z, z: fw.x * cam.up.y - fw.y * cam.up.x };
+    const rl = Math.hypot(r.x, r.y, r.z);
+    r = { x: r.x / rl, y: r.y / rl, z: r.z / rl };
+    const u = { x: r.y * fw.z - r.z * fw.y, y: r.z * fw.x - r.x * fw.z, z: r.x * fw.y - r.y * fw.x };
+    const v = { x: p.x - cam.eye.x, y: p.y - cam.eye.y, z: p.z - cam.eye.z };
+    const dz = v.x * fw.x + v.y * fw.y + v.z * fw.z;
+    const T = Math.tan(cam.fovY / 2);
+    return { x: (v.x * r.x + v.y * r.y + v.z * r.z) / dz / (T * aspect), y: (v.x * u.x + v.y * u.y + v.z * u.z) / dz / T, front: dz > 0 };
+  };
+  const cup = T.cup;
+  for (const aspect of [393 / 852, 852 / 393]) {
+    for (const d of [2, 7, 16]) {
+      const ball = { x: cup.x - d * 0.8, y: cup.y - d * 0.6, z: T.heightAt(cup.x - d * 0.8, cup.y - d * 0.6) + 0.02 };
+      for (const view of ['ball', 'hole', 'overhead']) {
+        const rig = new CameraRig();
+        rig.setMode('read', { ball, aimYaw: yaw, cup, terrain: T, aspect, lineLat: 0.4 });
+        rig.setReadView(view);
+        assert.equal(rig.readView, view);
+        const cam = rig.update(0.016, {});
+        rig.snap = true;
+        const c2 = rig.update(0.016, {});
+        assert.ok(finite(c2) && clearance(c2, 0.4), `${view} eye above the ground`);
+        for (const p of [ball, cup]) {
+          const q = ndc(c2, p, aspect);
+          assert.ok(q.front && Math.abs(q.x) < 0.95 && Math.abs(q.y) < 0.95, `${view} d=${d} aspect=${aspect.toFixed(2)}: ${q.x.toFixed(2)}, ${q.y.toFixed(2)}`);
+        }
+        if (view === 'ball') assert.ok(ndc(c2, ball, aspect).y < ndc(c2, cup, aspect).y, 'ball nearer the bottom');
+        if (view === 'hole') assert.ok(ndc(c2, cup, aspect).y < ndc(c2, ball, aspect).y, 'cup nearer the bottom');
+        if (view === 'overhead') {
+          assert.ok(c2.eye.z - T.heightAt(c2.eye.x, c2.eye.y) > 4.5, 'overhead is high');
+          assert.ok(ndc(c2, ball, aspect).y < ndc(c2, cup, aspect).y, 'the line runs up the screen');
+        }
+        assert.ok(cam);
+      }
+    }
+  }
+  // A drag in a preset view carries on as an orbit from where the eye is.
+  const ball = { x: cup.x - 6, y: cup.y, z: T.heightAt(cup.x - 6, cup.y) };
+  const rig = new CameraRig();
+  rig.setMode('read', { ball, aimYaw: yaw, cup, terrain: T, aspect: 0.46 });
+  rig.setReadView('hole');
+  rig.snap = true;
+  const a = rig.update(0.016, {});
+  rig.orbit(0);
+  assert.equal(rig.readView, 'orbit');
+  const yawFromMid = Math.atan2(a.eye.y - cup.y, a.eye.x - (cup.x - 3));
+  assert.ok(Math.abs(Math.atan2(Math.sin(rig.readYaw - yawFromMid), Math.cos(rig.readYaw - yawFromMid))) < 1e-6);
+  rig.setMode('read', { ball });
+  assert.equal(rig.readView, 'orbit');
+});

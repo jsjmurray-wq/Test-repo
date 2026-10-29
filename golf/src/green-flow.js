@@ -177,16 +177,16 @@ export class FlowParticles {
   }
 
   // Streak quads into out (FLOW_FLOATS per vertex, 4 vertices per particle: tail-left, tail-right,
-  // head-left, head-right), camera-relative to eye. A streak is 0.18-0.75 m long with the speed
+  // head-left, head-right), camera-relative to eye. A streak is 0.25-0.9 m long with the speed
   // and at least minPx CSS px wide. lift raises it over the turf. Returns the particle count.
-  writeQuads(out, eye, { pxPerRad = 900, minPx = 3, width = 0.035, lift = 0.02 } = {}) {
+  writeQuads(out, eye, { pxPerRad = 900, minPx = 3, width = 0.05, lift = 0.02 } = {}) {
     const m = Math.min(this.n, (out.length / (4 * FLOW_FLOATS)) | 0);
     let o = 0;
     for (let i = 0; i < m; i++) {
       const hx = this.x[i];
       const hy = this.y[i];
       const hz = this.z[i] + lift;
-      const len = Math.min(0.75, 0.18 + this.v[i] * 0.5);
+      const len = Math.min(0.9, 0.25 + this.v[i] * 0.6);
       const ux = this.dx[i];
       const uy = this.dy[i];
       const dist = Math.hypot(hx - eye.x, hy - eye.y, hz - eye.z);
@@ -196,7 +196,7 @@ export class FlowParticles {
       const py = ux || uy ? ux * w : 0;
       const tx = hx - ux * len;
       const ty = hy - uy * len;
-      const a = this.alpha(i);
+      const a = this.alpha(i) * Math.min(1, Math.max(0, (dist - 1.5) / 3)); // none at the lens
       const sl = this.pct[i];
       const z = hz - eye.z;
       const zt = z + (len * sl) / 100; // the tail lies uphill

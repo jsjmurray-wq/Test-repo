@@ -1005,24 +1005,22 @@ void main() {
   // Arrows flowing downhill, faster on steeper ground: a dark-rimmed white V head on a stem.
   if (uChevrons > 0.5 && s > 0.35) {
     vec2 dn = -g / length(g);
-    vec2 q = fract(vWorld / 2.5) - 0.5;       // 2.5 m cells, in cell units
+    vec2 q = fract(vWorld / 3.0) - 0.5;       // 3 m cells, in cell units (an arrow ~0.7 m long)
     float al = dot(q, dn);
     float ac = dot(q, vec2(-dn.y, dn.x));
-    al = fract(al + 0.5 - uTime * (0.08 + s * 0.04)) - 0.5;
-    float hd = abs(al + abs(ac) * 0.9 - 0.08);
-    float wHead = step(abs(ac), 0.17);
+    al = fract(al + 0.5 - uTime * (0.07 + s * 0.035)) - 0.5;
+    float hd = abs(al + abs(ac) * 0.9 - 0.05);
     float stemD = abs(ac);
-    float onStem = step(-0.3, al) * step(al, 0.06);
-    float head = (1.0 - smoothstep(0.03, 0.045, hd)) * wHead;
-    float stem = (1.0 - smoothstep(0.02, 0.032, stemD)) * onStem;
-    float rimH = (1.0 - smoothstep(0.055, 0.07, hd)) * step(abs(ac), 0.19);
-    float rimS = (1.0 - smoothstep(0.04, 0.052, stemD)) * step(-0.32, al) * step(al, 0.08);
+    float head = (1.0 - smoothstep(0.016, 0.026, hd)) * step(abs(ac), 0.085);
+    float stem = (1.0 - smoothstep(0.01, 0.017, stemD)) * step(-0.17, al) * step(al, 0.04);
+    float rimH = (1.0 - smoothstep(0.034, 0.044, hd)) * step(abs(ac), 0.1);
+    float rimS = (1.0 - smoothstep(0.025, 0.033, stemD)) * step(-0.185, al) * step(al, 0.055);
     float body = max(head, stem);
     float rim = max(rimH, rimS);
-    float fadeIn = smoothstep(0.35, 0.8, s);
+    float fadeIn = smoothstep(0.35, 0.8, s) * smoothstep(1.5, 4.5, dist); // none at the lens
     c = mix(c, vec3(0.03, 0.05, 0.04), rim * (1.0 - body) * fadeIn);
     c = mix(c, vec3(1.0), body * fadeIn);
-    a = max(a, max(body, rim * 0.7) * 0.95 * fadeIn);
+    a = max(a, max(body, rim * 0.6) * 0.8 * fadeIn);
   }
   gl_FragColor = vec4(c, a * mask * uAlpha);
 }`;
