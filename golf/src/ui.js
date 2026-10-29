@@ -21,9 +21,12 @@
 //       builds the course picker (cards with a theme-gradient thumbnail, name, tagline, par and
 //       length, best round); selected: the highlighted id (its name and par fill the title). A
 //       card tap selects it and emits 'course' (id). resumeSub: small line under Resume round.
-//       A mixed entry (the random nine from every course: mixed true, lengthM null) is a wide card
-//       under the others with a four-theme thumbnail and "Par 36 · New holes every round".
-//   ui.selectedCourse                 id of the highlighted course card (or null)
+//       The mixed entries (random holes from every course: mixed true, lengthM null; 'mixed' with
+//       9 holes, 'mixed18' with 18) share one wide card ([data-course="mixed"]) under the others,
+//       with a four-theme thumbnail, "Par 36 · New holes every round" and a "9 holes | 18 holes"
+//       switch ([data-mix="mixed" | "mixed18"]); a tap on it selects that size and emits 'course'
+//       with its id, a tap on the card selects the size picked last. A mixed best reads "Best +3".
+//   ui.selectedCourse                 id of the highlighted course (a mixed card: 'mixed' | 'mixed18')
 //   ui.showPause({title?}) / ui.hidePause()       ui.showSettings() ui.showHowTo()
 //   ui.setLoading(on, text='Loading')             ui.showNoGL()
 //   ui.showHud(on=true)
@@ -75,7 +78,10 @@
 //              from (a mixed round) get a Course row: a theme-coloured chip with the course's
 //              initial per hole. current: 0-based hole to
 //       highlight. final shows Play again ([data-act="new-round"]) + Menu ([data-act="quit"])
-//       instead of Next hole ([data-act="next-hole"]).
+//       instead of Next hole ([data-act="next-hole"]). Up to nine holes: one block with an Out
+//       total. Eighteen (Mixed Eighteen): #scorecard[data-holes="18"]; in portrait and square
+//       two blocks (holes 1-9 | Out, then 10-18 | In | Tot; data-card-layout="split"), in
+//       landscape one row (1-9 | Out | 10-18 | In | Tot; "row"); re-rendered on rotation.
 //   ui.showDecision(opts) -> Promise<id>
 //       opts: ['drop', 'replay'] or {kicker?, title?, text?, options:[id | {id, label, detail?}]}.
 //       The first option is the default (primary). Resolves with the chosen id.
@@ -158,6 +164,12 @@ export function fmtToPar(d) {
 function fmtLength(m, units) {
   const n = Math.round(units === 'm' ? m : mToYd(m));
   return `${n.toLocaleString('en-US')} ${units === 'm' ? 'm' : 'yd'}`;
+}
+
+// The menu card's best-round badge: strokes, or for a mixed round (a new draw every time) to par.
+function bestBadge(c) {
+  if (!c.best) return '';
+  return c.mixed ? `Best ${fmtToPar(c.best.toPar)}` : `Best ${c.best.strokes}`;
 }
 
 function surfKey(lieSurface, label) {
@@ -265,10 +277,19 @@ export class UI {
       this._closeShots();
       return;
     }
+    const mix = e.target.closest('[data-mix]');
+    if (mix) {
+      this._mixSel = mix.dataset.mix;
+      this._selectCourse(mix.dataset.mix);
+      this.emit('course', mix.dataset.mix);
+      return;
+    }
     const card = e.target.closest('[data-course]');
     if (card) {
-      this._selectCourse(card.dataset.course);
-      this.emit('course', card.dataset.course);
+      // The mixed card stands for the size its switch shows.
+      const id = card.dataset.course === 'mixed' && this._mixSel ? this._mixSel : card.dataset.course;
+      this._selectCourse(id);
+      this.emit('course', id);
       return;
     }
     const seg = e.target.closest('.seg button');
@@ -350,6 +371,8 @@ export class UI {
     const changed = body.dataset.layout !== mode;
     if (changed) body.dataset.layout = mode;
     this.setPadRect(padRectFor(w, h, readSafeInsets()));
+    // An open 18-hole scorecard switches between two blocks (portrait) and one row (landscape).
+    if (changed && this._sc && this.el.scorecard && !this.el.scorecard.hidden) this._renderScorecard();
     if (changed) this.emit('layout', mode);
   }
 
@@ -393,26 +416,34 @@ export class UI {
   }
 
   // Course picker cards: a theme thumbnail (CSS gradient by data-theme) with the best round on it,
-  // then the name, the tagline and par / length.
+  // then the name, the tagline and par / length. The mixed entries share one card (a div: it holds
+  // the 9 | 18 switch's buttons), filled in for the selected size by _selectCourse.
   _renderCourses() {
     const box = this.el.coursePick;
     const doc = this.doc;
     const units = this._settings.units;
     box.textContent = '';
+    const mixes = this._courses.filter((c) => c.mixed);
+    let mixDone = false;
     for (const c of this._courses) {
-      const b = doc.createElement('button');
-      b.type = 'button';
+      if (c.mixed && mixDone) continue;
+      const b = doc.createElement(c.mixed ? 'div' : 'button');
+      if (c.mixed) {
+        mixDone = true;
+        b.tabIndex = 0;
+      } else b.type = 'button';
       b.className = c.mixed ? 'course-card cc-mixed' : 'course-card';
-      b.dataset.course = c.id;
+      b.dataset.course = c.mixed ? 'mixed' : c.id;
       b.dataset.theme = c.theme || 'parkland';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', 'false');
       const thumb = doc.createElement('span');
       thumb.className = 'cc-thumb';
-      if (c.best) {
+      if (c.best || c.mixed) {
         const best = doc.createElement('span');
         best.className = 'cc-best';
-        best.textContent = `Best ${c.best.strokes}`;
+        best.textContent = bestBadge(c);
+        best.hidden = !c.best;
         thumb.appendChild(best);
       }
       const body = doc.createElement('span');
@@ -428,6 +459,21 @@ export class UI {
       meta.textContent = c.lengthM == null ? `Par ${c.par} · New holes every round` : `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
       body.append(name, tag, meta);
       b.append(thumb, body);
+      if (c.mixed && mixes.length > 1) {
+        const seg = doc.createElement('span');
+        seg.className = 'cc-holes';
+        seg.setAttribute('role', 'radiogroup');
+        seg.setAttribute('aria-label', 'Holes');
+        for (const m of mixes) {
+          const btn = doc.createElement('button');
+          btn.type = 'button';
+          btn.dataset.mix = m.id;
+          btn.textContent = `${m.holes || 9} holes`;
+          btn.setAttribute('aria-pressed', 'false');
+          seg.appendChild(btn);
+        }
+        b.appendChild(seg);
+      }
       box.appendChild(b);
     }
   }
@@ -437,9 +483,26 @@ export class UI {
     const c = this._courses.find((k) => k.id === id) || this._courses[0];
     if (!c) return;
     this._course = c.id;
-    for (const b of this.el.coursePick.querySelectorAll('[data-course]')) b.setAttribute('aria-checked', b.dataset.course === c.id ? 'true' : 'false');
+    const cardId = c.mixed ? 'mixed' : c.id;
+    for (const b of this.el.coursePick.querySelectorAll('[data-course]')) b.setAttribute('aria-checked', b.dataset.course === cardId ? 'true' : 'false');
+    if (c.mixed) {
+      this._mixSel = c.id;
+      // The shared mixed card shows the selected size: name, tagline, par, best and the switch.
+      const card = this.el.coursePick.querySelector('[data-course="mixed"]');
+      if (card) {
+        card.querySelector('.cc-name').textContent = c.name;
+        card.querySelector('.cc-tag').textContent = c.tagline || '';
+        card.querySelector('.cc-meta').textContent = `Par ${c.par} · New holes every round`;
+        const badge = card.querySelector('.cc-best');
+        if (badge) {
+          badge.textContent = bestBadge(c);
+          badge.hidden = !c.best;
+        }
+        for (const btn of card.querySelectorAll('[data-mix]')) btn.setAttribute('aria-pressed', btn.dataset.mix === c.id ? 'true' : 'false');
+      }
+    }
     this.f.courseName.textContent = c.name;
-    const best = c.best ? ` · Best ${c.best.strokes} (${fmtToPar(c.best.toPar)})` : '';
+    const best = !c.best ? '' : c.mixed ? ` · Best ${fmtToPar(c.best.toPar)}` : ` · Best ${c.best.strokes} (${fmtToPar(c.best.toPar)})`;
     this.f.courseSub.textContent = `${c.holes || 9} holes · Par ${c.par}${best}`;
   }
 
@@ -738,7 +801,14 @@ export class UI {
   }
 
   // ------------------------------------------------------------------ scorecard
-  showScorecard(card, { final = false, current = null, title, kicker, course } = {}) {
+  showScorecard(card, opts = {}) {
+    this._sc = { card, opts };
+    this._renderScorecard();
+  }
+
+  _renderScorecard() {
+    const { card, opts } = this._sc;
+    const { final = false, current = null, title, kicker, course } = opts;
     const holes = (Array.isArray(card) ? card : (card && card.holes) || []).map((h, i) => ({
       n: h.n ?? i + 1,
       par: h.par ?? 4,
@@ -758,30 +828,23 @@ export class UI {
 
     const table = this.$('#scorecard table.sc');
     table.textContent = '';
-    const row = (cls, label, cells, tot) => {
-      const tr = doc.createElement('tr');
-      tr.className = cls;
-      const th = doc.createElement('th');
-      th.textContent = label;
-      tr.appendChild(th);
-      cells.forEach((c, i) => {
-        const td = doc.createElement('td');
-        if (i === current) td.classList.add('cur');
-        if (c && typeof c === 'object') td.appendChild(c);
-        else td.textContent = c ?? '';
-        tr.appendChild(td);
-      });
-      const td = doc.createElement('td');
-      td.className = 'tot';
-      td.textContent = tot ?? '';
-      tr.appendChild(td);
-      table.appendChild(tr);
-    };
     const lengthNum = (m) => (m == null ? '' : Math.round(units === 'm' ? m : mToYd(m)));
-    row('r-hole', 'Hole', holes.map((h) => h.n), 'Out');
+    // Columns: a hole {i}, a total {label, from, to} over holes [from, to), or a blank spacer.
+    const range = (a, b) => Array.from({ length: b - a }, (_, k) => ({ i: a + k }));
+    const eighteen = holes.length > 9;
+    const split = eighteen && this.layout !== 'landscape';
+    const OUT = { label: 'Out', from: 0, to: Math.min(9, holes.length) };
+    const IN = { label: 'In', from: 9, to: holes.length };
+    const TOT = { label: 'Tot', from: 0, to: holes.length };
+    const blocks = !eighteen
+      ? [[...range(0, holes.length), OUT]]
+      : split
+        ? [[...range(0, 9), OUT, { blank: true }], [...range(9, holes.length), IN, TOT]]
+        : [[...range(0, 9), OUT, ...range(9, holes.length), IN, TOT]];
+    const rows = [{ cls: 'r-hole', label: 'Hole', cell: (h) => h.n, tot: (t) => t.label }];
     if (holes.some((h) => h.from)) {
       // Mixed round: which course each hole comes from (initial on the course's theme colour).
-      row('r-from', 'Course', holes.map((h) => {
+      rows.push({ cls: 'r-from', label: 'Course', cell: (h) => {
         if (!h.from) return '';
         const chip = doc.createElement('span');
         chip.className = 'from-chip';
@@ -789,20 +852,55 @@ export class UI {
         chip.textContent = (h.from.name || '?').charAt(0);
         chip.title = `${h.from.name} ${h.from.n}`;
         return chip;
-      }), '');
+      }, tot: () => '' });
     }
-    row('r-yds', units === 'm' ? 'M' : 'Yds', holes.map((h) => lengthNum(h.lengthM)),
-      holes.every((h) => h.lengthM != null) ? lengthNum(sum(holes, 'lengthM')) : '');
-    row('r-par', 'Par', holes.map((h) => h.par), sum(holes, 'par'));
-    row('r-score', 'Score', holes.map((h) => {
-      if (h.strokes == null) return '';
-      const d = h.strokes - h.par;
-      const mk = doc.createElement('span');
-      mk.className = `mk${d <= -2 ? ' circ2' : d === -1 ? ' circ' : d === 1 ? ' sq' : d >= 2 ? ' sq2' : ''}`;
-      mk.textContent = h.strokes;
-      return mk;
-    }), played.length ? sum(played, 'strokes') : '');
-    row('r-putts', 'Putts', holes.map((h) => (h.strokes == null ? '' : h.putts ?? '')), played.length ? sum(played, 'putts') : '');
+    rows.push(
+      { cls: 'r-yds', label: units === 'm' ? 'M' : 'Yds', cell: (h) => lengthNum(h.lengthM), tot: (t, hs) => (hs.every((h) => h.lengthM != null) ? lengthNum(sum(hs, 'lengthM')) : '') },
+      { cls: 'r-par', label: 'Par', cell: (h) => h.par, tot: (t, hs) => sum(hs, 'par') },
+      { cls: 'r-score', label: 'Score', cell: (h) => {
+        if (h.strokes == null) return '';
+        const d = h.strokes - h.par;
+        const mk = doc.createElement('span');
+        mk.className = `mk${d <= -2 ? ' circ2' : d === -1 ? ' circ' : d === 1 ? ' sq' : d >= 2 ? ' sq2' : ''}`;
+        mk.textContent = h.strokes;
+        return mk;
+      }, tot: (t, hs, pl) => (pl.length ? sum(pl, 'strokes') : '') },
+      { cls: 'r-putts', label: 'Putts', cell: (h) => (h.strokes == null ? '' : h.putts ?? ''), tot: (t, hs, pl) => (pl.length ? sum(pl, 'putts') : '') },
+    );
+    blocks.forEach((cols, bi) => {
+      // Nine holes: rows straight in the table (as before); two blocks: a tbody each.
+      const parent = split ? doc.createElement('tbody') : table;
+      if (split) {
+        parent.className = bi ? 'sc-back' : 'sc-front';
+        table.appendChild(parent);
+      }
+      for (const r of rows) {
+        const tr = doc.createElement('tr');
+        tr.className = r.cls;
+        const th = doc.createElement('th');
+        th.textContent = r.label;
+        tr.appendChild(th);
+        for (const col of cols) {
+          const td = doc.createElement('td');
+          let c = '';
+          if (col.blank) td.className = 'gap';
+          else if (col.label) {
+            td.className = 'tot';
+            const hs = holes.slice(col.from, col.to);
+            c = r.tot(col, hs, hs.filter((h) => h.strokes != null));
+          } else {
+            if (col.i === current) td.classList.add('cur');
+            c = r.cell(holes[col.i]);
+          }
+          if (c && typeof c === 'object') td.appendChild(c);
+          else td.textContent = c ?? '';
+          tr.appendChild(td);
+        }
+        parent.appendChild(tr);
+      }
+    });
+    this.el.scorecard.dataset.holes = String(holes.length);
+    this.el.scorecard.dataset.cardLayout = split ? 'split' : 'row';
 
     const last = current != null ? holes[current] : played[played.length - 1];
     // Header: the course name first, then what the card is ("Red Mesa · Round complete").
@@ -822,6 +920,7 @@ export class UI {
 
   hideScorecard() {
     this.el.scorecard.hidden = true;
+    this._sc = null;
   }
 
   // ------------------------------------------------------------------ decision

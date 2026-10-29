@@ -18,12 +18,13 @@ and the saved round remembers its course.
 | **Coral Cay** | Lagoons and the ocean: an island green, a split fairway, a peninsula green and a spit out into the surf; palms and white beaches | Soft and lush, 10.5 ft greens. Beaches play as waste sand (no penalty) | Palm Walk, The Fork, The Island, Mangroves, Peninsula, Shell Beach, Breakers, Reef Run, Sunset |
 | **Kittiwake Links** | Seaside links: dunes, deep revetted pot bunkers, a burn, gorse, a blind drive and a Valley of Sin | Very firm and fast-running, slower 9.5 ft greens, 3 m/s windier than the wind setting (unless wind is off). Fescue beyond the rough stops the ball dead and is hard to escape | Kittiwake, Sandhills, Postage, Hell, Burnside, Whins, Haar, Strand, Home |
 | **Mixed Nine** | Nine random holes drawn from all four courses: two or three from each, par 36, a new draw every round (Restart replays the same nine) | Each hole plays with its own course's look, turf, greens and wind; the intro and the scorecard name the course each hole comes from | Random |
+| **Mixed Eighteen** | Tap **18 holes** on the Mixed card: eighteen different random holes, four or five from each course, par 72 (two par-36 nines, par 4s on the 1st and 10th, never two holes of one course in a row) | As Mixed Nine; the scorecard has Out, In and Total (two nine-hole blocks in portrait, one row in landscape). Mixed Nine and Mixed Eighteen keep separate best rounds, by score to par | Random |
 
 ## Controls
 
 | Action | How |
 |---|---|
-| Choose a course | Tap a course card on the main menu, then **New round** |
+| Choose a course | Tap a course card on the main menu, then **New round** (on the Mixed card, pick **9 holes** or **18 holes**) |
 | Aim | Drag left or right on the upper part of the screen (faster drags turn further) |
 | Swing (swipe, the default) | On the lower pad: drag **down** to take the club back, then flick **up**. A short, quick flick is enough: you do not need to get back to where you started, and a slow but clear upswing still hits (a little shorter, *Decel*) |
 | Power | 25/50/75% of the travel is 25/50/75% power (ticks on the arc). Full power clicks into place: the 100% tick lights up green over a generous stretch of travel |
@@ -117,16 +118,19 @@ npm run icons     # regenerate icons/icon-180.png and icon-512.png (needs Playwr
 
 ES modules need HTTP, so open `http://localhost:8081/` rather than `index.html` from disk; the
 single-file build in `dist/golf.html` works from anywhere. URL options: `?course=ID` (`pines`,
-`desert`, `water`, `links` or `mixed`: the course for new rounds), `?hole=N` (start a round at hole N),
+`desert`, `water`, `links` or `mixed`: the course for new rounds; `?course=mixed&holes=18` for Mixed
+Eighteen), `?hole=N` (start a round at hole N),
 `?autoplay=1` (the bot plays the round), `?fast=N` (playback speed), `?seed=N`, `?quality=low`,
 `?debug=1` (fps and draw-call overlay), `?nogl=1` (logic without WebGL), `?test=1` (e2e hooks).
 
 `npm run e2e` drives the real UI with touch events on iPhone portrait/landscape and foldable
 viewports, on both `index.html` and `dist/golf.html`: a Hollow Pines hole with a short-flick swing,
 a cancelled swing, a tap-meter shot, pause and resume, then the course picker and a round on each
-new course with a special shot from the shot sheet, reload and resume. `--shots` saves screenshots
-to `screenshots/`; `--soak` adds a full autoplay round on every course (`--courses=desert,links` for
-some; `--soak-only` skips the UI flow) and checks the renderer stays within its draw-call budget.
+new course with a special shot from the shot sheet, reload and resume, a Mixed Nine round, and a Mixed
+Eighteen round taken to the 10th (the Out/In scorecard, rotation, reload and resume). `--shots` saves
+screenshots to `screenshots/`; `--soak` adds a full autoplay round on every course and both mixed sizes
+(`--courses=desert,mixed18` for some; `--soak-only` skips the UI flow) and checks the renderer stays
+within its draw-call budget.
 
 ## Hosting
 

@@ -51,7 +51,7 @@ metres). Wind shows in mph (or km/h).
 | `aero.js` | `dragCoeff(S)`, `liftCoeff(S)`, `windAt(wind10, zAgl, out?)` (log profile), `windFactor(zAgl)`, `flightAccel(state:{v,w,zAgl}, wind10, out)` |
 | `course.js` | `COURSE = {name, holes: [HoleDef × 9]}` (pure data), `holePar(i)`, `coursePar()` |
 | `terrain.js` | `buildHole(def, {pinIndex, seed, course}) -> HoleTerrain` (see below and §8.2) |
-| `courses.js` | `COURSES`, `courseById(id)`, `DEFAULT_COURSE_ID`, `courseSummary(course)` (§8.2) |
+| `courses.js` | `COURSES`, `courseById(id)`, `DEFAULT_COURSE_ID`, `courseSummary(course)` (§8.2); mixed rounds of 9 or 18 holes: `drawMixedHoles(seed, n)`, `mixedCourse(seed, picks?, n?)`, `mixedSummary(n)`, `isMixedId`, `mixedId`, `mixedHoles` (§8.7, §8.8) |
 | `themes.js` | `THEMES`, `themeFor(id)`: per-theme palettes, data only (§8.3) |
 | `shots.js` | `SHOTS`, `shotById`, `shotsFor(club, lie)`, `isEligible`, `applyShot(p, id, club, lie, opts)`, `shotIntent`: special shots (§8.4) |
 | `physics.js` | `simulateShot(terrain, launch, opts) -> ShotResult`, `surfaceParams(terrain, surfId)` / `surfaceTable(terrain)` (SURFACES with the course conditions, §8.2). Exported for tests: `flightStep`, `bounceImpulse`, `rollStep`, `cupCheck`, `treeHit`, `stimpDistance(v0, surf)`, `puttSpeedForDistance(D, surf)` |
@@ -59,7 +59,7 @@ metres). Wind shows in mph (or km/h).
 | `swing.js` | `interpretSwing(samples, opts) -> SwingResult`, `swingToLaunch(club, lie, swing, aimYaw, rng, opts) -> Launch` |
 | `caddie.js` | `clubTable(terrain, pos, lie, wind)`, `suggestClub(...)`, `playsLike(...)`, `puttRange(dist)` |
 | `rules.js` | `resolveShot(ctx, shot) -> Resolution`, `waterRelief(...)`, `scoreName(strokes, par)`, `maxStrokes(par) = 2*par` |
-| `scoring.js` | `newCard(course)`, `recordHole(card, i, {strokes, putts, penalties, fir, gir})`, `totals(card)` |
+| `scoring.js` | `newCard(course)`, `recordHole(card, i, {strokes, putts, penalties, fir, gir})`, `totals(card)` (with `out` / `in` nines, §8.8) |
 | `game.js` | `Game` state machine, plus `serialize()` and `static restore()` |
 | `bot.js` | `planShot(game) -> {clubId, yaw, swing, puttRange?}`, `playBotShot(game)`, `botDecide(game)`: a simulated "decent player" used by `?autoplay` and the playability tests |
 | `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
@@ -1189,7 +1189,7 @@ export function applyShot(p, shotId, club, lie, opts)  // p = {ballSpeed, launch
 - The main menu gets a course picker: four cards with name, tagline, par and yards, and a theme-coloured thumbnail (CSS gradient). New round starts the selected course.
 - The save (`golf.save.v1`) stores `courseId`. Old saves without it load as Hollow Pines.
 - The best round is kept per course: `golf.best.v1` becomes a map `{[courseId]: best}`. An old single value counts as Hollow Pines.
-- `?course=desert|water|links|pines` URL parameter (and `mixed`, §8.7).
+- `?course=desert|water|links|pines` URL parameter (and `mixed`, §8.7; `mixed&holes=18`, §8.8).
 
 #### 8.4 as built (special shots)
 
@@ -1422,6 +1422,66 @@ root's `npm test` 159/159.
 
 **Known gaps:** near-field turf is still the 0.5 m bake (soft at 3× up close); the buttes are still silhouettes (no
 geometry); the bot plays the flop only from deep bunkers.
+
+### 8.8 Mixed rounds of 9 or 18 holes (as built)
+
+The user asked for "random holes which mix up the different courses"; Mixed Nine (§8.7) now has an 18-hole size.
+Ids: `'mixed'` stays Mixed Nine (its name, saves and best record are unchanged); `'mixed18'` is **Mixed Eighteen**.
+The fixed courses stay at nine holes.
+
+- `courses.js`: `MIXED18_ID = 'mixed18'`, `MIXED18_NAME = 'Mixed Eighteen'`, `MIXED18_TAGLINE`, `MIXED_SIZES = [9, 18]`,
+  `isMixedId(id)`, `mixedId(n)` (18 → `'mixed18'`, else `'mixed'`), `mixedHoles(id)` (9 / 18 / 0); `isCourseId` and
+  `courseName` know `'mixed18'`.
+  - `drawMixedHoles(seed, n = 9)`: n = 9 is the old code path, so every existing seed draws the same nine (golden:
+    seed 7 → `links8, water5, links2, desert7, pines4, water4, links0, desert4, pines2`).
+  - n = 18 (own stream `mulberry32(seed ^ 0x6d1f3a5b ^ 0x1b873593)`): two nines, each with the Mixed Nine make-up
+    (pars 2/5/2, two or three holes per course, one course giving three, never the same course as the other nine's
+    third), the second drawn from the holes the first left. Each nine is ordered with a par 4 first (also from another
+    course than the 9th), then the course with the most holes left that is not the last hole's, preferring a par that
+    differs from a par-3/par-5 predecessor. Up to 32 attempts keep the draw with the fewest back-to-back par 3s/5s
+    (stopping at none). Result: 18 distinct holes, par 72 (Out 36, In 36), 4 par 3s and 4 par 5s, 5/5/4/4 per course,
+    par 4s on the 1st and 10th, never one course twice in a row (also 9 → 10). Checked over 2000 seeds in the tests
+    (5000 when built: no failures, no par pairs, ~0.03 ms per draw).
+  - `mixedCourse(seed, picks?, n?)`: n is explicit, else a valid saved draw's length (9 or 18), else 9; `id`, `name`,
+    `tagline` follow the size. `mixedSummary(n = 9)`: par 36 · n / 9, `holes: n`.
+- `scoring.totals(card)` adds `out` (holes 1–9) and `in` (10–18; `null` on a nine), each
+  `{played, strokes, par, toPar, coursePar, putts}`. Everything else in it is unchanged.
+- `game.js`: `restore` rebuilds a mixed course with `mixedCourse(seed, mix, mixedHoles(courseId))` (an old
+  `'mixed'` save restores its nine) and throws on a `holeIndex` outside the course (main then clears the save).
+  `courseFromParam(value, holes = null)`: `mixed` (or `mixed9`/`mixed18`) with holes 9/18 → that size; fixed courses
+  ignore holes. `recordBest`: a mixed round's new best is a lower `toPar` (every draw differs), a fixed course's
+  fewer strokes. `debugSkipTo(i, strokesFor?)` (tests) records each unplayed hole before i (`strokesFor(k, par)`,
+  default par; two putts) and loads hole i. The game itself was already generic over the hole count (pins, wind,
+  card, `nextHole`, `_toScorecard`: after the 9th of 18 the phase is `scorecard`, after the 18th `roundOver`).
+- Best rounds (`golf.best.v1`): the stored `mixed` record is Mixed Nine's (the migration is that nothing moves);
+  Mixed Eighteen starts empty under `mixed18`. Mixed records read "Best +3" on the card, the menu title line and the
+  final card.
+- `main.js`: `?course=mixed&holes=18`; `START_HOLE` is clamped to 0..17 and then to the course (`?hole=14` works on
+  Mixed Eighteen, a fixed course stops at 9); `newRound`/`backdropHole` use `isMixedId`/`mixedHoles` (Restart keeps
+  the 18 picks, Play again draws new ones); `showMenu` passes `mixedSummary(9)` and `mixedSummary(18)` with their
+  bests; Resume reads "Mixed Eighteen · Hole 10"; `__golfDone` adds `holes`; `app.debug.state()` adds `holes`;
+  `app.debug.skipTo(i, toPar = [])` → `game.debugSkipTo(i, (k, par) => par + (toPar[k] || 0))`, then saves.
+- `ui.js` menu: both mixed entries share one wide card, now a `div.course-card.cc-mixed[data-course="mixed"]
+  [role=radio][tabindex=0]` (it holds buttons), with `span.cc-holes[role=radiogroup]` → `button[data-mix="mixed"]`
+  "9 holes" and `button[data-mix="mixed18"]` "18 holes" (white pill on the selected one, 34 px tall; under the text
+  in portrait, on the right in landscape). A pill tap selects that size and emits `'course'` with its id; a card tap
+  selects the size picked last; `_selectCourse` fills the card's name, tagline, par and best for the size;
+  `ui.selectedCourse` is `'mixed'` or `'mixed18'`. There are still five `[data-course]` cards.
+- `ui.showScorecard` keeps `{card, opts}` and renders through `_renderScorecard()`; columns are holes, totals over a
+  range (`Out` 1–9, `In` 10–18, `Tot`) or a blank. Up to nine holes the DOM is exactly as before (checked against the
+  previous build). Eighteen: `#scorecard[data-holes="18"]`; portrait and square `data-card-layout="split"`, two
+  `tbody`s (`sc-front`: 1–9 | Out | blank, `sc-back`: 10–18 | In | Tot, 8 px apart, card side padding 12 px); landscape
+  `"row"`, one row 1–9 | Out | 10–18 | In | Tot (card up to 780 px). `applyLayout` re-renders an open card when the
+  layout changes. Course chips, Yds, Par, Score and Putts rows sum per range. At 393 × 852 the table is 335 px in a
+  343 px box; at 852 × 393 746 px in 754 px (no scrolling).
+- Tests (`tests/mixed18.test.js`): the draw constraints over 2000 seeds and the unchanged nine; course objects and
+  helpers; an 18-hole flow (card 1–18, the 9th → scorecard, the 10th from its course, the 18th → roundOver); save and
+  restore on hole 14 at address and mid-flight, plus an old Mixed Nine save; Out/In totals; best records and
+  `?holes=`. e2e `mixed18Round` (after `mixedRound`; skipped on a build without the switch): the 18 pill, a new round
+  (18 picks, par 72), `debug.skipTo(8, ...)`, a real touch putt on the 9th, the scorecard (Out/In/Tot, 18 chips,
+  Out = holes 1–9, two blocks in portrait and one row in landscape, no overflow), rotation with the card open, Next
+  hole → 10, reload → "Mixed Eighteen · Hole 10" → Resume with the same draw and card. The soak adds `mixed18`
+  (`?course=mixed&holes=18`, 18 holes, 30 min timeout).
 
 ## 9. Golfer (as built)
 

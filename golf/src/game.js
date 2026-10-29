@@ -28,10 +28,11 @@
 // conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
 // stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
 //
-// Mixed rounds (courses.js mixedCourse): course.mixed is a nine drawn from all four courses. Each
-// hole is built and played with its own course (courseOf(i): theme, conditions, a windy course's
-// wind), state.mix stores the draw (serialized, so a resumed round plays the same holes), the card
-// numbers the holes 1-9 in playing order and holeInfo() adds the hole's own course and number.
+// Mixed rounds (courses.js mixedCourse): course.mixed is a nine ('mixed') or eighteen ('mixed18')
+// drawn from all four courses. Each hole is built and played with its own course (courseOf(i):
+// theme, conditions, a windy course's wind), state.mix stores the draw (serialized, so a resumed
+// round plays the same holes; its length says nine or eighteen), the card numbers the holes 1..n
+// in playing order and holeInfo() adds the hole's own course and number.
 //
 // Special shots (section 8.4, shots.js): state.shotType ('normal' by default, serialized) is the
 // shot the next swing plays. setShot(id) only takes a shot that the club and lie allow
@@ -42,14 +43,17 @@
 // shot's (the caddie picks the club for a normal swing).
 //
 // Saves and best rounds (section 8.5): pure helpers for main.js, which owns the storage:
-//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines|mixed)
+//   courseFromParam(value, holes?) -> course id | null  (?course=desert|water|links|pines|mixed,
+//       &holes=18 with mixed -> 'mixed18'; fixed courses ignore holes)
 //   saveCourseId(save) -> course id                  (the wrapper's or the game's; old saves: pines)
 //   bestMap(raw) -> {[courseId]: {strokes, toPar, date}}   (an old single record counts as pines)
 //   mergeBest(a, b) -> map: per course the newer record by date (stored vs in-memory copies)
-//   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only)
+//   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only; a
+//       mixed round's best is the lowest score to par, a fixed course's the fewest strokes)
+//   game.debugSkipTo(i, strokesFor?) (tests) records the unplayed holes before i and loads hole i.
 
 import { COURSE } from './course.js';
-import { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, MIXED_ID } from './courses.js';
+import { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, isMixedId, mixedId, mixedHoles } from './courses.js';
 import { buildHole as defaultBuildHole } from './terrain.js';
 import { SURF, BALL_R, WINDY_EXTRA } from './constants.js';
 import { mulberry32, randInt } from './rng.js';
@@ -227,7 +231,7 @@ export class Game {
     return this.terrain;
   }
 
-  // n is the hole's number in this round (1-9 in playing order; a mixed round renumbers them);
+  // n is the hole's number in this round (1..n in playing order; a mixed round renumbers them);
   // holeCourseId / holeCourseName / holeN are the course the hole comes from and its number there.
   holeInfo() {
     const t = this.terrain;
@@ -681,6 +685,21 @@ export class Game {
     this._setPhase('address');
   }
 
+  // Tests and debugging: record every unplayed hole before i (strokesFor(k, par) strokes, two
+  // putts) and load hole i, as if those holes had been played.
+  debugSkipTo(i, strokesFor = (k, par) => par) {
+    const st = this.state;
+    const n = this.course.holes.length;
+    const to = Math.max(0, Math.min(n - 1, i | 0));
+    for (let k = 0; k < to; k++) {
+      const h = st.card.holes[k];
+      if (h.strokes != null) continue;
+      const strokes = Math.max(1, Math.round(strokesFor(k, h.par)));
+      recordHole(st.card, k, { strokes, putts: Math.min(2, strokes), fir: h.par >= 4, gir: strokes <= h.par });
+    }
+    return this.loadHole(to);
+  }
+
   // ------------------------------------------------------------------ save / restore
 
   // JSON-safe snapshot. A save taken during a flight stores the position before the shot plus
@@ -700,7 +719,8 @@ export class Game {
   static restore(json, opts = {}) {
     const data = typeof json === 'string' ? JSON.parse(json) : clone(json);
     if (!data || data.v !== SAVE_VERSION || !data.hole || !Array.isArray(data.pins)) throw new Error('Game.restore: unsupported save');
-    const course = opts.course || (data.courseId === MIXED_ID ? mixedCourse(data.seed, data.mix) : courseById(data.courseId || 'pines'));
+    const course = opts.course || (isMixedId(data.courseId) ? mixedCourse(data.seed, data.mix, mixedHoles(data.courseId)) : courseById(data.courseId || 'pines'));
+    if (!Number.isInteger(data.holeIndex) || data.holeIndex < 0 || data.holeIndex >= course.holes.length) throw new Error('Game.restore: hole out of range');
     const g = new Game({ course, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
     const pending = data.pendingShot;
     delete data.pendingShot;
@@ -727,10 +747,14 @@ export class Game {
 // ------------------------------------------------------------------ saves and best rounds
 // Pure helpers for main.js (which owns localStorage and the in-memory fallback), section 8.5.
 
-// ?course= value -> a known course id (or 'mixed'), or null (unknown or missing: keep the menu's choice).
-export function courseFromParam(value) {
-  const v = String(value ?? '').trim().toLowerCase();
-  return isCourseId(v) ? v : null;
+// ?course= value -> a known course id (or 'mixed' / 'mixed18'), or null (unknown or missing: keep
+// the menu's choice). holes (?holes=9|18) picks the mixed round's size; fixed courses ignore it.
+export function courseFromParam(value, holes = null) {
+  let v = String(value ?? '').trim().toLowerCase();
+  if (v === 'mixed9') v = 'mixed';
+  if (!isCourseId(v)) return null;
+  const n = parseInt(holes, 10);
+  return isMixedId(v) && (n === 9 || n === 18) ? mixedId(n) : v;
 }
 
 // Course of a stored save {v, savedAt, courseId?, game}: the wrapper's id, else the game's; saves
@@ -743,8 +767,8 @@ export function saveCourseId(save) {
 const isRecord = (r) => !!r && typeof r === 'object' && Number.isFinite(r.strokes);
 
 // Best rounds by course. golf.best.v1 used to hold one record {strokes, toPar, date} (Hollow Pines,
-// the only course then); now it is a map {[courseId]: record} (mixed rounds share one 'mixed'
-// record: every draw is par 36). Anything else is ignored.
+// the only course then); now it is a map {[courseId]: record} (Mixed Nine rounds share one 'mixed'
+// record, kept from before Mixed Eighteen, which has its own 'mixed18'). Anything else is ignored.
 export function bestMap(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
@@ -766,13 +790,14 @@ export function mergeBest(a, b) {
 }
 
 // Records a finished round on a course: only a complete round (totals.played >= holes) counts, and
-// it is the new best when the course has none yet or it took fewer strokes. Returns the updated
-// map (a copy), the course's best and whether this round set it.
+// it is the new best when the course has none yet or it took fewer strokes (a mixed round: a lower
+// score to par, since every draw is different). Returns the updated map (a copy), the course's
+// best and whether this round set it.
 export function recordBest(map, courseId, totals, holes, date = Date.now()) {
   const m = bestMap(map);
   const prev = m[courseId] || null;
   if (!totals || totals.played < holes) return { map: m, best: prev, isNew: false };
-  const isNew = !prev || totals.strokes < prev.strokes;
+  const isNew = !prev || (isMixedId(courseId) ? totals.toPar < prev.toPar : totals.strokes < prev.strokes);
   if (isNew) m[courseId] = { strokes: totals.strokes, toPar: totals.toPar, date };
   return { map: m, best: m[courseId], isNew };
 }

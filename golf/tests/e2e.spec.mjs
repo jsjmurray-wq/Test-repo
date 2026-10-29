@@ -1,9 +1,10 @@
 // End-to-end smoke tests in Chromium with iPhone-like viewports (Playwright, no test runner).
 // Usage: node tests/e2e.spec.mjs [--shots] [--soak]
 //   --shots  save screenshots to golf/screenshots/ (gitignored) for visual review
-//   --soak   also play a full 9-hole autoplay round (?autoplay=1&fast=20) on every course
-//            (?course=pines|desert|water|links; --courses=a,b for a subset) on the dev and
-//            single-file builds, with the renderer's peak draw calls and triangles
+//   --soak   also play a full autoplay round (?autoplay=1&fast=20) on every course
+//            (?course=pines|desert|water|links|mixed, and mixed18 = ?course=mixed&holes=18;
+//            --courses=a,b for a subset) on the dev and single-file builds, with the renderer's
+//            peak draw calls and triangles
 //   --soak-only  skip the UI flow (soak rounds only)
 // WebGL comes from SwiftShader when available (renderer checks run); otherwise the flow runs
 // logic-only with ?nogl=1. Exits non-zero on any failure.
@@ -29,7 +30,7 @@ const SHOTS = args.has('--shots');
 const SOAK = args.has('--soak') || args.has('--soak-only');
 // --soak plays a full autoplay round on every course (or --courses=desert,links only).
 const coursesArg = process.argv.find((a) => a.startsWith('--courses='));
-const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links', 'mixed'];
+const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links', 'mixed', 'mixed18'];
 const shotDir = join(root, 'screenshots');
 const CHROME = '/opt/pw-browsers/chromium';
 const GL_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
@@ -443,6 +444,8 @@ async function coursesAndShots(page, tag, vpw, vph) {
   await courseRound(page, tag, vpw, vph, { id: 'links', name: 'Kittiwake Links', theme: 'links', shot: 'cut' });
   // The mixed round: nine random holes across the courses (builds without the card skip it).
   await mixedRound(page, tag, vpw, vph);
+  // Mixed Eighteen: the 9 | 18 switch, the back nine and its scorecard (older builds skip it).
+  await mixed18Round(page, tag, vpw, vph);
 }
 
 // Menu -> the Mixed Nine card -> new round: the hole is one of the four courses' (the intro names
@@ -458,7 +461,7 @@ async function mixedRound(page, tag, vpw, vph) {
     console.log('  (no Mixed Nine card in this build: skipped)');
     return;
   }
-  await card.tap();
+  await card.tap({ position: { x: 24, y: 24 } }); // the thumbnail (clear of the 9 | 18 switch)
   await page.waitForTimeout(400);
   const menu = await page.evaluate(() => ({ title: document.querySelector('[data-f="courseName"]').textContent, meta: document.querySelector('#menu [data-course="mixed"] .cc-meta').textContent }));
   check(menu.title === 'Mixed Nine' && /Par 36/.test(menu.meta), `the Mixed Nine card is selected ("${menu.title}", "${menu.meta}")`);
@@ -513,6 +516,127 @@ async function mixedRound(page, tag, vpw, vph) {
   check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === 'mixed', 8000), 'resume restores the mixed round');
   const after = await page.evaluate(() => ({ ...window.__golf.debug.state(), mix: JSON.stringify(window.__golf.game.state.mix) }));
   check(after.mix === before.mix && after.hole === before.hole && after.strokes === before.strokes && after.theme === before.theme, `the same nine holes resume on hole ${after.hole + 1} with ${after.strokes} stroke(s) (${after.holeCourseId})`);
+  await page.waitForTimeout(300);
+}
+
+// Menu -> the mixed card's "18 holes" -> new round of 18 (par 72, all four courses) -> the debug
+// hook records holes 1-8 -> a real touch putt holes the 9th -> the scorecard (two blocks in
+// portrait, one row in landscape, re-laid out on rotation) has Out / In / Tot -> Next hole is the
+// 10th -> reload -> Resume picks up the same eighteen on the 10th.
+async function mixed18Round(page, tag, vpw, vph) {
+  await page.locator('#pause-btn').tap();
+  await page.waitForTimeout(400);
+  await page.locator('#pause [data-act="quit"]').tap();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 5000), 'quit to the menu (mixed 18)');
+  const pill = page.locator('#menu [data-mix="mixed18"]');
+  if (!(await pill.count())) {
+    console.log('  (no 9 | 18 switch in this build: Mixed Eighteen skipped)');
+    return;
+  }
+  await pill.tap();
+  await page.waitForTimeout(400);
+  const menu = await page.evaluate(() => ({
+    title: document.querySelector('[data-f="courseName"]').textContent,
+    meta: document.querySelector('#menu [data-course="mixed"] .cc-meta').textContent,
+    pressed: document.querySelector('#menu [data-mix="mixed18"]').getAttribute('aria-pressed'),
+    cards: document.querySelectorAll('#menu [data-course]').length,
+    sel: window.__golf.ui.selectedCourse,
+  }));
+  check(menu.title === 'Mixed Eighteen' && /Par 72/.test(menu.meta) && menu.pressed === 'true' && menu.cards === 5 && menu.sel === 'mixed18',
+    `the 18 holes switch selects Mixed Eighteen ("${menu.title}", "${menu.meta}", ${menu.cards} cards)`);
+  await shot(page, tag, 'menu-mixed18');
+  await page.locator('#menu [data-act="new-round"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase === 'intro' && window.__golf.game.course.id === 'mixed18', 8000), 'new Mixed Eighteen round');
+  const m = await page.evaluate(() => {
+    const g = window.__golf.game;
+    return {
+      picks: g.state.mix.length,
+      courses: new Set(g.state.mix.map((p) => p.courseId)).size,
+      par: g.state.card.holes.reduce((a, h) => a + h.par, 0),
+      hole: document.querySelector('[data-f="introHole"]').textContent,
+    };
+  });
+  check(m.picks === 18 && m.courses === 4 && m.par === 72 && m.hole === '1', `eighteen holes from all four courses, par ${m.par}, intro hole ${m.hole}`);
+  // Holes 1-8 recorded by the debug hook; the 9th is played for real.
+  await page.evaluate(() => window.__golf.debug.skipTo(8, [0, -1, 1, 0, 0, 2, 0, 1]));
+  check(await waitFor(page, () => window.__golf.game.state.holeIndex === 8 && window.__golf.game.phase === 'intro', 5000), 'skipped to hole 9');
+  await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+  check(await waitFor(page, () => window.__golf.game.phase === 'address', 12000), 'address on hole 9');
+  let holed = false;
+  for (let tryN = 0; tryN < 3 && !holed; tryN++) {
+    await page.evaluate(() => window.__golf.debug.placeNearCup(0.6));
+    await page.waitForTimeout(600);
+    const p = await page.evaluate(() => {
+      const g = window.__golf.game;
+      const dbg = window.__golf.debug;
+      return { pad: dbg.padRect(), depth: dbg.depthForPower((g.distanceToCup() + 0.35) / g.puttRange, 'putt') };
+    });
+    await swipePutt(page, p.pad.x + p.pad.w * 0.5, p.pad.y + p.pad.h * 0.25, p.depth);
+    await waitFor(page, () => window.__golf.game.phase === 'flight', 3000);
+    await waitFor(page, () => window.__golf.game.phase !== 'flight', 15000);
+    holed = await page.evaluate(() => ['holed', 'scorecard'].includes(window.__golf.game.phase));
+  }
+  check(holed, 'hole 9 holed with a touch putt');
+  check(await waitFor(page, () => !document.getElementById('scorecard').hidden, 8000), 'the scorecard shows after hole 9');
+  await page.waitForTimeout(700);
+  const cardInfo = () => page.evaluate(() => {
+    const sc = document.getElementById('scorecard');
+    const t = sc.querySelector('table.sc');
+    const r = sc.querySelector('.card').getBoundingClientRect();
+    const g = window.__golf.game;
+    const tot = (cls) => [...t.querySelectorAll(`tr.${cls} td.tot`)].map((d) => d.textContent);
+    return {
+      phase: g.phase,
+      holes: sc.dataset.holes,
+      layout: sc.dataset.cardLayout,
+      bodyLayout: document.body.dataset.layout,
+      heads: tot('r-hole'),
+      scores: tot('r-score'),
+      chips: sc.querySelectorAll('.from-chip').length,
+      rows: t.querySelectorAll('tr.r-hole').length,
+      front: g.state.card.holes.slice(0, 9).reduce((a, h) => a + h.strokes, 0),
+      out: g.totals().out.strokes,
+      overflow: t.scrollWidth - t.parentElement.clientWidth,
+      fits: r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1,
+    };
+  });
+  let c = await cardInfo();
+  const want = (k) => (k.bodyLayout === 'landscape' ? { layout: 'row', rows: 1 } : { layout: 'split', rows: 2 });
+  check(c.phase === 'scorecard' && c.holes === '18', `an 18-hole scorecard after the 9th, not the end (${c.phase}, ${c.holes})`);
+  check(c.heads.join() === 'Out,In,Tot' && c.chips === 18, `Out / In / Tot columns and 18 course chips (${c.heads.join()}, ${c.chips})`);
+  check(c.scores[0] === String(c.front) && c.front === c.out && c.scores[1] === '' && c.scores[2] === c.scores[0], `Out ${c.scores[0]} = holes 1-9 (${c.front}), In empty, Tot = Out (${c.scores.join('/')})`);
+  check(c.layout === want(c).layout && c.rows === want(c).rows, `the card is laid out as ${c.layout} with ${c.rows} hole row(s) in ${c.bodyLayout}`);
+  check(c.overflow <= 1 && c.fits, `the 18-hole card fits the screen (overflow ${c.overflow} px)`);
+  await shot(page, tag, 'mixed18-scorecard');
+  // Rotate with the card open: it re-lays itself out (split <-> row); then back.
+  await page.setViewportSize({ width: vph, height: vpw });
+  await page.waitForTimeout(700);
+  const rc = await cardInfo();
+  check(rc.layout === want(rc).layout && rc.rows === want(rc).rows && rc.overflow <= 1, `rotated (${rc.bodyLayout}): the card is ${rc.layout} with ${rc.rows} hole row(s)`);
+  await shot(page, tag, 'mixed18-scorecard-rotated');
+  await page.setViewportSize({ width: vpw, height: vph });
+  await page.waitForTimeout(700);
+  c = await cardInfo();
+  check(c.layout === want(c).layout, `rotated back: ${c.layout}`);
+  await page.locator('#scorecard [data-act="next-hole"]').tap();
+  check(await waitFor(page, () => window.__golf.game.state.holeIndex === 9 && document.querySelector('[data-f="hole"]').textContent === '10', 5000), 'Next hole is hole 10');
+  const ten = await page.evaluate(() => {
+    const g = window.__golf.game;
+    const names = { pines: 'Hollow Pines', desert: 'Red Mesa', water: 'Coral Cay', links: 'Kittiwake Links' };
+    return { hole: document.querySelector('[data-f="introHole"]').textContent, intro: document.querySelector('[data-f="introCourse"]').textContent, want: `${names[g.courseOf(9).id]} · No. ${g.terrain.n}` };
+  });
+  check(ten.hole === '10' && ten.intro === ten.want, `the intro shows hole 10 and its course ("${ten.intro}")`);
+  await page.waitForTimeout(300);
+  const before = await page.evaluate(() => ({ ...window.__golf.debug.state(), mix: JSON.stringify(window.__golf.game.state.mix) }));
+  await page.reload();
+  check(await waitFor(page, () => !document.getElementById('menu').hidden, 15000), 'menu after reload (mixed 18)');
+  const sub = await page.evaluate(() => document.querySelector('[data-f="resumeSub"]').textContent);
+  check(sub === 'Mixed Eighteen · Hole 10', `resume names the round ("${sub}")`);
+  await page.locator('#menu [data-act="resume"]').tap();
+  check(await waitFor(page, () => window.__golf.game && window.__golf.game.phase && window.__golf.game.course.id === 'mixed18', 8000), 'resume restores Mixed Eighteen');
+  const after = await page.evaluate(() => ({ ...window.__golf.debug.state(), mix: JSON.stringify(window.__golf.game.state.mix) }));
+  check(after.mix === before.mix && after.hole === 9 && after.holes === 18 && after.card.slice(0, 9).join() === before.card.slice(0, 9).join(),
+    `the same eighteen resume on hole ${after.hole + 1} with holes 1-9 kept (${after.card.slice(0, 9).join(' ')})`);
   await page.waitForTimeout(300);
 }
 
@@ -587,13 +711,24 @@ async function courseRound(page, tag, vpw, vph, c) {
 // A full autoplay round on one course (?course=ID); the renderer's draw calls and triangles are
 // sampled every half second (the most seen is reported against the 30-draw budget).
 async function soak(browser, base, path, gl, courseId) {
-  const query = `?autoplay=1&fast=20&course=${courseId}${gl ? '&quality=low' : '&nogl=1'}`;
+  const holes = courseId === 'mixed18' ? 18 : 9;
+  const courseQ = courseId === 'mixed18' ? 'mixed&holes=18' : courseId;
+  const query = `?autoplay=1&fast=20&course=${courseQ}${gl ? '&quality=low' : '&nogl=1'}`;
   console.log(`\n[soak] ${path}${query}`);
   const context = await browser.newContext({ ...VIEWPORTS[0] });
   const page = await context.newPage();
   const errors = collectErrors(page);
   const t0 = Date.now();
   await page.goto(`${base}/${path}${query}`);
+  if (holes === 18) {
+    // A build from before Mixed Eighteen ignores &holes=18 (a stale dist/): skip, as the UI flow does.
+    await waitFor(page, () => !!(window.__golf && window.__golf.game), 30000);
+    if ((await page.evaluate(() => window.__golf.game && window.__golf.game.course.id)) !== 'mixed18') {
+      console.log('  (no Mixed Eighteen in this build: skipped)');
+      await context.close();
+      return;
+    }
+  }
   await page.evaluate(() => {
     const m = (window.__golfPerf = { draws: 0, tris: 0, holes: new Set() });
     setInterval(() => {
@@ -605,10 +740,10 @@ async function soak(browser, base, path, gl, courseId) {
       m.holes.add(a.game.state.holeIndex);
     }, 500);
   });
-  const done = await waitFor(page, () => !!globalThis.__golfDone, 900000);
+  const done = await waitFor(page, () => !!globalThis.__golfDone, holes === 18 ? 1800000 : 900000);
   const info = await page.evaluate(() => globalThis.__golfDone || (window.__golf.game && window.__golf.game.phase));
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
-  check(done && info.played === 9 && info.course === courseId, `autoplay finished 9 holes on ${courseId} (${JSON.stringify(info)}, ${secs} s)`);
+  check(done && info.played === holes && info.course === courseId, `autoplay finished ${holes} holes on ${courseId} (${JSON.stringify(info)}, ${secs} s)`);
   const perf = await page.evaluate(() => ({ draws: window.__golfPerf.draws, tris: window.__golfPerf.tris, holes: window.__golfPerf.holes.size }));
   if (gl) check(perf.draws > 5 && perf.draws <= 30, `${courseId}: at most ${perf.draws} draw calls (budget 30), ${Math.round(perf.tris / 1000)}k tris at most, over ${perf.holes} holes`);
   await page.waitForTimeout(500);

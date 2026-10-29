@@ -3,11 +3,13 @@
 //
 //   newCard(course) -> {course, holes:[{n, par, si, lengthM, strokes:null, putts:null,
 //                       penalties:null, fir:null, gir:null, pickUp:false}]}
-//       A mixed round (course.mixed) numbers its holes 1-9 in playing order and adds each hole's
+//       A mixed round (course.mixed) numbers its holes 1..n in playing order and adds each hole's
 //       own course: from {courseId, name, theme, n}.
 //   recordHole(card, i, {strokes, putts, penalties, fir, gir, pickUp}) -> card (mutated)
 //   totals(card) -> {played, strokes, par, toPar, coursePar, putts, penalties,
-//                    fir:{hit, of}, gir:{hit, of}, pickUps}
+//                    fir:{hit, of}, gir:{hit, of}, pickUps, out, in}
+//       out: holes 1-9, in: holes 10-18 (null on a nine-hole card), each
+//       {played, strokes, par, toPar, coursePar, putts}.
 //
 // fir is null on par 3s (no fairway to hit). toPar counts only the holes played so far.
 
@@ -60,6 +62,23 @@ export function totals(card) {
     }
     t.gir.of++;
     if (h.gir) t.gir.hit++;
+  }
+  t.toPar = t.strokes - t.par;
+  t.out = sumHoles(card.holes.slice(0, 9));
+  t.in = card.holes.length > 9 ? sumHoles(card.holes.slice(9, 18)) : null;
+  return t;
+}
+
+// Out / In: the front and back nine's sums.
+function sumHoles(holes) {
+  const t = { played: 0, strokes: 0, par: 0, toPar: 0, coursePar: 0, putts: 0 };
+  for (const h of holes) {
+    t.coursePar += h.par;
+    if (h.strokes == null) continue;
+    t.played++;
+    t.strokes += h.strokes;
+    t.par += h.par;
+    t.putts += h.putts || 0;
   }
   t.toPar = t.strokes - t.par;
   return t;

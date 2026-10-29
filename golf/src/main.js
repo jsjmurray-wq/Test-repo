@@ -21,11 +21,11 @@
 // course (golf.best.v1 = {[courseId]: best}; an old single record is Hollow Pines'). Restart and
 // Play again replay the round's own course.
 //
-// Mixed rounds: the fifth card, "Mixed Nine", draws nine holes at random from all four courses
-// (courses.js mixedCourse, seeded by the round seed: two or three from each course, par 36). Each
-// hole is built with its own course (theme, conditions, wind), the intro names the course it
-// comes from, the save stores the draw, and the best mixed round is kept under 'mixed'. Restart
-// replays the same nine; Play again draws a new one.
+// Mixed rounds: the fifth card draws 9 ("Mixed Nine") or 18 ("Mixed Eighteen", its 9 | 18
+// switch) holes at random from all four courses (courses.js mixedCourse, seeded by the round
+// seed). Each hole is built with its own course (theme, conditions, wind), the intro names the
+// course it comes from, the save stores the draw, and the best rounds (by score to par) are kept
+// under 'mixed' and 'mixed18'. Restart replays the same holes; Play again draws new ones.
 //
 // Special shots (section 8.4): the shot chip beside the club picker opens the shot sheet (the
 // eligible shots with their carry/total); the selection lasts one stroke. The club readout, power
@@ -34,6 +34,7 @@
 //
 // URL parameters
 //   ?course=ID    desert | water | links | pines | mixed: the course for new rounds (menu and autoplay)
+//   ?holes=18     with course=mixed: a Mixed Eighteen round (mixed18); fixed courses ignore it
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
 //   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
@@ -45,8 +46,7 @@
 // globalThis.__golf = app (debugging and tests).
 
 import { Game, TREE_SEED, courseFromParam, saveCourseId, mergeBest, recordBest } from './game.js';
-import { COURSE } from './course.js';
-import { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, mixedCourse, mixedSummary, courseName, isCourseId } from './courses.js';
+import { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, MIXED18_ID, mixedCourse, mixedSummary, courseName, isCourseId, isMixedId, mixedHoles } from './courses.js';
 import { shotById, shotIntent } from './shots.js';
 import { buildHole } from './terrain.js';
 import { Renderer } from './render.js';
@@ -88,10 +88,10 @@ const AUTOPLAY = flag('autoplay');
 const TEST = flag('test');
 const NOGL = flag('nogl');
 const FAST = clamp(parseFloat(params.get('fast')) || 1, 0.25, 50);
-const START_HOLE = clamp((parseInt(params.get('hole'), 10) || 1) - 1, 0, COURSE.holes.length - 1);
+const START_HOLE = clamp((parseInt(params.get('hole'), 10) || 1) - 1, 0, 17); // clamped per course in newRound
 const QUALITY = params.get('quality') === 'low' ? 'low' : null;
 const SEED = params.has('seed') ? parseInt(params.get('seed'), 10) >>> 0 : TEST ? 1 : null;
-const COURSE_PARAM = courseFromParam(params.get('course'));
+const COURSE_PARAM = courseFromParam(params.get('course'), params.get('holes'));
 
 // Stand-in for the WebGL renderer under ?nogl=1: same API, draws nothing, so the whole game
 // (logic, HUD, input, saves) still runs where WebGL is missing (and in logic-only e2e runs).
@@ -700,10 +700,10 @@ function newRound(courseId = app.courseId, picks = null) {
   app.ui.hideMenu();
   app.ui.hidePause();
   const seed = SEED ?? ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
-  const course = courseId === MIXED_ID ? mixedCourse(seed, picks) : courseById(courseId);
+  const course = isMixedId(courseId) ? mixedCourse(seed, picks, mixedHoles(courseId)) : courseById(courseId);
   const game = new Game({ course, seed, settings: gameSettings(), buildHole: cachedBuildHole });
   bindGame(game);
-  game.loadHole(START_HOLE);
+  game.loadHole(Math.min(START_HOLE, course.holes.length - 1));
   saveGame();
   updateInputMode();
 }
@@ -754,7 +754,11 @@ function showMenu() {
   app.ui.showHud(false);
   app.ui.showMenu({
     canResume: !!save,
-    courses: [...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })), { ...mixedSummary(), best: best[MIXED_ID] || null }],
+    courses: [
+      ...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })),
+      { ...mixedSummary(9), best: best[MIXED_ID] || null },
+      { ...mixedSummary(18), best: best[MIXED18_ID] || null },
+    ],
     selected: app.courseId,
     resumeSub,
   });
@@ -771,8 +775,8 @@ function selectCourse(id) {
 // Menu backdrop: the chosen course's first hole (built a moment after the tap has painted); for
 // the mixed round, the first hole of a fixed sample draw.
 function backdropHole(courseId) {
-  const course = courseId === MIXED_ID ? mixedCourse(1) : courseById(courseId);
-  const i = course.mixed ? 0 : START_HOLE;
+  const course = isMixedId(courseId) ? mixedCourse(1, null, mixedHoles(courseId)) : courseById(courseId);
+  const i = course.mixed ? 0 : Math.min(START_HOLE, course.holes.length - 1);
   return { def: course.holes[i], course: course.mixed ? course.holeCourses[i] : course };
 }
 
@@ -961,12 +965,14 @@ function onRoundOver({ card, totals }) {
   const best = recordBestRound(totals, g.course);
   clearSave();
   showFinalCard(card, totals, best, g.course);
-  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, pickUps: totals.pickUps, course: g.course.id };
+  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, holes: g.course.holes.length, pickUps: totals.pickUps, course: g.course.id };
 }
 
 // The final card: the course name heads it ("Red Mesa · New best round!").
 function showFinalCard(card, totals, { best, isNew }, course) {
-  const kicker = isNew ? 'New best round!' : best ? `Best ${best.strokes} (${fmtToPar(best.toPar)})` : 'Round complete';
+  // (A mixed round's best is its score to par: every draw is different.)
+  const bestText = best && (course.mixed ? `Best ${fmtToPar(best.toPar)}` : `Best ${best.strokes} (${fmtToPar(best.toPar)})`);
+  const kicker = isNew ? 'New best round!' : bestText || 'Round complete';
   app.ui.showScorecard(card, { final: true, kicker, course: course.name, title: `${totals.strokes} strokes · ${fmtToPar(totals.toPar)}` });
 }
 
@@ -1492,8 +1498,16 @@ function installDebugHooks() {
         holeCourseId: g.courseOf().id,
         theme: g.terrain ? g.terrain.theme : null,
         mix: g.state.mix,
+        holes: g.course.holes.length,
         shotType: g.shotType,
       };
+    },
+    // Mixed 18 tests: record the holes before i (par + toPar[k] strokes each) and load hole i.
+    skipTo(i, toPar = []) {
+      const g = app.game;
+      g.debugSkipTo(i, (k, par) => par + (toPar[k] || 0));
+      saveGame();
+      return g.state.holeIndex;
     },
   };
 }

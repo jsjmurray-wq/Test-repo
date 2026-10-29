@@ -608,6 +608,20 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {
 /* Mixed Nine: a wide card under the four, its thumbnail the four courses' colours in slices. */
 .course-card.cc-mixed { grid-column: 1 / -1; flex-direction: row; align-items: center; }
 .course-card.cc-mixed .cc-thumb { width: 92px; height: auto; align-self: stretch; min-height: 56px; }
+/* With the 9 | 18 switch (a div card: the switch's buttons cannot sit in a button): the switch
+   under the text in portrait, on the right in landscape. */
+div.course-card.cc-mixed {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr); grid-template-rows: auto auto;
+  color: #fff; cursor: pointer; touch-action: manipulation;
+}
+div.course-card.cc-mixed .cc-thumb { grid-row: 1 / span 2; }
+div.course-card.cc-mixed .cc-body { padding-bottom: 6px; }
+.cc-holes {
+  grid-column: 2; justify-self: start; display: flex; margin: 0 10px 9px;
+  background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 2px;
+}
+.cc-holes button { min-width: 78px; height: 34px; padding: 0 12px; border-radius: 8px; font-size: 13.5px; font-weight: 700; color: rgba(255, 255, 255, 0.78); white-space: nowrap; }
+.cc-holes button[aria-pressed="true"] { background: #fff; color: #0b1a24; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
 .course-card.cc-mixed .cc-tag { min-height: 0; -webkit-line-clamp: 1; }
 .course-card.cc-mixed .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
 .course-card[data-theme="mixed"] .cc-thumb {
@@ -665,6 +679,17 @@ table.sc { width: 100%; border-collapse: separate; border-spacing: 0; font-size:
 .sc tr.r-hole td.tot { background: rgba(19, 122, 60, 0.95); }
 .sc td.cur { background: rgba(255, 210, 90, 0.12); }
 .sc tr.r-hole td.cur { background: var(--gold); color: #1b1606; }
+/* Eighteen holes (Mixed Eighteen): two blocks (portrait) or one long row (landscape). */
+#scorecard[data-holes="18"] .sc th { letter-spacing: 0.02em; padding-right: 4px; }
+#scorecard[data-holes="18"] .sc th, #scorecard[data-holes="18"] .sc td { min-width: 0; }
+#scorecard[data-holes="18"] .sc td.tot { padding: 0 2px; }
+#scorecard[data-holes="18"] .mk { width: 21px; height: 21px; }
+#scorecard[data-holes="18"] .sc tr.r-yds td { font-size: 10px; letter-spacing: -0.02em; }
+#scorecard[data-holes="18"] .sc { font-size: 12.5px; }
+.sc td.gap { background: none !important; border-bottom: 0 !important; }
+.sc tbody.sc-front tr.r-hole td.tot { border-radius: 0 8px 8px 0; }
+.sc tbody.sc-back tr.r-hole > * { border-top: 8px solid transparent; background-clip: padding-box; height: 38px; }
+#scorecard[data-card-layout="split"] .card { padding-left: 12px; padding-right: 12px; }
 .mk { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; line-height: 1; position: relative; }
 .mk.circ { border: 1.6px solid var(--red); border-radius: 50%; color: var(--red); }
 .mk.circ2 { border: 1.6px solid var(--red); border-radius: 50%; color: var(--red); box-shadow: 0 0 0 2px var(--glass-strong), 0 0 0 3.6px var(--red); }
@@ -744,6 +769,10 @@ body[data-layout="landscape"] .course-card { flex-direction: row; align-items: c
 body[data-layout="landscape"] .course-card.cc-mixed { min-height: 0; }
 body[data-layout="landscape"] .course-card.cc-mixed .cc-thumb { width: 58px; min-height: 44px; }
 body[data-layout="landscape"] .course-card.cc-mixed .cc-body { padding: 5px 9px; }
+body[data-layout="landscape"] div.course-card.cc-mixed { grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-rows: auto; }
+body[data-layout="landscape"] div.course-card.cc-mixed .cc-thumb { grid-row: 1; }
+body[data-layout="landscape"] .cc-holes { grid-column: 3; align-self: center; margin: 0 8px 0 0; }
+body[data-layout="landscape"] .cc-holes button { min-width: 64px; height: 32px; padding: 0 8px; font-size: 12.5px; }
 body[data-layout="landscape"] .cc-thumb { width: 58px; height: auto; align-self: stretch; }
 body[data-layout="landscape"] .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
 body[data-layout="landscape"] .cc-body { padding: 6px 9px; }
@@ -754,6 +783,7 @@ body[data-layout="landscape"] .course-card[data-theme="links"] .cc-thumb { backg
 body[data-layout="landscape"] .menu-actions { grid-column: 2; grid-row: 1 / span 2; align-self: center; max-width: 300px; }
 body[data-layout="landscape"] .sheet { max-width: 460px; padding: 16px 18px; }
 body[data-layout="landscape"] .card { max-width: 640px; }
+body[data-layout="landscape"] #scorecard[data-holes="18"] .card { max-width: 780px; }
 body[data-layout="landscape"] .sheet-t { font-size: 21px; }
 body[data-layout="landscape"] .btn { min-height: 44px; }
 body[data-layout="landscape"] .set-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 22px; }
