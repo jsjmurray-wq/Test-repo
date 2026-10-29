@@ -1330,3 +1330,63 @@ export function aimRibbon(terrain, aim, eye, out, { pxPerRad = 900, minPx = 2.5 
   }
   return o / 6;
 }
+
+// Draped path ribbon (the putt preview, the chip's roll): a flat strip through data = [x, y, z]*
+// (already draped on the ground) whose u runs along it in units of its own width, so the overlay's
+// dot mode (4) draws round dots of the strip's width, then (opts.ring) a solid ring of radius
+// opts.ringR round the last point (u < 0) after a degenerate join, in the same strip. The width is
+// at least opts.width m and minPx CSS px. Writes [x, y, z, u, v, a]* camera-relative into out and
+// returns the vertex count (0 if out is too small). No allocation.
+export function pathRibbon(data, count, eye, out, { width = 0.035, minPx = 6, pxPerRad = 900, ring = false, ringR = 0.12, terrain = null, lift = 0.012 } = {}) {
+  const n = Math.min(count, (data.length / 3) | 0);
+  const segs = 32;
+  const need = (n * 2 + (ring ? 2 + (segs + 1) * 2 : 0)) * 6;
+  if (n < 2 || out.length < need) return 0;
+  let o = 0;
+  let u = 0;
+  for (let k = 0; k < n; k++) {
+    const x = data[k * 3];
+    const y = data[k * 3 + 1];
+    const z = data[k * 3 + 2];
+    const kn = Math.min(n - 1, k + 1);
+    const kp = Math.max(0, k - 1);
+    let tx = data[kn * 3] - data[kp * 3];
+    let ty = data[kn * 3 + 1] - data[kp * 3 + 1];
+    const tl = Math.hypot(tx, ty) || 1;
+    tx /= tl;
+    ty /= tl;
+    const d = Math.hypot(x - eye.x, y - eye.y, z - eye.z);
+    const hw = Math.max(width, (minPx / pxPerRad) * d) * 0.5;
+    if (k > 0) u += Math.hypot(x - data[k * 3 - 3], y - data[k * 3 - 2]) / (2 * hw);
+    const a = Math.min(1, 0.35 + k * 0.2); // eases in at the ball
+    out[o++] = x + ty * hw - eye.x; out[o++] = y - tx * hw - eye.y; out[o++] = z - eye.z; out[o++] = u; out[o++] = -1; out[o++] = a;
+    out[o++] = x - ty * hw - eye.x; out[o++] = y + tx * hw - eye.y; out[o++] = z - eye.z; out[o++] = u; out[o++] = 1; out[o++] = a;
+  }
+  if (ring) {
+    const cx = data[(n - 1) * 3];
+    const cy = data[(n - 1) * 3 + 1];
+    const cz = data[(n - 1) * 3 + 2];
+    const d = Math.hypot(cx - eye.x, cy - eye.y, cz - eye.z);
+    const rw = Math.max(width * 0.5, (minPx / pxPerRad) * d * 0.4);
+    const R = Math.max(ringR, rw * 2.2);
+    const last = o - 6;
+    for (let q = 0; q < 6; q++) out[o + q] = out[last + q];
+    o += 6;
+    for (let s = 0; s <= segs; s++) {
+      const ang = (s / segs) * Math.PI * 2;
+      const c = Math.cos(ang);
+      const sn = Math.sin(ang);
+      for (let side = -1; side <= 1; side += 2) {
+        const r = R + side * rw;
+        const x = cx + c * r;
+        const y = cy + sn * r;
+        const z = terrain ? terrain.heightAt(x, y) + lift : cz;
+        if (s === 0 && side === -1) {
+          out[o++] = x - eye.x; out[o++] = y - eye.y; out[o++] = z - eye.z; out[o++] = -1; out[o++] = -1; out[o++] = 1;
+        }
+        out[o++] = x - eye.x; out[o++] = y - eye.y; out[o++] = z - eye.z; out[o++] = -1; out[o++] = side; out[o++] = 1;
+      }
+    }
+  }
+  return o / 6;
+}

@@ -24,17 +24,19 @@ import { perspective, lookAt, multiply, invert, project as projectPt, unproject 
 import {
   terrainChunks, skirtMesh, icosphere, MeshBuilder, pineMesh, broadleafMesh, flagMesh, waterMesh,
   greenReadMesh, trailRibbon, aimRibbon, skirtTrees, skirtObjects, seaSetup, palmMesh, saguaroMesh,
-  bushMesh, rockMesh, grassMesh,
+  bushMesh, rockMesh, grassMesh, pathRibbon,
 } from './meshes.js';
 import { bakeTerrainColor, bakeClouds, bakeNoise, bakeWaterDepth } from './bake.js';
 import {
   SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, PROP_VS, PROP_FS,
   FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, OBJ_VS, OBJ_FS,
   GOLFER_VS, GOLFER_FS, GOLFER_MASK_VS, GOLFER_MASK_FS, GOLFER_GROUND_VS, GOLFER_GROUND_FS, GOLFER_BONES,
+  FLOW_VS, FLOW_FS,
 } from './shaders.js';
 import { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R, SURF } from './constants.js';
 import { themeFor } from './themes.js';
 import { buildGolferMesh } from './golfer-mesh.js';
+import { slopeField, FlowParticles, flowIndices, FLOW_FLOATS, FLOW_MAX } from './green-flow.js';
 
 const EXPOSURE = 1.0;
 
@@ -53,6 +55,8 @@ const HORIZON_KIND = { hills: 0, mountains: 1, mesas: 2, dunes: 3 };
 const RIDGE_HAZE = { hills: [0.86, 0.78], mountains: [0.8, 0.7], mesas: [0.52, 0.17], dunes: [0.84, 0.72] };
 
 const ZERO = { x: 0, y: 0, z: 0 };
+const PATH_MAX = 3; // scene.paths drawn per frame
+const PATH_FLOATS = (520 * 2 + 70) * 6; // pathRibbon output for up to 520 draped points + ring
 
 // Instance row [x, y, z, h, rx, rz, r, seed] for one terrain object, by kind (null for pine and
 // broad, which keep the shipped tree layout).
@@ -103,6 +107,11 @@ export class Renderer {
     this._trailBuf = new Float32Array(400 * 12 + 24);
     this._aimBuf = new Float32Array(4096);
     this._quad = new Float32Array(24);
+    // Green reading (section 8.9): flowing slope streaks and up to PATH_MAX draped dotted paths.
+    this._flowBuf = new Float32Array(FLOW_MAX * 4 * FLOW_FLOATS);
+    this._pathBuf = new Float32Array(PATH_FLOATS);
+    this.flow = null;
+    this._flowT = null;
     this._golferBones = new Float32Array(GOLFER_BONES * 16);
     this._golferMesh = null; // {key, mesh} built from scene.golfer.look + club
     this.golferGL = null;
@@ -148,6 +157,7 @@ export class Renderer {
       golfer: createProgram(gl, GOLFER_VS, GOLFER_FS),
       golferMask: createProgram(gl, GOLFER_MASK_VS, GOLFER_MASK_FS),
       golferGround: createProgram(gl, GOLFER_GROUND_VS, GOLFER_GROUND_FS),
+      flow: createProgram(gl, FLOW_VS, FLOW_FS),
     };
     // Golfer buffers are rebuilt on the next draw (new context or first use); the shadow mask is
     // a small offscreen texture.
@@ -200,7 +210,16 @@ export class Renderer {
       aim: gl.createBuffer(),
       quad: gl.createBuffer(),
       quad2: gl.createBuffer(),
+      flow: gl.createBuffer(),
+      flowIdx: makeBuffer(gl, flowIndices(FLOW_MAX), gl.ELEMENT_ARRAY_BUFFER),
+      paths: [gl.createBuffer(), gl.createBuffer(), gl.createBuffer()],
     };
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.G.flow);
+    gl.bufferData(gl.ARRAY_BUFFER, this._flowBuf.byteLength, gl.DYNAMIC_DRAW);
+    for (const b of this.G.paths) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, this._pathBuf.byteLength, gl.DYNAMIC_DRAW);
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.G.trail);
     gl.bufferData(gl.ARRAY_BUFFER, this._trailBuf.byteLength, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.G.aim);
@@ -226,6 +245,10 @@ export class Renderer {
     const water = waterMesh(terrain.waters, 1.6, { sea, skirt });
     const depth = water.idx.length && theme.water.tint ? bakeWaterDepth(terrain) : null;
     const read = greenReadMesh(terrain);
+    // Flowing slope streaks over the green (CPU particles; rebuilt per hole, kept across a context loss).
+    const field = slopeField(terrain);
+    this.flow = field ? new FlowParticles(field, { seed: 7 }) : null;
+    this._flowT = null;
     // Tree instances: [x, y, z, canopy-centre height, rx, rz, trunkR, seed] per tree, by kind.
     // Themed objects: [x, y, z, h, rx, rz, r, seed] (objectRow), by kind.
     const pines = [];
@@ -878,6 +901,28 @@ export class Renderer {
       this._drawElements(R.read.count);
     }
 
+    // Flowing slope streaks (scene.read.flow = their alpha), stepped on the scene clock.
+    const flowA = scene.read && scene.read.on ? scene.read.flow || 0 : 0;
+    if (this.flow && flowA > 0) {
+      const t = scene.time || 0;
+      if (this._flowT != null) this.flow.step(Math.min(0.1, Math.max(0, t - this._flowT)));
+      this._flowT = t;
+      const m = this.flow.writeQuads(this._flowBuf, e, { pxPerRad: this.pxPerRad, minPx: scene.read.flowPx || 3 });
+      if (m > 0) {
+        const fp = this.P.flow;
+        const u = this._use(fp, frame);
+        gl.uniform1f(u.uAlpha, flowA);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.G.flow);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._flowBuf.subarray(0, m * 4 * FLOW_FLOATS));
+        const S = FLOW_FLOATS * 4;
+        A.bind(fp.a.aPos, this.G.flow, 3, S, 0);
+        A.bind(fp.a.aUV, this.G.flow, 2, S, 12);
+        A.bind(fp.a.aMisc, this.G.flow, 2, S, 20);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.G.flowIdx);
+        this._drawElements(m * 6);
+      }
+    } else this._flowT = null;
+
     // Aim line (dashed, draped) with the landing ring.
     if (scene.aim && T) {
       const n = aimRibbon(T, scene.aim, e, this._aimBuf, { pxPerRad: this.pxPerRad });
@@ -889,6 +934,26 @@ export class Renderer {
       A.bind(op.a.aPos, this.G.aim, 3, 24, 0);
       A.bind(op.a.aMisc, this.G.aim, 3, 24, 12);
       this._drawStrip(n);
+    }
+
+    // Draped dotted paths (putt preview, chip roll): scene.paths = [{data: [x,y,z]*, count, color:
+    // [r,g,b,a], width, minPx, ring, ringR}], at most PATH_MAX.
+    if (scene.paths && T) {
+      for (let k = 0; k < Math.min(PATH_MAX, scene.paths.length); k++) {
+        const pth = scene.paths[k];
+        if (!pth || pth.count < 2) continue;
+        const n = pathRibbon(pth.data, pth.count, e, this._pathBuf, { width: pth.width || 0.035, minPx: pth.minPx || 6, pxPerRad: this.pxPerRad, ring: !!pth.ring, ringR: pth.ringR || 0.12, terrain: T });
+        if (n < 3) continue;
+        const u = this._use(op, frame);
+        const col = pth.color || [1, 1, 1, 1];
+        gl.uniform4f(u.uColor, col[0], col[1], col[2], col[3] == null ? 1 : col[3]);
+        gl.uniform1f(u.uMode, 4);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.G.paths[k]);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._pathBuf.subarray(0, n * 6));
+        A.bind(op.a.aPos, this.G.paths[k], 3, 24, 0);
+        A.bind(op.a.aMisc, this.G.paths[k], 3, 24, 12);
+        this._drawStrip(n);
+      }
     }
     gl.disable(gl.POLYGON_OFFSET_FILL);
 

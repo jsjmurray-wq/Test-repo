@@ -884,7 +884,8 @@ void main() {
 
 // ---------------------------------------------------------------- overlays (trail, aim, blob shadow, far ball)
 // aMisc = (u, v, alpha). uMode: 0 trail (soft edges), 1 dashed ground line (u < 0: solid ring),
-// 2 radial blob shadow (u, v in -1..1), 3 far-ball billboard disc.
+// 2 radial blob shadow (u, v in -1..1), 3 far-ball billboard disc, 4 dotted path (pathRibbon: u in
+// strip widths, round rimmed dots flowing along it; u < 0: its solid end ring).
 export const OVERLAY_VS = `
 attribute vec3 aPos;     // camera-relative
 attribute vec3 aMisc;
@@ -921,6 +922,21 @@ void main() {
   } else if (uMode < 2.5) {
     float r = length(vMisc.xy);
     a *= (1.0 - smoothstep(0.2, 1.0, r));
+  } else if (uMode > 3.5) {
+    // 4: path of round dots (u in strip widths, flowing toward the end) with a dark rim so it
+    // reads on any grass; u < 0: the solid end ring, also rimmed.
+    vec2 q;
+    if (vMisc.x >= 0.0) {
+      float s = (fract(vMisc.x / 1.6 - uTime * 0.9) - 0.5) * 1.6;
+      q = vec2(s * 2.0, vMisc.y);
+    } else {
+      q = vec2(0.0, vMisc.y);
+    }
+    float r = length(q);
+    float rim = smoothstep(0.55, 0.7, r);
+    c = mix(c, vec3(0.02, 0.04, 0.03), rim);
+    a *= 1.0 - smoothstep(0.88, 1.0, r);
+    a = max(a, 0.0) * mix(1.0, 0.85, rim);
   } else {
     float r = length(vMisc.xy);
     a *= 1.0 - smoothstep(0.7, 1.0, r);
@@ -931,6 +947,10 @@ void main() {
 }`;
 
 // ---------------------------------------------------------------- green-read overlay
+// Steepness bands (percent grade: green < 1, yellow < 2.5, orange < 4, red; putting-aid.js
+// SLOPE_COLORS), contour lines every 5 cm of height (bold every 20 cm; the line width comes from the
+// slope, so no derivatives are needed on WebGL1) and, with uChevrons, bold rimmed arrows flowing
+// downhill on a 2.5 m grid. uAlpha scales it all (the putt view shows it faintly).
 export const READ_VS = `
 attribute vec3 aPos;     // relative to green centre (xy), absolute z
 attribute vec3 aGrad;    // dz/dx, dz/dy, edge mask
@@ -940,10 +960,12 @@ uniform vec2 uCenter;
 varying vec2 vWorld;
 varying vec3 vGrad;
 varying vec3 vRel;
+varying float vZ;
 void main() {
   vRel = aPos + uOff;
   vWorld = aPos.xy + uCenter;
   vGrad = aGrad;
+  vZ = aPos.z;
   gl_Position = uVP * vec4(vRel, 1.0);
 }`;
 
@@ -955,12 +977,13 @@ uniform float uAlpha;
 varying vec2 vWorld;
 varying vec3 vGrad;
 varying vec3 vRel;
+varying float vZ;
 
-// Slope colour ramp (percent grade): flat blue -> green -> yellow -> red.
+// Steepness bands with a short blend at each edge.
 vec3 slopeCol(float s) {
-  vec3 c = mix(vec3(0.2, 0.45, 1.0), vec3(0.2, 0.95, 0.5), smoothstep(0.5, 1.5, s));
-  c = mix(c, vec3(1.0, 0.9, 0.15), smoothstep(1.5, 2.6, s));
-  return mix(c, vec3(1.0, 0.25, 0.15), smoothstep(2.6, 4.0, s));
+  vec3 c = mix(vec3(0.24, 0.86, 0.52), vec3(1.0, 0.82, 0.25), smoothstep(0.85, 1.15, s));
+  c = mix(c, vec3(1.0, 0.6, 0.24), smoothstep(2.3, 2.7, s));
+  return mix(c, vec3(1.0, 0.3, 0.3), smoothstep(3.8, 4.2, s));
 }
 
 void main() {
@@ -968,30 +991,83 @@ void main() {
   if (mask <= 0.0) discard;
   float dist = length(vRel);
   vec2 g = vGrad.xy;
+  float glen = max(length(g), 0.0015);
   float s = length(g) * 100.0;
-  // 1 m grid lines, widened with distance so they never alias away.
-  vec2 f = abs(fract(vWorld) - 0.5);
-  float lw = 0.007 + dist * 0.0009;
-  float line = 1.0 - smoothstep(lw, lw * 2.0, 0.5 - max(f.x, f.y));
   vec3 c = slopeCol(s);
-  float a = 0.12 + 0.45 * line;
-  // Chevrons flowing downhill, faster on steeper ground.
-  if (uChevrons > 0.5 && s > 0.4) {
+  float a = 0.2;
+  // Contours: horizontal distance (m) to the nearest 5 cm level = height offset / slope.
+  float lw = 0.012 + dist * 0.0012;
+  float h5 = abs(fract(vZ / 0.05 + 0.5) - 0.5) * 0.05 / glen;
+  float h20 = abs(fract(vZ / 0.2 + 0.5) - 0.5) * 0.2 / glen;
+  float cont = max((1.0 - smoothstep(lw, lw * 2.0, h5)) * 0.55, 1.0 - smoothstep(lw * 1.6, lw * 3.0, h20));
+  c = mix(c, vec3(1.0), cont * 0.55);
+  a = max(a, cont * 0.6);
+  // Arrows flowing downhill, faster on steeper ground: a dark-rimmed white V head on a stem.
+  if (uChevrons > 0.5 && s > 0.35) {
     vec2 dn = -g / length(g);
-    vec2 q = fract(vWorld / 1.5) - 0.5;       // 1.5 m cells
+    vec2 q = fract(vWorld / 2.5) - 0.5;       // 2.5 m cells, in cell units
     float al = dot(q, dn);
     float ac = dot(q, vec2(-dn.y, dn.x));
-    al = fract(al + 0.5 - uTime * (0.15 + s * 0.08)) - 0.5;
-    // An arrow: a V head pointing downhill on a short stem, so the direction reads in a still
-    // frame and in perspective (a bare V looks like a tick from a low angle).
-    float head = 1.0 - smoothstep(0.025, 0.05, abs(al + abs(ac) * 0.9 - 0.05));
-    head *= 1.0 - smoothstep(0.14, 0.18, abs(ac));
-    float stem = (1.0 - smoothstep(0.018, 0.035, abs(ac))) * step(-0.34, al) * step(al, 0.04);
-    float chev = max(head, stem);
-    c = mix(c, vec3(1.0), chev * 0.8);
-    a = max(a, chev * 0.85);
+    al = fract(al + 0.5 - uTime * (0.08 + s * 0.04)) - 0.5;
+    float hd = abs(al + abs(ac) * 0.9 - 0.08);
+    float wHead = step(abs(ac), 0.17);
+    float stemD = abs(ac);
+    float onStem = step(-0.3, al) * step(al, 0.06);
+    float head = (1.0 - smoothstep(0.03, 0.045, hd)) * wHead;
+    float stem = (1.0 - smoothstep(0.02, 0.032, stemD)) * onStem;
+    float rimH = (1.0 - smoothstep(0.055, 0.07, hd)) * step(abs(ac), 0.19);
+    float rimS = (1.0 - smoothstep(0.04, 0.052, stemD)) * step(-0.32, al) * step(al, 0.08);
+    float body = max(head, stem);
+    float rim = max(rimH, rimS);
+    float fadeIn = smoothstep(0.35, 0.8, s);
+    c = mix(c, vec3(0.03, 0.05, 0.04), rim * (1.0 - body) * fadeIn);
+    c = mix(c, vec3(1.0), body * fadeIn);
+    a = max(a, max(body, rim * 0.7) * 0.95 * fadeIn);
   }
   gl_FragColor = vec4(c, a * mask * uAlpha);
+}`;
+
+// ---------------------------------------------------------------- flowing slope streaks
+// green-flow.js FlowParticles.writeQuads: aPos camera-relative, aUV = (u 0 tail..1 head, v -1..1),
+// aMisc = (slope %, alpha). A tapered streak: white head, a tail in the steepness band's colour, a
+// dark halo so it reads on every theme's green. uAlpha scales it.
+export const FLOW_VS = `
+attribute vec3 aPos;
+attribute vec2 aUV;
+attribute vec2 aMisc;
+uniform mat4 uVP;
+varying vec2 vUV;
+varying vec2 vMisc;
+void main() {
+  vUV = aUV;
+  vMisc = aMisc;
+  gl_Position = uVP * vec4(aPos, 1.0);
+}`;
+
+export const FLOW_FS = `
+precision highp float;
+uniform float uAlpha;
+varying vec2 vUV;
+varying vec2 vMisc;
+vec3 band(float s) {
+  if (s < 1.0) return vec3(0.3, 0.95, 0.55);
+  if (s < 2.5) return vec3(1.0, 0.86, 0.3);
+  if (s < 4.0) return vec3(1.0, 0.62, 0.26);
+  return vec3(1.0, 0.33, 0.33);
+}
+void main() {
+  float u = vUV.x;
+  float w = mix(0.35, 1.0, u);              // tapers toward the tail
+  float e = abs(vUV.y) / w;
+  float core = 1.0 - smoothstep(0.42, 0.62, e);
+  float halo = 1.0 - smoothstep(0.75, 1.0, e);
+  // Round head: fade the last few percent so it is not a hard edge.
+  float tip = 1.0 - smoothstep(0.9, 1.0, u) * smoothstep(0.2, 1.0, e);
+  vec3 col = mix(band(vMisc.x), vec3(1.0), smoothstep(0.65, 0.95, u));
+  vec3 c = mix(vec3(0.02, 0.05, 0.03), col, core);
+  float a = max(core, halo * 0.55) * (0.15 + 0.85 * u) * tip * vMisc.y * uAlpha;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(c, a);
 }`;
 
 // ---------------------------------------------------------------- golfer (rigid skinning)

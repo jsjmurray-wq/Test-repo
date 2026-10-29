@@ -1690,7 +1690,8 @@ field (`&skin=5&hair=curly...`): the golfer on Hollow Pines' first tee (`?course
 scripted swing (address 0.4 s, backswing, strike, impact at about 1.7 s); `window.__golfer.set({...})` re-poses
 without a reload. Reviewed with Playwright (iPhone 393×852 and 852×393 at 3×, SwiftShader) through the ten key
 positions and frame-by-frame swings for driver, 7-iron, wedge and putter, down the line and face on, every preset,
-a left-hander, bump & run, punch, flop, Compact and Big finish.
+a left-hander, bump & run, punch, flop, Compact and Big finish. `node tests/visual/golfer-shots.mjs [outDir]`
+renders a 4 × 4 landscape sheet (eight positions down the line and face on) per club and look.
 
 `tests/golfer.test.js` (15 tests): skeleton invariants; `normalizeLook` on garbage; presets; club specs; mesh
 budgets, index ranges, bone ids, unit normals for every option; no NaN in any key pose; the club head within 2 cm
@@ -1700,6 +1701,10 @@ ground on flat and 10% slopes (up, down, side) at address, top and impact; terra
 monotonicity (above); onImpact exactly once at the returned time (live and automatic backswings, every style;
 downswing 0.22–0.32 s); cancel and reset; rigid, mirrored skin matrices and unit local quaternions; no
 allocation in `update` (sampling heap profiler).
+
+**Results:** `npm test` 328/328; ESLint clean; e2e 681/684 checks: everything passes except the three tap-meter
+timing checks on the foldable's `dist/golf.html`, a SwiftShader load flake that also fails on the build before this
+stage (the golfer is not drawn in the game yet).
 
 **Known gaps**: the game does not show the golfer yet (customiser, camera and strike wiring are the next stage);
 faces are deliberately simple (no texture maps); rigid skinning shows soft creases at the knees and wrists in

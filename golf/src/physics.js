@@ -629,7 +629,9 @@ export function simulateShot(terrain, launch, opts = {}) {
   const maxT = opts.maxT ?? MAX_SHOT_T;
   const record = opts.record !== false;
   const rng = mulberry32(opts.seed ?? 1);
-  const cup = terrain.cup || null;
+  // opts.cup: the hole to play to (default terrain.cup; null = covered, the ball rolls over it: the
+  // caddie's putt read measures pace and line with it).
+  const cup = opts.cup !== undefined ? opts.cup : terrain.cup || null;
   const pinOn = opts.pin ?? launch.mode !== 'roll';
   const hasTrees = !!(terrain.treesNear && terrain.trees && terrain.trees.length);
   const surfTab = surfaceTable(terrain);
