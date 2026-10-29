@@ -61,11 +61,13 @@ metres). Wind shows in mph (or km/h).
 | `rules.js` | `resolveShot(ctx, shot) -> Resolution`, `waterRelief(...)`, `scoreName(strokes, par)`, `maxStrokes(par) = 2*par` |
 | `scoring.js` | `newCard(course)`, `recordHole(card, i, {strokes, putts, penalties, fir, gir})`, `totals(card)` (with `out` / `in` nines, §8.8) |
 | `game.js` | `Game` state machine, plus `serialize()` and `static restore()` |
-| `bot.js` | `planShot(game) -> {clubId, yaw, swing, puttRange?}`, `playBotShot(game)`, `botDecide(game)`: a simulated "decent player" used by `?autoplay` and the playability tests |
-| `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
+| `bot.js` | `planShot(game) -> {clubId, yaw, swing, puttRange?}`, `playBotShot(game)`, `prepareBotShot(game)` (§9.7), `botDecide(game)`: a simulated "decent player" used by `?autoplay` and the playability tests |
+| `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths); `golferFraming` (TV framing with the golfer, §9.7) |
 | `meshes.js` | Geometry builders that return typed arrays; themed objects and the sea (`seaSetup`, §8.3 as built) |
 | `bake.js` | `bakeTerrainColor(terrain, {theme})`, `bakeWaterDepth(terrain)`, `bakeClouds(seed)`, `bakeNoise(seed)` |
-| `golfer.js` | The golfer: skeleton (`BONES`, `B`, `BONE_PARENT`), the LOOK (`DEFAULT_LOOK`, `normalizeLook`, `PRESETS`, `randomLook`, palettes), proportions (`bodyDims`) and club specs (`clubSpec`) (§9) |
+| `putting-aid.js` | Green reading (§8.9): `previewPutt`, `previewShot`, `PuttReader` / `readPutt`, `readText`, `puttNotchPower`, `rangeForRead`, `visibleEnd`, `drapePath`, `PreviewThrottle`, `aidLevel`, `slopeAt`, `slopeBand`, `SLOPE_COLORS` |
+| `green-flow.js` | Flowing slope streaks (§8.9): `slopeField`, `sampleSlope`, `FlowParticles`, `flowIndices` |
+| `golfer.js` | The golfer: skeleton (`BONES`, `B`, `BONE_PARENT`), the LOOK (`DEFAULT_LOOK`, `normalizeLook`, `PRESETS`, `randomLook`, palettes), proportions (`bodyDims`) and club specs (`clubSpec`) (§9); the player's saved look `loadLook`/`saveLook` (§9.7) |
 | `golfer-mesh.js` | `buildGolferMesh(look, club)`: one rigidly skinned mesh (§9) |
 | `swing-anim.js` | Poses, FK/IK, `placeGolfer`, `SwingAnimator`: the visible swing (§9) |
 
@@ -194,7 +196,7 @@ Use `terrain.treesNear(x, y, r)` to find them.
 ### `simulateShot` (instant, headless, deterministic)
 
 ```js
-simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, record = true}) -> {
+simulateShot(terrain, launch, {wind = {x:0,y:0}, seed = 1, maxT = MAX_SHOT_T, record = true, cup = terrain.cup}) -> {
   path: Float32Array,  // [t,x,y,z]* at RECORD_HZ, for playback, trail and camera
   events: [{type:'launch'|'land'|'bounce'|'tree'|'lipout'|'cup'|'water'|'rest'|'pin', t, x,y,z, surface, v}],
                        // 'tree' events also carry obj: the object's kind ('pine', 'rock', 'gorse', ...)
@@ -1487,14 +1489,124 @@ The fixed courses stay at nine holes.
   runs shared the CPU); soak `mixed18` on `index.html`: 18 holes in 238 s, peak 16 draw calls, no errors. `dist/` is
   rebuilt by the release step (until then its runs skip Mixed Eighteen).
 
+### 8.9 Easier green reading (as built)
+
+The user asked to make greens much easier to read. Five parts: a putt preview line, the caddie's read with "Aim at
+read", a clearer slope display, read cameras and a chip preview.
+
+**Preview = the real putt.** A putt is deterministic: `swingToLaunch(putter, lie, {power}, aimYaw, rng = null,
+{pos, puttRange})` then `simulateShot(terrain, launch, {wind, seed})` (on a green the seed only feeds bushes and stones).
+`previewPutt(terrain, {ball, lie, aimYaw, power, puttRange, wind, seed = 1, cup?})` does exactly that, so with
+`game.lie` (its `puttSurf` carries the hole's course green speed, also on a Mixed hole), `game.wind` and the live
+`game.terrain` it is the putt Game#swing plays minus the contact scatter. Returns `{path, final, holed, t, result}`.
+`previewShot(terrain, {ball, lie, clubId, aimYaw, power, wind, shot, handed, seed})` is the same for a chip or pitch
+(`{path, landing, landIndex, final, holed}`). `physics.simulateShot` gained `opts.cup` (default `terrain.cup`; `null`
+covers the hole); the default path is unchanged bit for bit.
+
+**The caddie's read** (`PuttReader(terrain, ball, {lie, wind, past = 0.4, maxIter = 12})`, one simulation per
+`step()`; `readPutt` runs it to the end). Unknowns: the aim (as metres across at the hole, yaw·d) and the flat-roll pace
+F; errors: the miss along the hole line (`crossAt`: where the path crosses the line through the cup square to the
+ball → cup chord, + = right) and the pace error (path length past that line, or minus the distance short), measured
+with the cup covered so a putt that would drop still shows its pace. Broyden's method from the flat-green Jacobian
+(rank-one updates, steps clamped, a step worse than twice the best is halved back), stopping at |miss| / 12 mm +
+|pace − 0.4| / 50 mm ≤ 1.2; the best line is then checked with the real cup, and if it does not drop a ring of
+±0.5°/1°/2° × F ±4% is tried. Result `{aimYaw, F, holed, path, past, breakLat (largest bulge of the line from the chord,
++ = right: breaks right to left), aimOffset (m across at the hole, + = right), dz (cup − ball ground), plays (F − past),
+slopeBall, slopeCup ({pct, downYaw}), d, sims}`. When built: 145/145 sampled putts on all four courses holed, 2–18 m,
+4.3 simulations on average (at most 6), at most 37 ms per read in node; 9 m putts on 3–3.5% synthetic planes in ≤ 14.
+
+**Words** (`readText(read, units, {showAim})` → `{breakText, slopeText, playsText, aimText, line1, line2}`): "Breaks ~4
+in L→R" ("Straight" under 3 cm), "Uphill 8 in" / "Downhill 5 cm" / "Level" (under 1.5 cm), "Plays 21 ft" / "Plays 6.4
+m", "Aim 2 cups right" (one cup = 108 mm, in halves; "Aim at the hole" under a quarter; beyond six cups in ft or m).
+`line1` = "Breaks ~1 ft R→L · Uphill, plays 21 ft", `line2` = the aim. Pro (`showAim: false`): "Uphill 8 in · Plays
+21 ft" and no aim. `fmtSmall(m, units)` (in / ft with halves, cm / m), `fmtPuttLen`.
+
+**Notch and Aim at read.** `puttNotchPower(read, range)` = F / range (null above MAX_POWER); `rangeForRead(F)` = the
+first `PUTT_RANGES` entry with F / range ≤ 0.85. main.js `targetPower` uses the read's pace on Easy and Normal once
+it is in (Pro, and until then: the flat formula). "Aim at read" sets the aim to `read.aimYaw`, the putt range to
+`rangeForRead(F)` when F / range is outside 0.3–0.85, returns to the putt view and toasts "Aimed at the read · putt
+to the gold notch".
+
+**Preview line** (`aidLevel(setting, difficulty)`: setting `puttAid` 'auto' | 'full' | 'partial' | 'off', auto =
+full on Easy, partial on Normal, off on Pro). `visibleEnd(path, level)`: full → all, off → none, partial → up to the
+break apex (furthest point from the start → rest chord, if ≥ 3 cm) kept within 40–65% of the roll, else half.
+`drapePath(terrain, path, maxLen, out, {lift, minStep, from})` writes the draped points into a reused buffer.
+Live while aiming and while the putter is drawn back (the gauge power, else the notch, else the flat pace).
+`PreviewThrottle({interval: 0.15, settle: 0.08}).want(key, now)`: a new key runs at once if the last run is 0.15 s
+old, at most one run per interval while it keeps changing, one exact run once it has been still for 0.08 s, never the
+same key twice; main.js keys it on (aim / 0.25 mrad, power / 0.0005, range) as a number (no strings per frame).
+`stepAid(now)` runs once per frame at address: at most one simulation (the preview first, else one PuttReader step),
+reading for the ball's spot (reset when the ball, the hole or the terrain changes). With the full preview the old
+dashed putt line is dropped (partial keeps it as the aim direction). The line turns gold (`DROP_COLOR`) when it drops.
+
+**Rendering.** `meshes.pathRibbon(data, count, eye, out, {width, minPx, pxPerRad, ring, ringR, terrain, lift})`: a
+flat strip whose u runs in units of its own width plus a solid end ring after a degenerate join (one strip). Overlay
+`uMode` 4: round dots (1.6 widths apart, flowing toward the end) with a dark rim, readable on every theme's grass.
+`scene.paths = [{data, count, color, width, minPx, ring, ringR}]` (≤ 3; drawn after the aim line, before the flag;
+putt: 4.5 cm / 7 px, ring 8.5 cm or 11 cm at the cup when it drops; chip: 6 cm / 5 px, ring 0.5 m).
+`READ_FS` now colours by steepness bands (green < 1%, yellow < 2.5%, orange < 4%, red), draws contours every 5 cm of
+height (bold every 20 cm; width from the slope, no derivatives needed on WebGL1), and smaller dark-rimmed white arrows
+on a 3 m grid flowing downhill, faded out within 4.5 m of the camera. `green-flow.js`: `slopeField(terrain, {pad, res})`
+samples gradient, height and an on-green mask once per hole in the green's rotated frame; `FlowParticles(field,
+{count ≈ 0.6/m² up to 600, seed})` run downhill at `flowSpeed(pct)` = clamp(0.3 m/s per %, 0.03, 1.2), live 2.5–4 s
+with fades, respawn on the green, show nothing under 0.25%; `writeQuads(out, eye, {pxPerRad, minPx, width})` →
+camera-relative streak quads (0.25–0.9 m long, tail lying uphill, ≥ minPx wide, faded near the lens), allocation free
+(no closures). `FLOW_VS/FS`: a tapered streak with a white head, a band-coloured tail and a dark halo. Renderer: one
+FLOW draw (static index buffer for 600 quads), stepped on `scene.time`; `scene.read = {on, alpha, chevrons, flow,
+flowPx}` (Read: 0.85 / arrows / 1 / 4.5 px; the putt view: 0.32 / none / 0.6 / 3 px). Draw calls on the green when
+built: 12–15 (budget 30).
+
+**Read cameras** (`camera.js`): `rig.readView` 'orbit' (the default on entering Read) | 'ball' | 'hole' | 'overhead',
+`setReadView(v)`, `READ_VIEWS`; `orbit(dyaw)` in a preset view carries on as an orbit from the current eye.
+`lineFraming(aspect, {dist, dz, h, yNear, yFar})` solves the distance back (bisection, no 40 m floor) so the near
+point (ball, or cup from behind the hole) projects at yNear (−0.42 portrait, −0.5 landscape) and the far one at
+yFar (0.12 / 0.25), h = 0.75 + 0.06·d (0.8–3.2 m), raised 0.5 m at a time until the far point is in sight. Overhead:
+up = ball → cup, the height fits half the putt plus 1.4 m in the free band and the read's bulge (`ctx.lineLat`) in the
+width, looking slightly beyond the midpoint (the pair sits under the read card). Preset moves glide (lambda 4.5).
+The flagstick is hidden behind the hole (the cup marks it).
+
+**UI.** `#readcard` (under the info card; only its button takes touches; "Reading the green…" while pending;
+`ui.setReadCard(null | {pending} | {line1, line2, canAim})`, DOM writes only on change, `#hud[data-readcard]` moves
+putt toasts below it), `#read-cams` (Behind ball / Behind hole / Overhead, emits `'read-cam'` with the view; active
+`aria-pressed`; `ui.setReadCam(v)`), two `.slope-tag`s (`ui.setSlopeTags([{x, y, text, angle, band}])`: the cup's
+while lining up, the ball's and the cup's in Read, off to the side of their point, an arrow pointing downhill on
+screen, band-coloured), the settings row "Putt preview: Auto / Full / Part / Off" (`puttAid`, default 'auto', filled
+in for old settings blobs) and the How to play line.
+
+**Chip preview**: no putter, not on the green, `lie.greenDist ≤ 40`, level not off: the shot at the gauge power
+(else the notch, else full) on the real hole; the roll from touchdown to rest is drawn as dots with a ring at rest.
+
+**Golfer** (§9): `applyGolferReadRule(scene)` runs after `buildScene`: in Read `scene.golfer.visible = false`; while
+lining up a putt with a preview line its alpha is capped at 0.45 so it never covers the line.
+
+**Debug hooks** (`?test=1`): `debug.placeOnGreen(d, angleDeg)` (ball on the green d m from the cup, putter),
+`debug.aid()` (`{level, cam, camSettled, view, read: {…, text}, reading, preview, aimYaw, puttRange, targetPower,
+sims, card}`), `debug.aimAtRead()`, `debug.readCam(v)`.
+
+**Tests**: `tests/putting-aid.test.js` (17): the preview equals `simulateShot(swingToLaunch(no rng))` and Game#swing
+with the scatter zeroed (a rng returning 1 makes `gaussian` exactly 0) bit for bit on greens of every course and a
+Mixed Eighteen; the chip preview likewise; the read holes (or leaves within 0.5 m, played through Game#swing on the
+notch) ≥ 30 putts on Red Mesa (fast, Stimp 11), Kittiwake Links (slow, 9.5), Hollow Pines and Coral Cay, with ≥ 3 big
+breakers and the pace 0.4 ± 0.12 m past; one simulation per step; words and signs on tilted planes (falls left → R→L,
+aim right; mirror; straight; uphill plays longer; level), handedness has no effect, Pro text; units; notch and
+range; slope bands; `visibleEnd`; `drapePath`; `passAt` / `crossAt`; steep 9 m breakers; the throttle.
+`tests/green-flow.test.js` (4): field, downhill and faster on steeper ground, staying on the green, flat shows
+nothing, quads. `tests/camera.test.js`: each read view frames ball and cup in front of the camera in portrait and
+landscape at 2, 7 and 16 m (eye above the ground, ball/cup order, overhead high with the line up the screen), and
+the orbit hand-over. `tests/meshes.test.js`: `pathRibbon`. e2e `greenReading` (after `mixed18Round`, on the 11th–13th
+of the Mixed Eighteen): the read card text and its place clear of the HUD and the pad, the preview line, Read, each
+camera framing ball and cup (once it has settled) within 30 draw calls, Aim at read giving a preview that drops, a
+touch putt on the notch that holes or stops within 0.5 m, the settings row and Off removing the line; shots
+`putt-preview`, `read-flow`, `read-behind-hole`, `aimed-at-read`.
+
 ## 9. Golfer (as built)
 
 The user request: "Change the game so you can actually see the golfer hit the shot and you can select what he
 looks like." This stage builds the character: a realistic, smooth low-poly golfer (console-golf style, not a
 cartoon) with a customisable look, a rigidly skinned mesh, a real golf swing driven by the game's swing input,
-and a skinned render pass with a ground shadow. The game wiring (customiser screen, the TV camera behind the
-golfer, calling `strike` from a swipe) is the next stage; `tests/visual/golfer-preview.html` shows the
-character on a real tee. Physics is untouched: the animation is looks only.
+and a skinned render pass with a ground shadow. §9.7 puts him in the game (every address, the swing driven by
+the swipe, the ball launched at his impact frame, the TV camera behind him); `tests/visual/golfer-preview.html`
+shows the character on a real tee. Physics is untouched: the animation is looks only.
 
 Files: `src/golfer.js` (skeleton, look, proportions, clubs), `src/golfer-mesh.js` (mesh), `src/swing-anim.js`
 (poses, IK, placement, animator), the golfer programs in `src/shaders.js` and the pass in `src/render.js`.
@@ -1706,6 +1818,187 @@ allocation in `update` (sampling heap profiler).
 timing checks on the foldable's `dist/golf.html`, a SwiftShader load flake that also fails on the build before this
 stage (the golfer is not drawn in the game yet).
 
-**Known gaps**: the game does not show the golfer yet (customiser, camera and strike wiring are the next stage);
-faces are deliberately simple (no texture maps); rigid skinning shows soft creases at the knees and wrists in
-extreme poses; long hair does not collide with the shoulders; the club does not flex.
+**Known gaps**: (the game showing the golfer: §9.7) faces are deliberately simple (no texture maps); rigid
+skinning shows soft creases at the knees and wrists in extreme poses; long hair does not collide with the
+shoulders; the club does not flex.
+
+### 9.7 In play (as built)
+
+The golfer hits every shot. `main.js` (section "the golfer") owns one `SwingAnimator` and drives it from the game
+and the swing input; `camera.js` frames him TV style; `bot.js` lets the bot swing through him.
+
+**The saved look** (`golfer.js`): `LOOK_KEY = 'golf.golfer.v1'`, `loadLook(storage = localStorage) -> look`
+(normalised; `DEFAULT_LOOK` when nothing valid is stored), `saveLook(look, storage = localStorage) -> look`
+(normalised, stored as JSON). Storage may be missing or throw: the latest look saved in this session is kept in
+memory and wins over the stored copy, and a failed write removes the stale stored copy. Pure apart from reading
+`globalThis.localStorage` inside try/catch (tests pass their own storage or `null`). `main.js` loads it at boot;
+**`applyGolferLook(look) -> look`** (a function in main.js, also `app.applyGolferLook`) is the customiser's hook:
+it strikes a swing still on its way down, normalises the look, drops the cached meshes, `anim.setLook(look)`
+(proportions and swing style) and re-places him at the ball. Saving is the caller's (`saveLook`).
+
+**Placement** (`placeGolferNow(g, force)`): at address (and no swing pending) he is placed with `anim.place({ball:
+game.ballPos(), aimYaw, terrain, handed: settings.handed, club, shot})` whenever the key (ball, aim to 1e-4 rad,
+club, shot, hand, look) changes: forced on entering address (before the camera frames him; a new spot is always a
+hard cut), on a club change and on a shot pick; otherwise checked once per frame and at most every
+`PLACE_EVERY` = 0.03 s of game time (an aim drag; a placement costs 1–4 ms). A tap meter running while the aim
+moves keeps its backswing. His stance centre relative to the ball (`golfer.frame = {lat, along, H}`: + = left of
+the aim line / toward the target) goes to the camera as `ctx.golfer`. Meshes: `buildGolferMesh(look, club)` per
+look and club, kept in a 6-entry LRU (10–30 ms to build; the renderer gets `scene.golfer.mesh`).
+
+**Gesture sync.** The live gauge (`showPower`: the swipe's `onSwingProgress` and the tap meter alike, after the
+Easy snap) calls `anim.setBackswing(power)`; a cancelled swipe (`interpretSwing` not ok, `onSwingCancel`), an
+abandoned meter, a view change, the shot sheet and pause call `anim.cancel()` (eases back to address). A
+recognised strike (`strike(g, sw)`: swipe, tap meter or bot) sets `golfer.pending = {g, sw, t, tImpact, whoosh}`
+and calls `anim.strike({power, kind, shot, onImpact})`: from a live backswing the downswing starts at once
+(`tImpact` = 0.235–0.315 s by style; putts 0.31–0.37 s), else an automatic backswing first (tap meter left low,
+bot). **The ball is launched by `onImpact`** (`launchSwing`: `game.swing(sw)` on the frame that draws the exact
+impact pose, the club head on the ball; `golfer.last.headErr` measures it). The whoosh starts `WHOOSH_LEAD` = 0.16
+s before impact so it peaks there; the impact sound comes from the launch event as before. Putts use the putting
+stroke; special shots their variants (stinger and punch held off with a shorter backswing, flop, bump & run).
+The swing style is the look's.
+
+**Races.** While a swing is pending: `updateInputMode` gives `'disabled'` (a second swipe or tap does nothing), the
+club, shot, view, aim, Map-tap and putt-range handlers return, and `syncControls` passes `phase: 'swing'` (the pad
+and pickers are hidden). `flushSwing()` runs the animation on to its impact frame at once (so the launch still
+comes from `onImpact`, exactly once) and is called by pause, quit, `visibilitychange` (hidden) and `pagehide`
+(before the save), a settings change and `applyGolferLook`. A watchdog launches a swing whose impact frame has not
+come `IMPACT_GRACE` = 0.5 s after it was due (never seen). A new round, resume or quit drops a pending swing of the
+old round (`bindGame` / `unbindGame`); `launchSwing` launches only into the game and address phase it was struck
+in. Resize and rotation need nothing (the camera reframes; the animation goes on). `golfer.count` tallies launches
+by how (`impact`, `flush`, `watchdog`, `direct`).
+
+**Animation clock.** `updateGolfer(sdt)` runs after `game.update` with the game time (`?fast` scales it like the
+rest of the game), in steps of at most 0.1 s, stopping on the impact frame so it is drawn (with the ball still at
+the club: the flight starts on the next frame).
+
+**Visibility** (`golferShown`): at address in the play view (Read, Map and the flyover hide him; the green-reading
+stage additionally makes him see-through while a putt preview line is drawn, `applyGolferReadRule`), during the
+flight (he holds his finish where he struck it) and while the ball is holed; never in relief, scorecard or menus.
+`#hud[data-golfer]` = `R` | `L` while he stands at the ball: in portrait the idle pad hint drops to the bottom of
+the pad (under his feet), in landscape a right-hander's live readout moves further left (style.css).
+
+**Cameras** (`camera.js`). `golferFraming(aspect, {dist, dz, lat, along, H, putt}) -> {back, h, pitch, yBall,
+yTarget, dist, F, golferX, shift, below}` and `GOLFER_FRAME` (portrait / landscape constants): the camera stands on
+the target line behind the ball, `F` = max(|lat| / ((xWant + ballMax)·T·aspect), (H + 0.4) / (hWant·T), 2.6) m from
+the golfer, so his whole figure with the club above his head fits within `hWant` of the screen height (0.74
+portrait, 0.84 landscape) and golfer and ball fit side by side. Portrait adds a lens shift (`shift`, the ball's NDC
+x, up to 0.32 toward the ball's side) so he sits about 0.48 NDC to his side (left third for a right-hander, right
+third for a left-hander) with the ball still in the swing arc; landscape keeps the pad shift (the ball at the pad
+centre, NDC x 0.6) and he stands beside it. Then the eye height is solved (bisection, within 1.45–3.6 m portrait,
+1.25–3.2 m landscape) for the ball at NDC y −0.6 / −0.45 and the target (`ctx.carry` down the line, ≤ cup + 10 m)
+at +0.15 / +0.3. Putts: h = 1.35 + 0.05·d (≤ 2.6 m), the ball at −0.55 / −0.45. `CameraRig` uses it for `address`
+and `putt` whenever `ctx.golfer` is set (`_golferGoal`: the eye ≥ 1 m, putts 0.3 m, above the ground behind the
+ball with the pitch re-solved for the height it ends at; a ridge hiding the target lifts it 0.75 m at a time;
+`rig.framing.golfer` = true); without it the version 1 framing is unchanged (tests). Measured: driver 4.4 m back,
+2.8 m up (portrait), 7.4 m and 2.2 m (landscape); irons 3.9 m; putts 3.9 m and 1.35–2.6 m. **Flight**
+(`FLIGHT_HOLD` = 0.6 s): with `ctx.golfer`, the TV shot first holds the address eye, target and lens shift for 0.6 s
+of the shot clock (his follow-through and the ball leaving), then pans with the ball from the same spot, rising
+0.7 m/s, until 2.2 s or 85 m (then the chase and landing cameras as before). Putts keep the putt framing for the
+roll. Read / map / flyover / relief are unchanged (he is hidden there).
+
+**Bot** (`bot.js`): `prepareBotShot(game, opts) -> plan` plans and sets club, aim, shot and putt range without
+swinging (`playBotShot` = `prepareBotShot` + `game.swing`, unchanged for the tests). `?autoplay` prepares, places
+the golfer and strikes through `strike()` (an automatic backswing, then the launch at impact).
+
+**Test hooks** (`?test=1`): `app.debug.golferState()` → `{shown, drawn, state, u, power, club, shot, handed, style,
+kind, placed, frame, pending, tImpact, last: {how, strikeAt, launchAt, tImpact, kind, headErr, state}, clock, look,
+chest, pelvis, head (world + screen px), mirror, framing}`, `app.debug.clubHead()` → `{x, y, z, sx, sy, ball,
+dist}`, `hideGolfer(on)`, `freeze(on)` (stops the game and animation clock; frames still draw) and
+`freezeAtImpact = true` (freezes on the next impact frame, for screenshots).
+
+**Tests.** `tests/golfer-play.test.js`: `golferFraming` for portrait, landscape and square, both hands; the
+address and putt cameras with the golfer for D, 7i, SW and the putter, both hands, both orientations: on the
+target line, the ball in the arc, the target above it, every bone and the club head on screen and more than 2 m
+from the eye at address, top, impact and finish, his body on his side of the target line, his chest in his third
+(portrait); the flight hold (eye and lens shift fixed for 0.6 s, then tracking the ball) and no hold without a
+golfer; `loadLook`/`saveLook` with working, throwing and no storage; `prepareBotShot`. e2e (`golferPlay`, also
+`node tests/e2e.spec.mjs --golfer`): at address (placed, drawn, the club, his side of the ball, club head soled,
+his draw calls with and without him, his silhouette's pixel against the background), a held swipe (the
+backswing follows the live power; the ball leaves at the impact frame `tImpact` after the strike with the club
+head on the ball; one stroke; follow-through in flight; placed at the next spot), a cancel, the races (a swing
+frozen before impact: pending, input off, a second swipe ignored, pause strikes it once, still one stroke after),
+a left-hander (mirrored, right of the ball), a putt (putter, putting stroke, rolls at impact); `golferAt` on Red
+Mesa, Coral Cay and Kittiwake Links; the soak checks every bot shot was launched at impact.
+
+### 9.8 Customiser (`customiser.js`, as built)
+
+The second half of the user request, "you can select what he looks like": a full-screen **Golfer** screen,
+like a console game's character creator, with the real golfer in 3D on a tee of the selected course.
+
+- **Entry.** The main menu's "Your golfer" card (`#menu [data-act="golfer"]`, above New round: his bust, the
+  preset name or "Custom golfer", the swing style; "Customise ›") and the pause sheet's **Golfer** button
+  (`#pause [data-act="golfer"]`). ui.js emits `'golfer'`; main opens it (`from: 'menu' | 'pause'`).
+- **Screen** (`#customiser`, z 16): a see-through stage over the game canvas and a control panel. Portrait and
+  square: the stage on top, the panel a bottom sheet (52% of the height); landscape: the stage on the left, the
+  panel on the right (`min(480px, 56vw)`); safe areas everywhere. While it is open `body[data-customiser="1"]`
+  hides `#menu`, `#hud`, `#pause`, `#settings`, `#howto` and `#shots` without touching their `hidden`
+  attributes, so main's menu / paused state (and the disabled input) carry on underneath, and Escape is the
+  customiser's (ui.js leaves it alone).
+- **Stage:** the kicker (swing style · height), the title (a preset's name when the look is exactly one, else
+  "Custom golfer"), a face / full-body zoom toggle, turn left / right buttons and **Try swing**. Drag turns him
+  (with inertia), a vertical drag tilts the view, pinch or the wheel zooms, a double tap toggles face / full
+  body, arrow keys turn him (the stage is focusable). Each tab eases the camera to its own framing (Body and
+  Clothes: full body, three-quarter views from either side; Hair & Face: the face; Swing: wider, face on).
+- **Panel:** a presets row (Random, then the eight `PRESETS` as pills with a little bust; the matching one is
+  ringed), the tabs (WAI-ARIA tabs, arrow keys) and a footer with **Cancel** and **Done**.
+  - Body: figure (male / female), 8 skin-tone swatches, a height slider (155–200 cm, "180 cm · 5′11″"), a
+    stepped build slider with labelled stops (slim / regular / athletic / heavy).
+  - Hair & Face: 7 hairstyles, 10 hair colours, facial hair (male figures only), sunglasses.
+  - Clothes: headwear (and its colour when there is one), shirt style and colour, the second colour where the
+    shirt has one ("Stripe colour", "Polo underneath"), trousers or shorts and their colour, shoes, glove
+    (20 cloth colours; swatch rows scroll sideways with a fade at the edge).
+  - Swing: four style cards with the hands' path drawn (Classic, Compact, Big finish, Smooth; picking one
+    plays a swing), the preview club (Driver, 7 Iron, Wedge, Putter), Try swing and "looks only" (physics is
+    unchanged).
+  - Controls are `role="radio"` buttons in labelled `radiogroup`s (`aria-checked`), sliders carry
+    `aria-valuetext`; 40–42 px targets.
+- **The look:** `cz.set(partial)` normalises (`normalizeLook`), refreshes every control and calls
+  `onChange(look, key)`; a slider drag calls it at most every `SLIDER_MS` (110 ms, trailing, flushed on release
+  and on Done). **Done** saves through `golfer.js` `saveLook` (`golf.golfer.v1`; a failed write keeps the look in
+  memory for the session and removes the stale stored copy), refreshes the busts (`renderAvatars`) and calls
+  `onDone(look)`: main hands it to `app.applyGolferLook` (§9.7), which rebuilds the golfer in the game at once.
+  **Cancel** (or Escape) saves and applies nothing. The screen opens on `loadLook()`.
+
+```js
+const cz = new Customiser(root = document, {onChange(look, key), onClub(id), onTry(), onDone(look), onCancel(look),
+                                            onOpen(), onClose()})
+cz.open(look = loadLook(), {from}); cz.close(); cz.done(); cz.cancel(); cz.isOpen; cz.from
+cz.look; cz.saved; cz.club; cz.tab; cz.set(partial, {live}); cz.applyPreset(id); cz.randomise(rng); cz.setClub(id)
+cz.setTab(id); cz.zoomTo(z); cz.turn(dyaw); cz.setSwinging(on)
+cz.view = {yaw, zoom, pitch}; cz.stepView(dt) -> view   // eased, allocation-free; zoom -0.4 wide, 0 body, 1 face
+cz.frameRect = {x, y, w, h}                              // CSS px, cached (open, resize, ResizeObserver)
+avatarSVG(look) -> '<svg viewBox="0 0 48 48">'; lookSummary(look) -> {title, sub, preset}
+renderAvatars(root, look)   // [data-golfer-avatar], [data-golfer-name], [data-golfer-sub]
+PREVIEW_CLUBS, TABS, SLIDER_MS
+```
+
+- **Studio** (the clearly marked customiser section of main.js; hooks: `initCustomiser()` in boot and
+  `studioFrame()` at the top of `render()`): while the screen is open the frame draws the studio instead of the
+  game or the menu backdrop, on the same canvas and Renderer (no second WebGL context). The golfer stands at
+  address on the tee of the hole on the renderer (`app.holeTerrain`: the menu's course backdrop, or the hole in
+  play), facing its aim point, with the preview club and the player's hand; meshes are kept per look and club
+  (8), and the rig is re-fitted (about 0.5 ms) only when the figure, height, build or club change. The camera
+  is framed in `cz.frameRect` with its own vertical field of view (2 × 14° inside the frame: `fovY = 2 atan(tan
+  14° · canvas height / frame height)`) and a lens shift onto it: `cam.shiftX` and the new **`cam.shiftY`** (NDC,
+  + up; render.js `proj[9]`, used by `project` and `pickTerrain` too). Distance: (0.6 H + 0.1) / tan 14° for the
+  full body to 0.3 / tan 14° for the face (interpolated in log space), the eye a little above the figure's middle
+  or at face height, never under the ground. A key light follows the camera (`scene.sunDir` from beside and
+  above it), so the face is lit from every side; the shadow follows it. In the face close-up at address he lifts
+  his head to look at the camera (swing-anim.js aims the head at `rig.ballG`, which nothing else reads at run
+  time: main blends it toward the camera in his frame and restores it for a swing and every placement). Try
+  swing: `strike({power: 1 (putter 0.5), style})` with an automatic backswing, the whoosh 0.16 s before
+  impact, the strike sound and the ball gone at the impact frame, the finish held 1.3 s, then `cancel()` eases
+  him back to address and the ball is teed again. Closing draws the paused game once more (or the menu
+  backdrop). The studio frame allocates nothing (reused scene, camera and vectors).
+- **Tests:** `tests/customiser.test.js` (4): the bust's markup for every option and 40 random looks (no NaN,
+  balanced tags, the look's colours), `lookSummary` names, preview clubs and tabs, a Customiser without its
+  markup is inert. e2e `golferCustomiser` (each viewport, after the rest of the UI flow; `--customiser` runs only
+  it): open from the menu (layout: preview and panel apart, every button on screen, no sideways scroll, the
+  menu hidden, the golfer framed at address); female figure, a skin tone and a slider drag to 166 cm on the
+  preview; curly hair with the camera at the face; a drag turns him, a double tap zooms back out; a red cap and a
+  striped polo (its "Stripe colour" row appears); Big finish plays a swing; Try swing strikes the ball and
+  returns to address; Done saves `golf.golfer.v1`, a new round's golfer wears it (`app.debug.golferLook()` and
+  the in-game mesh key); from the pause sheet a change then Cancel leaves the saved and in-game looks alone;
+  reload keeps the look; Escape cancels; a preset is saved and named on the menu; with `setItem` failing for
+  `golf.golfer.v1`, Done keeps the look in memory and nothing throws. `app.debug.studio()` →
+  `{open, look, club, meshKey, state, swing, ballOut, frame, shift}`.

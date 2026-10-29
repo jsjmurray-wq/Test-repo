@@ -32,12 +32,32 @@
 // gauge, target notch and aim preview follow it: a draw or cut shows its curved flight draped on
 // the ground (gold) ending in the landing ring, and the toast names the shot ("7i Stinger · ...").
 //
+// Green reading (section 8.9): on the green a dotted preview line shows where the putt at the
+// current aim and power rolls (the error-free putt on the live hole: all of it on Easy, the first
+// part on Normal, none on Pro, or the 'Putt preview' setting), at most one simulation per frame
+// through putting-aid's PreviewThrottle, while the caddie's read (PuttReader, one simulation per
+// frame) fills the read card ("Breaks ~1 ft R→L · Uphill, plays 21 ft / Aim 2 cups right") and
+// sets the putt notch to its pace; "Aim at read" snaps the aim (and a fitting putt range) to it.
+// Read adds flowing slope streaks, slope tags at the ball and the cup and three camera presets.
+// Within 40 m of the green a chip shows its roll the same way.
+//
+// The golfer (section 9.7): the player's golfer (golfer.js loadLook, golf.golfer.v1) stands at the
+// ball at every address, holding the selected club and facing the aim (re-placed when the aim,
+// club, shot or hand changes), and idles and waggles there. The backswing follows the live power
+// (swipe gauge or tap meter); a cancel eases back to address; a recognised strike plays the
+// downswing and the ball is launched (game.swing) on the animation's impact frame, 0.22-0.32 s
+// later (the whoosh peaks there, the impact sound comes with the launch). Until then the swing is
+// committed: input is off, the controls ignore taps, and pause, quit or hiding the page launch it at
+// once. The cameras frame him TV style, from behind on the target line (camera.js golferFraming),
+// and the flight camera holds on his follow-through before it follows the ball. The bot swings
+// the same way. applyGolferLook(look) rebuilds him (the customiser's hook).
+//
 // URL parameters
 //   ?course=ID    desert | water | links | pines | mixed: the course for new rounds (menu and autoplay)
 //   ?holes=18     with course=mixed: a Mixed Eighteen round (mixed18); fixed courses ignore it
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
-//   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
+//   ?fast=N       playback speed (flight, intro, holed hold, the golfer's swing), e.g. 8
 //   ?hole=N       start a new round at hole N (1-based)
 //   ?seed=N       round seed (pins, wind, contact scatter); ?test=1 defaults it to 1
 //   ?nogl=1       no WebGL: a NullRenderer stub keeps the logic and HUD running
@@ -56,10 +76,21 @@ import { UI, fmtToPar } from './ui.js';
 import { AudioFX } from './audio.js';
 import { interpretSwing, swingLabel, powerForDistance } from './swing.js';
 import { releaseK, predictShot, isSafeRest } from './caddie.js';
-import { playBotShot, botDecide } from './bot.js';
+import { aidLevel, previewPutt, previewShot, PuttReader, readText, puttNotchPower, rangeForRead, visibleEnd, drapePath, PreviewThrottle, slopeAt, slopeBand } from './putting-aid.js';
+import { PUTT_RANGES } from './swing.js';
+import { prepareBotShot, botDecide } from './bot.js';
+import { SwingAnimator } from './swing-anim.js';
+import { buildGolferMesh } from './golfer-mesh.js';
+import { loadLook, normalizeLook, lookKey } from './golfer.js';
 import { CLUBS, clubById } from './clubs.js';
 import { SURF, fmtDist, mToFt } from './constants.js';
-import { clamp, DEG } from './vec3.js';
+import { clamp, DEG, normalizeAngle } from './vec3.js';
+// Golfer customiser (section 9, Customiser; own aliases so these lines never clash with the above).
+import { Customiser, renderAvatars } from './customiser.js';
+import { SwingAnimator as StudioAnimator } from './swing-anim.js';
+import { buildGolferMesh as buildStudioMesh } from './golfer-mesh.js';
+import { B as STUDIO_BONES, lookKey as studioLookKey, loadLook as studioLoadLook } from './golfer.js';
+import { BALL_R as STUDIO_BALL_R } from './constants.js';
 
 const SAVE_KEY = 'golf.save.v1';
 const BEST_KEY = 'golf.best.v1';
@@ -79,6 +110,10 @@ const AIM_SEARCH = 0.16; // ...at most this far from where it started (down as w
 const PIN_SEARCH = 0.06; // (a pin notch moves at most this far: it is still the pin)
 const SCATTER_P = 0.03; // power either side of the notch that must be in play too (~2 sigma of contact)
 const SAFE_MARGIN = 3; // m: an aim-point notch's rest keeps this clear of trouble
+const CHIP_PREVIEW_M = 40; // m from the green edge: a chip or pitch shows its roll (section 8.9)
+const PREVIEW_COLOR = [1, 1, 1, 0.95];
+const DROP_COLOR = [1, 0.84, 0.25, 1]; // the preview putt drops
+const CHIP_COLOR = [0.9, 0.97, 1, 0.9];
 const CARRY_HAZARDS = new Set([SURF.WATER, SURF.OOB, SURF.BUNKER, SURF.DESERT, SURF.FESCUE]); // no landing there
 
 const params = new URLSearchParams(globalThis.location ? location.search : '');
@@ -175,6 +210,31 @@ const app = {
   params: { DEBUG, AUTOPLAY, TEST, NOGL, FAST, START_HOLE, QUALITY, SEED, COURSE: COURSE_PARAM },
   debug: null,
 };
+
+// Green-reading state (section 8.9): the throttled preview, the caddie's read for the ball's spot
+// and reused buffers (nothing is allocated per frame once they exist).
+const aid = {
+  throttle: new PreviewThrottle({ interval: 0.15, settle: 0.08 }),
+  level: 'off',
+  terrain: null,
+  bx: NaN,
+  by: NaN,
+  reader: null,
+  read: null, // PuttReader result for this spot
+  pv: null, // last preview: {holed, final, kind:'putt'|'chip'}
+  pvBuf: new Float32Array(3 * 520),
+  pvCount: 0,
+  chipBuf: new Float32Array(3 * 520),
+  chipCount: 0,
+  paths: [],
+  pathPutt: { data: null, count: 0, color: PREVIEW_COLOR, width: 0.045, minPx: 7, ring: true, ringR: 0.09 },
+  pathChip: { data: null, count: 0, color: CHIP_COLOR, width: 0.08, minPx: 7, ring: true, ringR: 0.6 },
+  cam: 'orbit',
+  sims: 0,
+};
+aid.pathPutt.data = aid.pvBuf;
+aid.pathChip.data = aid.chipBuf;
+app.aid = aid;
 
 // ------------------------------------------------------------------ terrain cache
 // buildHole is deterministic per (course, hole, pin, seed); keep the last few so the menu backdrop,
@@ -360,7 +420,8 @@ function camCtx() {
   const carry = g.phase === 'address' && !g.isPutt ? g.clubInfo().carry || 100 : undefined;
   const pad = app.input.padRect;
   const padShift = app.cssW > app.cssH * 1.25 ? (2 * (pad.x + pad.w / 2)) / app.cssW - 1 : 0;
-  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH, carry, padShift, relief: g.state.decision };
+  const lineLat = aid.read ? aid.read.breakLat : 0;
+  return { ball: rigBall(g), aimYaw: g.aimYaw, cup: t.cup, terrain: t, shot: g.shot, aspect: app.cssW / app.cssH, carry, padShift, relief: g.state.decision, lineLat, golfer: golferCamCtx(g) };
 }
 
 // Switch the camera mode; long moves are hard cuts (a swoop through trees looks wrong).
@@ -436,6 +497,8 @@ function refreshClub() {
   app.ui.setShot({ id: shot.id, name: shot.short || shot.name, show: c.kind !== 'putter' });
   app.targetPower = targetPower(g);
   app.ui.setTarget(app.targetPower);
+  aid.throttle.reset();
+  updateReadCard();
   syncControls();
 }
 
@@ -452,8 +515,11 @@ function refreshClub() {
 function targetPower(g) {
   if (!g || g.phase !== 'address' || !g.terrain) return null;
   if (g.isPutt) {
-    const p = (g.distanceToCup() + PUTT_PAST_M) / g.puttRange;
-    return p >= MIN_TARGET && p <= MAX_POWER ? p : null;
+    // Easy / Normal: the caddie's pace for this green (uphill, downhill, the green speed); Pro and
+    // until the read is in: the flat-roll pace.
+    const rd = aidRead(g);
+    const p = rd && app.ui.getSetting('difficulty') !== 'pro' ? puttNotchPower(rd, g.puttRange) : (g.distanceToCup() + PUTT_PAST_M) / g.puttRange;
+    return p != null && p >= MIN_TARGET && p <= MAX_POWER ? p : null;
   }
   const t = g.terrain;
   const b = g.state.hole.ball;
@@ -530,7 +596,8 @@ function syncControls() {
   if (!g || !g.phase) return;
   const flyover = app.view === 'flyover';
   app.ui.setControls({
-    phase: flyover ? 'intro' : g.phase,
+    // (While a struck swing comes down to the ball the swing controls are already gone.)
+    phase: flyover ? 'intro' : golfer.pending ? 'swing' : g.phase,
     putt: g.isPutt,
     canRead: g.phase === 'address' && onGreenish(g),
     read: app.view === 'read',
@@ -544,7 +611,8 @@ function updateInputMode() {
   const g = app.game;
   const input = app.input;
   let m = 'disabled';
-  if (g && !app.paused && !menuOpen() && !app.ui.shotsOpen) {
+  // A struck swing on its way down to the ball takes no input (it is committed).
+  if (g && !app.paused && !menuOpen() && !app.ui.shotsOpen && !golfer.pending) {
     if (AUTOPLAY) {
       m = g.phase === 'flight' || g.phase === 'holed' || g.phase === 'intro' ? 'watch' : 'disabled';
     } else {
@@ -573,9 +641,10 @@ function updateInputMode() {
 // ------------------------------------------------------------------ address sub-views
 function setView(v) {
   const g = app.game;
-  if (!g || g.phase !== 'address') return;
+  if (!g || g.phase !== 'address' || golfer.pending) return;
   const prev = app.view;
   cancelMeter();
+  golferCancel();
   app.view = v;
   app.viewT = 0;
   app.mapExitT = -1;
@@ -591,6 +660,9 @@ function setView(v) {
     }
     camMode(g.isPutt ? 'putt' : 'address', ctx);
   }
+  aid.cam = app.rig.readView;
+  app.ui.setReadCam(v === 'read' ? aid.cam : null);
+  updateReadCard();
   syncControls();
   updateInputMode();
 }
@@ -611,6 +683,9 @@ function enterAddress() {
   app.swingPower = null;
   app.meter = null;
   app.ui.hideIntro();
+  // The golfer steps up to the ball (placed before the camera frames him); a new spot is a cut.
+  placeGolferNow(g, true);
+  app.rig.snap = true;
   camMode(g.isPutt ? 'putt' : 'address');
   // Warm the caddie's power curve now (8 short simulations) so the first move of the swing
   // gauge does not hitch.
@@ -621,13 +696,14 @@ function enterAddress() {
 
 function changeClub(dir) {
   const g = app.game;
-  if (!g || g.phase !== 'address') return;
+  if (!g || g.phase !== 'address' || golfer.pending) return;
   const ids = CLUBS.map((c) => c.id);
   const i = clamp(ids.indexOf(g.state.clubId) + dir, 0, ids.length - 1);
   if (ids[i] === g.state.clubId) return;
   cancelMeter();
   const wasPutt = g.isPutt;
   g.setClub(ids[i]);
+  placeGolferNow(g, true); // the new club in his hands (and its stance)
   if (g.isPutt !== wasPutt) setView('play'); // putt camera <-> address camera, pad mode
   g.carryForPower(0.5);
   refreshClub();
@@ -640,8 +716,9 @@ function changeClub(dir) {
 // carry/total from here; the pick lasts one stroke (game.js resets it).
 function openShots() {
   const g = app.game;
-  if (!g || g.phase !== 'address' || g.isPutt || app.paused || app.view !== 'play') return;
+  if (!g || g.phase !== 'address' || g.isPutt || app.paused || app.view !== 'play' || golfer.pending) return;
   cancelMeter();
+  golferCancel();
   const shots = g.shotsAvailable().map((id) => {
     const s = shotById(id);
     const info = g.clubInfo(g.club.id, id);
@@ -653,7 +730,8 @@ function openShots() {
 
 function pickShot(id) {
   const g = app.game;
-  if (g && g.phase === 'address' && g.setShot(id)) {
+  if (g && g.phase === 'address' && !golfer.pending && g.setShot(id)) {
+    placeGolferNow(g, true); // the shot's stance
     g.carryForPower(0.5); // warm the shot's power curve before the first swing
     refreshClub();
     refreshHud();
@@ -665,6 +743,8 @@ function pickShot(id) {
 // ------------------------------------------------------------------ game lifecycle
 function bindGame(game) {
   for (const off of app.unsub) off();
+  golfer.pending = null; // (a swing of another round is never launched into this one)
+  golfer.key = '';
   app.game = game;
   app.paused = false;
   app.view = 'play';
@@ -687,6 +767,8 @@ function bindGame(game) {
 function unbindGame() {
   for (const off of app.unsub) off();
   app.unsub = [];
+  golfer.pending = null;
+  golfer.key = '';
   app.game = null;
   app.paused = false;
   app.view = 'play';
@@ -731,6 +813,7 @@ function resumeGame() {
 }
 
 function quitToMenu() {
+  flushSwing(); // a swing already on its way down counts
   saveGame();
   unbindGame();
   closeDialogs();
@@ -800,12 +883,16 @@ function setBackdrop(courseId) {
 }
 
 function setPaused(on) {
+  // A swing already on its way down is struck before the pause (it was committed), and a live
+  // backswing or tap meter is let go.
+  if (on) flushSwing();
   app.paused = !!on;
   app.drewPaused = false;
   app.lastTime = 0;
   if (on) {
     app.meter = null;
     app.ui.setPower(null);
+    golferCancel();
     saveGame();
   }
   updateInputMode();
@@ -821,6 +908,7 @@ function onHole(info) {
   app.trail.count = 0;
   app.windRel = null;
   app.rig.snap = true;
+  golfer.key = ''; // placed at the tee once the hole is played
   app.ui.setHud({ hole: info.n, par: info.par, lengthM: info.lengthM, si: info.si });
   app.audio.setWind(Math.hypot(info.wind.x, info.wind.y));
   refreshHud();
@@ -831,6 +919,12 @@ function onPhase(phase, prev) {
   const ui = app.ui;
   app.swingPower = null;
   app.meter = null;
+  if (phase !== 'address') {
+    ui.setReadCard(null);
+    ui.setSlopeTags(null);
+    aid.pvCount = 0;
+    aid.chipCount = 0;
+  }
   switch (phase) {
     case 'intro':
       app.view = 'play';
@@ -979,7 +1073,7 @@ function showFinalCard(card, totals, { best, isNew }, course) {
 // ------------------------------------------------------------------ input callbacks
 function onAim(dyaw) {
   const g = app.game;
-  if (!g || g.phase !== 'address' || app.paused) return;
+  if (!g || g.phase !== 'address' || app.paused || golfer.pending) return;
   g.setAim(g.aimYaw + dyaw);
   app.hudDirty = true;
 }
@@ -993,6 +1087,8 @@ function showPower(rawPower) {
   const d = g.carryForPower(power);
   const carryText = g.isPutt ? fmtPutt(d.total) : fmtLong(d.carry);
   app.ui.setPower({ power, overswing: power > 1, full: !g.isPutt && power === 1, carryText, target: app.targetPower });
+  // The golfer's backswing follows the gauge (swipe or tap meter).
+  if (golfer.anim && !golfer.pending) golfer.anim.setBackswing(power);
 }
 
 function onSwingProgress(p) {
@@ -1018,6 +1114,7 @@ function onSwing(samples) {
   });
   if (TEST) app.lastSwing = { samples, sw, padRefH: app.input.padRefH };
   if (!sw.ok) {
+    golferCancel();
     if (sw.reason === 'cancel') {
       if (g.isPutt) setHint('Putt cancelled', 2200);
       else app.ui.toast('Swing cancelled — swipe up to hit', 2200);
@@ -1027,9 +1124,23 @@ function onSwing(samples) {
   strike(g, sw);
 }
 
+// A recognised swing (swipe, tap meter or the bot): the golfer plays the downswing (from the live
+// backswing, else after an automatic one) and the ball is launched on its impact frame
+// (launchSwing). Exactly once: a second strike while one is on its way is ignored.
 function strike(g, sw) {
-  if (sw.kind === 'full') app.audio.handle({ type: 'swing', power: sw.power });
-  g.swing(sw);
+  if (golfer.pending || !g || g.phase !== 'address') return;
+  const A = golfer.anim;
+  if (A) placeGolferNow(g); // the right club and aim in his hands (a no-op when they already are)
+  const p = { g, sw, t: 0, tImpact: 0, whoosh: sw.kind !== 'full', clock: golfer.clock };
+  golfer.pending = p;
+  if (A) p.tImpact = A.strike({ power: sw.power, kind: sw.kind, shot: g.shotType, onImpact: () => launchSwing(p, 'impact') });
+  if (!A || !(p.tImpact > 0)) {
+    launchSwing(p, 'direct');
+    return;
+  }
+  golferTick(p, 0);
+  syncControls();
+  updateInputMode();
 }
 
 // The swipe was abandoned before the release: dragged out of the pad sideways, or the system
@@ -1037,6 +1148,7 @@ function strike(g, sw) {
 function onSwingCancel(reason) {
   app.swingPower = null;
   app.ui.setPower(null);
+  golferCancel();
   const g = app.game;
   if ((reason === 'dragOut' || reason === 'pointercancel') && g && g.phase === 'address' && !app.paused) {
     if (g.isPutt) setHint('Putt cancelled', 2200);
@@ -1051,7 +1163,7 @@ function onSwingCancel(reason) {
 // a tap, but the usual contact scatter applies. Putts use the putt range the same way.
 function onPadTap({ t }) {
   const g = app.game;
-  if (!g || g.phase !== 'address' || app.paused) return;
+  if (!g || g.phase !== 'address' || app.paused || golfer.pending) return;
   const nowMs = performance.now();
   // Event times share performance.now()'s clock in current browsers; fall back if one does not.
   const at = Number.isFinite(t) && Math.abs(t - nowMs) < 5000 ? t : nowMs;
@@ -1063,8 +1175,9 @@ function onPadTap({ t }) {
     return;
   }
   const raw = meterPower((at - app.meter.t0) / 1000, kind);
-  cancelMeter();
+  cancelMeter(false); // (the golfer keeps his backswing: the strike comes down from it)
   if (raw == null) {
+    golferCancel();
     setHint('Too late · tap to start again', 2200);
     return;
   }
@@ -1086,16 +1199,18 @@ function tickMeter(nowMs) {
   showPower(p);
 }
 
-function cancelMeter() {
+// golferToo: the golfer's backswing eases back to address with it.
+function cancelMeter(golferToo = true) {
   if (!app.meter) return;
   app.meter = null;
   app.swingPower = null;
   app.ui.setPower(null);
+  if (golferToo) golferCancel();
 }
 
 function onTap(sx, sy) {
   const g = app.game;
-  if (!g || g.phase !== 'address' || app.view !== 'map') return;
+  if (!g || g.phase !== 'address' || app.view !== 'map' || golfer.pending) return;
   const p = app.renderer.pickTerrain(sx, sy);
   if (!p) return;
   const b = g.state.hole.ball;
@@ -1114,6 +1229,201 @@ function onSkip() {
   g.skip();
 }
 
+// ------------------------------------------------------------------ the golfer (section 9.7)
+// swing-anim.js plays him; this section places him at the ball, feeds him the gesture and turns
+// his impact frame into the launch. golfer.pending is the struck swing on its way down
+// ({g, sw, t, tImpact, whoosh}): set by strike(), cleared by launchSwing() (on the animator's
+// onImpact, or at once by flushSwing() / the watchdog), so a swing is launched exactly once.
+const GOLFER_MESHES = 6; // golfer meshes kept (look x club; a club change re-uses them)
+const WHOOSH_LEAD = 0.16; // s: the whoosh peaks this long after it starts (audio.js), so it starts this early
+const IMPACT_GRACE = 0.5; // s past the expected impact before the watchdog launches anyway
+const PLACE_EVERY = 0.03; // s: an aim drag re-places him at most this often
+
+const golfer = {
+  anim: null, // SwingAnimator
+  look: null, // the player's look (golfer.js)
+  lookKey: '',
+  meshes: new Map(), // `${lookKey}#${club}` -> buildGolferMesh() result (LRU)
+  key: '', // what he was placed for (ball, aim, club, shot, hand, look); '' = not placed
+  placedAt: -1,
+  frame: null, // {lat, along, H}: his stance relative to the ball and aim (camera framing)
+  pending: null,
+  clock: 0, // s of game time his animation has run (?fast scales it)
+  last: null, // the last launch {how, strikeAt, launchAt, tImpact, kind, headErr} (tests)
+  count: {}, // launches by how: impact | flush | watchdog | direct (tests)
+  scene: { visible: true, mesh: null, bones: null, alpha: 1, fadeNear: true },
+  hidden: false, // tests: draw the frame without him
+};
+app.golfer = golfer;
+
+function initGolfer() {
+  golfer.look = loadLook();
+  golfer.lookKey = lookKey(golfer.look);
+  golfer.anim = new SwingAnimator(golfer.look, { club: '7i' });
+}
+
+// The customiser's hook: the player's new look (golfer.js saveLook stores it) rebuilds the golfer in
+// the game at once (mesh, proportions, swing style). Returns the normalised look.
+function applyGolferLook(look) {
+  flushSwing();
+  golfer.look = normalizeLook(look);
+  golfer.lookKey = lookKey(golfer.look);
+  golfer.meshes.clear();
+  if (golfer.anim) golfer.anim.setLook(golfer.look);
+  golfer.key = '';
+  const g = app.game;
+  if (g && g.phase === 'address') placeGolferNow(g, true);
+  return golfer.look;
+}
+app.applyGolferLook = applyGolferLook;
+
+const golferHanded = () => (app.ui.getSetting('handed') === 'L' ? 'L' : 'R');
+
+// One merged mesh per look and club, built once (10-30 ms) and kept for the next club change.
+function golferMesh(clubId) {
+  const k = `${golfer.lookKey}#${clubId}`;
+  let m = golfer.meshes.get(k);
+  if (m) golfer.meshes.delete(k);
+  else m = buildGolferMesh(golfer.look, clubId);
+  golfer.meshes.set(k, m);
+  while (golfer.meshes.size > GOLFER_MESHES) golfer.meshes.delete(golfer.meshes.keys().next().value);
+  return m;
+}
+
+// Places him at the ball (address phase, no swing on its way): facing the aim with the selected
+// club and the shot's stance, on the real ground. Only when something changed, unless forced.
+function placeGolferNow(g, force = false) {
+  const A = golfer.anim;
+  if (!A || !g || !g.terrain || g.phase !== 'address' || golfer.pending) return false;
+  const b = g.ballPos();
+  const handed = golferHanded();
+  const key = `${b.x.toFixed(3)},${b.y.toFixed(3)},${b.z.toFixed(3)}|${g.aimYaw.toFixed(4)}|${g.state.clubId}|${g.shotType}|${handed}|${golfer.lookKey}`;
+  if (key === golfer.key && !force) return false;
+  const back = A.state === 'backswing' ? A.power : 0; // (a tap meter running while the aim moves)
+  A.place({ ball: { x: b.x, y: b.y, z: b.z }, aimYaw: g.aimYaw, terrain: g.terrain, handed, club: g.state.clubId, shot: g.shotType });
+  if (back > 0) A.setBackswing(back);
+  golfer.key = key;
+  golfer.placedAt = golfer.clock;
+  // His stance centre across and along the aim line from the ball (+ = left of the line / ahead).
+  const o = A.rig.origin;
+  const c = Math.cos(g.aimYaw);
+  const s = Math.sin(g.aimYaw);
+  const dx = o[0] - b.x;
+  const dy = o[1] - b.y;
+  golfer.frame = { lat: -s * dx + c * dy, along: c * dx + s * dy, H: A.rig.dims.H };
+  return true;
+}
+
+// Is he on screen? At address in the play view (not Read, Map or the flyover: those keep him out
+// of the way), and during the shot where he struck it (holding his finish), and at the hole-out.
+function golferShown(g) {
+  if (!golfer.anim || golfer.hidden || !golfer.key || !g || !g.phase) return false;
+  if (g.phase === 'address') return app.view === 'play';
+  return g.phase === 'flight' || g.phase === 'holed';
+}
+
+// Camera context: his stance for the TV framing (address, putt and the flight's opening hold).
+function golferCamCtx(g) {
+  return golferShown(g) && golfer.frame && (g.phase === 'address' || g.phase === 'flight') ? golfer.frame : null;
+}
+
+// scene.golfer (render.js section 9.5), or null. #hud[data-golfer] = 'R' | 'L' while he stands at
+// the ball ('0' otherwise): style.css moves the idle pad hint and the readout clear of him.
+function golferScene(g) {
+  const on = !app.renderer.isNull && golferShown(g);
+  const flag = on && g.phase === 'address' ? golfer.anim.handed : '0';
+  if (app.ui.el.hud.dataset.golfer !== flag) app.ui.el.hud.dataset.golfer = flag;
+  if (!on) return null;
+  const s = golfer.scene;
+  s.visible = true;
+  s.alpha = 1;
+  s.fadeNear = true;
+  s.mesh = golferMesh(golfer.anim.club);
+  s.bones = golfer.anim.bones;
+  return s;
+}
+
+// A live backswing (gauge or meter) let go: he eases back to address. Never a struck swing.
+function golferCancel() {
+  const A = golfer.anim;
+  if (A && !golfer.pending && A.state === 'backswing') A.cancel();
+}
+
+// The impact frame: the ball is struck now (game.swing), once, if the round is still where the
+// swing was made. how: 'impact' (the animator's impact frame), 'flush' or 'watchdog' (at once).
+function launchSwing(p, how) {
+  if (golfer.pending !== p) return;
+  golfer.pending = null;
+  golfer.count[how] = (golfer.count[how] || 0) + 1;
+  const g = p.g;
+  if (!p.whoosh) {
+    p.whoosh = true;
+    app.audio.handle({ type: 'swing', power: p.sw.power });
+  }
+  if (app.game === g && g.phase === 'address') {
+    const A = golfer.anim;
+    let headErr = null;
+    if (A) {
+      const h = A.clubHeadWorld();
+      const b = g.ballPos();
+      headErr = Math.hypot(h.x - b.x, h.y - b.y, h.z - b.z);
+    }
+    golfer.last = { how, strikeAt: p.clock, launchAt: golfer.clock, tImpact: p.tImpact, kind: p.sw.kind, headErr, state: A ? A.state : null };
+    g.swing(p.sw);
+    if (TEST && app.debug && app.debug.freezeAtImpact) {
+      app.debug.freezeAtImpact = false;
+      app.frozen = true;
+    }
+  }
+  syncControls();
+  updateInputMode();
+}
+
+// Strike a committed swing now (pause, quit, page hidden, a new look): the animation is run on to
+// its impact frame so the launch still comes from it; launched directly if that does not happen.
+function flushSwing() {
+  const p = golfer.pending;
+  if (!p) return;
+  const A = golfer.anim;
+  for (let i = 0; i < 40 && golfer.pending === p && A && (A.state === 'auto' || A.state === 'downswing'); i++) {
+    A.update(0.1);
+    golferTick(p, 0.1);
+  }
+  if (golfer.pending === p) launchSwing(p, 'flush');
+}
+
+// The struck swing's clock: the whoosh starts so it peaks at impact; the watchdog launches a swing
+// whose impact frame never came.
+function golferTick(p, dt) {
+  p.t += dt;
+  if (golfer.pending !== p) return;
+  if (!p.whoosh && p.tImpact - p.t <= WHOOSH_LEAD) {
+    p.whoosh = true;
+    app.audio.handle({ type: 'swing', power: p.sw.power });
+  }
+  if (p.t > p.tImpact + IMPACT_GRACE) launchSwing(p, 'watchdog');
+}
+
+// Per frame (game time, ?fast included): keep him placed at address and run his animation in steps
+// of at most 0.1 s, stopping on the impact frame so it is drawn.
+function updateGolfer(sdt) {
+  const A = golfer.anim;
+  const g = app.game;
+  if (!A || !g) return;
+  if (g.phase === 'address' && !golfer.pending && golfer.clock - golfer.placedAt >= PLACE_EVERY) placeGolferNow(g);
+  let left = Math.min(sdt, 1);
+  for (let i = 0; i < 10 && left > 1e-6; i++) {
+    const step = Math.min(0.1, left);
+    left -= step;
+    golfer.clock += step;
+    const p = golfer.pending;
+    const before = A.state;
+    A.update(step);
+    if (p) golferTick(p, step);
+    if (before === 'downswing' && A.state === 'follow') break;
+  }
+}
+
 // ------------------------------------------------------------------ autoplay bot
 function tickBot(dt) {
   const g = app.game;
@@ -1122,17 +1432,20 @@ function tickBot(dt) {
     b.phase = g.phase;
     b.wait = 0;
   }
-  if (b.busy) return;
+  if (b.busy || golfer.pending) return;
   b.wait += dt;
   if (g.phase === 'address' && b.wait >= BOT_THINK_S) {
     // Planning takes a few hundred ms: run it outside the frame so the last frame shows first.
+    // The plan sets club, aim and shot; the golfer then swings it (an automatic backswing) and
+    // the ball goes at his impact frame, as for the player.
     b.busy = true;
     setTimeout(() => {
       b.busy = false;
       b.wait = 0;
-      if (app.game !== g || g.phase !== 'address' || app.paused) return;
-      const r = playBotShot(g);
-      if (r.ok && r.plan.swing.kind === 'full') app.audio.handle({ type: 'swing', power: r.plan.swing.power });
+      if (app.game !== g || g.phase !== 'address' || app.paused || golfer.pending) return;
+      const plan = prepareBotShot(g);
+      placeGolferNow(g, true);
+      strike(g, plan.swing);
     }, 0);
   } else if (g.phase === 'decision' && b.wait >= 0.5) {
     botDecide(g);
@@ -1145,7 +1458,7 @@ function tickBot(dt) {
 // ------------------------------------------------------------------ frame
 function tick(dt) {
   const g = app.game;
-  if (!g || app.paused) return;
+  if (!g || app.paused || app.frozen) return; // (frozen: tests hold a frame, e.g. the impact)
   const sdt = dt * FAST;
   if (g.phase === 'intro') {
     app.introT += sdt;
@@ -1161,6 +1474,9 @@ function tick(dt) {
   }
   g.update(sdt);
   if (app.meter && app.game === g && g.phase === 'address') tickMeter(performance.now());
+  // The golfer after the game: on his impact frame the shot starts (game.swing), and that frame
+  // draws the ball still at the club.
+  if (app.game === g) updateGolfer(sdt);
   if (AUTOPLAY && app.game === g) tickBot(sdt);
 }
 
@@ -1252,6 +1568,7 @@ function buildScene(time, cam) {
   // In the relief decision the ball is shown at the drop spot (that is where it will be played).
   scene.ball = { x: b.x, y: b.y, z: b.z, visible: true, minPx: reading ? 4.5 : phase === 'decision' ? 5 : phase === 'address' ? 3.5 : 2.5 };
   scene.wind = g.wind;
+  scene.golfer = golferScene(g);
   scene.trail = buildTrail(g);
   const putting = g.isPutt;
   const rollShot = !!g.shot && g.shot.launch.mode === 'roll';
@@ -1260,13 +1577,15 @@ function buildScene(time, cam) {
   // hole can be seen from 10+ m.
   const attended = phase === 'address' && putting && g.distanceToCup() > PIN_ATTEND_M;
   // Reading the green from above, the flag marks the hole (the cup alone is a dot).
-  scene.pin.visible = attended || reading || !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
+  // (Behind the hole the stick would stand in front of the lens: the cup marks it.)
+  scene.pin.visible = (reading && app.rig.readView !== 'hole') || attended || !((phase === 'address' && putting) || ((phase === 'flight' || phase === 'holed' || phase === 'scorecard') && rollShot));
   if (phase === 'address' && (app.view === 'play' || app.view === 'map' || (reading && putting))) {
     if (putting) {
       // Putt line: thin, close to the turf, short dashes, and a small ring at the flat-roll
-      // distance while the putter is drawn back (at the cup otherwise).
+      // distance while the putter is drawn back (at the cup otherwise). With the full preview
+      // the dotted roll replaces it.
       const carry = app.swingPower != null ? app.swingPower * g.puttRange : g.distanceToCup();
-      scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(0.3, carry), ring: 0.2, width: 0.012, lift: 0.008, dash: 0.45 };
+      if (!(aid.level === 'full' && aid.pvCount > 1)) scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(0.3, carry), ring: 0.2, width: 0.012, lift: 0.008, dash: 0.45 };
     } else {
       const pv = buildPreview(g, app.swingPower != null ? app.swingPower : 1);
       if (pv) {
@@ -1275,7 +1594,10 @@ function buildScene(time, cam) {
         const L = pv.landing;
         scene.aim = { x: L.x, y: L.y, z: L.z, yaw: pv.yaw, carry: 0.3, ring: Math.max(1.6, pv.carry * 0.035) };
       } else {
-        const carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
+        let carry = app.swingPower != null ? g.carryForPower(app.swingPower).carry : g.clubInfo().carry || 100;
+        // Near the green the chip preview knows where it really comes down (slopes, firmness).
+        const L = aid.chipCount > 1 && aid.pv && aid.pv.kind === 'chip' ? aid.pv.landing : null;
+        if (L) carry = Math.hypot(L.x - b.x, L.y - b.y);
         scene.aim = { x: b.x, y: b.y, z: b.z, yaw: g.aimYaw, carry: Math.max(1, carry) };
       }
     }
@@ -1289,9 +1611,197 @@ function buildScene(time, cam) {
     scene.aim = { x: e.x, y: e.y, z: d.z, yaw: Math.atan2(d.y - e.y, d.x - e.x), carry: Math.max(0.3, len), ring: 1.2, dash: 1.2 };
   }
   if (phase === 'address' && (app.view === 'read' || (putting && app.view === 'play'))) {
-    scene.read = app.view === 'read' ? { on: true, alpha: 0.85, chevrons: true } : { on: true, alpha: 0.3, chevrons: false };
+    scene.read = app.view === 'read' ? { on: true, alpha: 0.85, chevrons: true, flow: 1, flowPx: 4.5 } : { on: true, alpha: 0.32, chevrons: false, flow: 0.6, flowPx: 3 };
   }
+  if (phase === 'address' && app.view !== 'map' && app.view !== 'flyover') scene.paths = aidPaths(g);
   return scene;
+}
+
+// ------------------------------------------------------------------ green reading (section 8.9)
+// The read for the ball's current spot, or null while it is being worked out.
+function aidRead(g) {
+  const b = g.state.hole.ball;
+  return aid.read && b.x === aid.bx && b.y === aid.by && g.terrain === aid.terrain ? aid.read : null;
+}
+
+// A new spot (or hole): drop the read and the previews.
+function aidResetSpot(g) {
+  const b = g.state.hole.ball;
+  aid.terrain = g.terrain;
+  aid.bx = b.x;
+  aid.by = b.y;
+  aid.reader = null;
+  aid.read = null;
+  aid.pv = null;
+  aid.pvCount = 0;
+  aid.chipCount = 0;
+  aid.throttle.reset();
+}
+
+// The putt's power for the preview: the live gauge, else the notch, else the flat pace.
+function aidPuttPower(g) {
+  if (app.swingPower != null) return app.swingPower;
+  if (app.targetPower != null) return app.targetPower;
+  return clamp((g.distanceToCup() + PUTT_PAST_M) / g.puttRange, 0.02, MAX_POWER);
+}
+
+// Once per frame at address: at most one simulation, the preview first (it follows the player's
+// hands), else one step of the caddie's read.
+function stepAid(now) {
+  const g = app.game;
+  const b = g.state.hole.ball;
+  if (b.x !== aid.bx || b.y !== aid.by || g.terrain !== aid.terrain) aidResetSpot(g);
+  const s = app.ui.settings;
+  aid.level = aidLevel(s.puttAid, s.difficulty);
+  let simmed = false;
+  if (g.isPutt) {
+    if (!aid.reader && !aid.read) aid.reader = new PuttReader(g.terrain, b, { lie: g.lie, wind: g.wind });
+    if (aid.level !== 'off') {
+      const power = aidPuttPower(g);
+      const key = (Math.round(normalizeAngle(g.aimYaw) * 4000) * 4096 + Math.round(power * 2000)) * 16 + PUTT_RANGES.indexOf(g.puttRange) + 1;
+      if (aid.throttle.want(key, now)) {
+        const pv = previewPutt(g.terrain, { ball: b, lie: g.lie, aimYaw: g.aimYaw, power, puttRange: g.puttRange, wind: g.wind });
+        const len = visibleEnd(pv.path, aid.level);
+        aid.pvCount = drapePath(g.terrain, pv.path, len, aid.pvBuf);
+        aid.pv = { kind: 'putt', holed: pv.holed, final: pv.final, power };
+        aid.sims++;
+        simmed = true;
+      }
+    } else aid.pvCount = 0;
+    if (!simmed && aid.reader && !aid.reader.done && aid.reader.step()) {
+      aid.read = aid.reader.result;
+      aid.reader = null;
+      app.targetPower = targetPower(g);
+      app.ui.setTarget(app.targetPower);
+      aid.throttle.reset(); // the idle preview follows the new notch
+      updateReadCard();
+    }
+    aid.chipCount = 0;
+  } else {
+    aid.pvCount = 0;
+    const lie = g.lie;
+    const near = lie.surface !== SURF.GREEN && lie.greenDist <= CHIP_PREVIEW_M;
+    if (near && aid.level !== 'off') {
+      const power = app.swingPower != null ? app.swingPower : app.targetPower != null ? app.targetPower : 1;
+      const key = (Math.round(normalizeAngle(g.aimYaw) * 4000) * 4096 + Math.round(power * 2000)) * 16;
+      if (aid.throttle.want(key, now)) {
+        const pv = previewShot(g.terrain, { ball: b, lie, clubId: g.club.id, aimYaw: g.aimYaw, power, wind: g.wind, shot: g.shotType, handed: s.handed });
+        aid.chipCount = pv.landing ? drapePath(g.terrain, pv.path, Infinity, aid.chipBuf, { from: pv.landIndex, lift: 0.03, minStep: 0.25 }) : 0;
+        aid.pv = { kind: 'chip', holed: pv.holed, final: pv.final, landing: pv.landing, power };
+        aid.sims++;
+      }
+    } else aid.chipCount = 0;
+  }
+}
+
+// scene.paths for the renderer (reused array and objects).
+function aidPaths(g) {
+  const out = aid.paths;
+  out.length = 0;
+  if (g.isPutt && aid.pvCount > 1 && aid.pv) {
+    const p = aid.pathPutt;
+    p.count = aid.pvCount;
+    p.color = aid.pv.holed ? DROP_COLOR : PREVIEW_COLOR;
+    p.ringR = aid.pv.holed ? 0.11 : 0.085;
+    out.push(p);
+  } else if (!g.isPutt && aid.chipCount > 1) {
+    const p = aid.pathChip;
+    p.count = aid.chipCount;
+    p.color = aid.pv && aid.pv.holed ? DROP_COLOR : CHIP_COLOR;
+    out.push(p);
+  }
+  return out;
+}
+
+// The read card (putting at address): pending until the read is in. Pro shows slope and plays only.
+function updateReadCard() {
+  const g = app.game;
+  if (!g || g.phase !== 'address' || !g.isPutt || app.view === 'map' || app.view === 'flyover') {
+    app.ui.setReadCard(null);
+    return;
+  }
+  const rd = aidRead(g);
+  if (!rd) {
+    app.ui.setReadCard({ pending: true });
+    return;
+  }
+  const pro = app.ui.getSetting('difficulty') === 'pro';
+  const tx = readText(rd, units(), { showAim: !pro });
+  app.ui.setReadCard({ line1: tx.line1, line2: tx.line2, canAim: !pro });
+}
+
+// "Aim at read": the caddie's line, with a putt range its pace fits (so the notch sits mid-arc).
+function aimAtRead() {
+  const g = app.game;
+  const rd = g && g.phase === 'address' && g.isPutt ? aidRead(g) : null;
+  if (!rd) return false;
+  g.setAim(rd.aimYaw);
+  const p = rd.F / g.puttRange;
+  if (p > 0.85 || p < 0.3) g.setPuttRange(rangeForRead(rd.F));
+  if (app.view !== 'play') setView('play');
+  refreshClub();
+  app.hudDirty = true;
+  app.ui.toast('Aimed at the read · putt to the gold notch', 2600);
+  saveGame();
+  return true;
+}
+
+function setReadCam(v) {
+  const g = app.game;
+  if (!g || g.phase !== 'address') return;
+  if (app.view !== 'read') setView('read');
+  app.rig.setReadView(v);
+  aid.cam = app.rig.readView;
+  app.ui.setReadCam(aid.cam);
+}
+
+function onOrbit(dyaw) {
+  app.rig.orbit(dyaw);
+  if (aid.cam !== app.rig.readView) {
+    aid.cam = app.rig.readView;
+    app.ui.setReadCam(aid.cam);
+  }
+}
+
+// Slope tags (putting): the cup's while lining up, the ball's and the cup's in Read; each a little
+// off its point so the hole itself stays clear, with an arrow pointing downhill on screen.
+const _tagSlope = { pct: 0, downYaw: 0 };
+function updateSlopeTags(g) {
+  const ui = app.ui;
+  if (g.phase !== 'address' || !g.isPutt || (app.view !== 'read' && app.view !== 'play')) {
+    ui.setSlopeTags(null);
+    return;
+  }
+  const t = g.terrain;
+  const r = app.renderer;
+  const list = [];
+  const add = (x, y, dx, dy) => {
+    const z = t.heightAt(x, y);
+    const p = r.project(x, y, z);
+    if (!p.visible || p.sx < 0 || p.sy < 0 || p.sx > app.cssW || p.sy > app.cssH) return;
+    const s = slopeAt(t, x, y, _tagSlope);
+    const q = r.project(x + Math.cos(s.downYaw) * 0.6, y + Math.sin(s.downYaw) * 0.6, z - (s.pct / 100) * 0.6);
+    const angle = Math.atan2(q.sy - p.sy, q.sx - p.sx);
+    list.push({ x: p.sx + dx, y: p.sy + dy, text: `${s.pct < 10 ? s.pct.toFixed(1) : Math.round(s.pct)}%`, angle, band: slopeBand(s.pct) });
+  };
+  const c = t.cup;
+  add(c.x, c.y, 58, -12);
+  if (app.view === 'read') {
+    const b = g.state.hole.ball;
+    add(b.x, b.y, 0, 30);
+  }
+  ui.setSlopeTags(list);
+}
+
+// The golfer stays out of the read: hidden in the Read cameras, see-through while lining up a
+// putt with a preview line (so it never covers the line). Applies to scene.golfer when the scene
+// has one (section 9).
+function applyGolferReadRule(scene) {
+  const gs = scene.golfer;
+  const g = app.game;
+  if (!gs || !g || g.phase !== 'address') return;
+  if (app.view === 'read') gs.visible = false;
+  else if (g.isPutt && aid.pvCount > 1) gs.alpha = Math.min(gs.alpha == null ? 1 : gs.alpha, 0.45);
 }
 
 // Menu backdrop: a slow drone shot drifting down the current hole's fairway.
@@ -1317,6 +1827,7 @@ function menuCam(time) {
 }
 
 function render(time, dt) {
+  if (studioFrame(time, dt)) return; // the Golfer customiser's preview while it is open
   const g = app.game;
   let cam;
   if (g && g.phase && g.terrain) {
@@ -1326,7 +1837,9 @@ function render(time, dt) {
   } else if (app.holeTerrain) {
     cam = menuCam(time);
   } else return;
+  if (g && g.phase === 'address' && !app.paused) stepAid(performance.now() / 1000);
   const scene = buildScene(time, cam);
+  applyGolferReadRule(scene);
   app.renderer.draw(scene);
   app.lastScene = scene;
   if (g && g.phase) updateLiveHud(g, cam, dt);
@@ -1335,6 +1848,7 @@ function render(time, dt) {
 // Per-frame HUD bits: the wind arrow follows the camera; the distance to the pin counts down in
 // flight; an aim drag refreshes the lie (sidehill / uphill labels depend on the aim).
 function updateLiveHud(g, cam, dt) {
+  updateSlopeTags(g);
   const w = g.wind;
   if (Math.hypot(w.x, w.y) > 0.05) {
     const rel = Math.atan2(w.y, w.x) - Math.atan2(cam.target.y - cam.eye.y, cam.target.x - cam.eye.x);
@@ -1430,6 +1944,7 @@ function applyQuality(q) {
 }
 
 function onSettings(s, key) {
+  flushSwing(); // (a swing on its way down is struck with the settings it was made with)
   if (key === 'sound') app.audio.setEnabled(s.sound);
   if (key === 'quality') applyQuality(s.quality);
   if (key === 'swing') {
@@ -1502,6 +2017,51 @@ function installDebugHooks() {
         shotType: g.shotType,
       };
     },
+    // Green reading (section 8.9): put the ball d m from the cup on the green, at world yaw
+    // angleDeg from it (the nearest green spot along that ray), with the putter; returns {x, y}.
+    placeOnGreen(d = 6, angleDeg = 0) {
+      const g = app.game;
+      const t = g.terrain;
+      const c = t.cup;
+      const a = angleDeg * DEG;
+      let x = c.x;
+      let y = c.y;
+      for (let r = d; r > 0.5; r -= 0.25) {
+        x = c.x + Math.cos(a) * r;
+        y = c.y + Math.sin(a) * r;
+        if (t.surfaceAt(x, y) === SURF.GREEN) break;
+      }
+      g.debugPlace(x, y);
+      if (!g.isPutt) changeClub(CLUBS.length);
+      return { x, y };
+    },
+    // The aids' state: level, the read (and its words), the preview, the notch, sims run.
+    aid() {
+      const g = app.game;
+      const rd = g ? aidRead(g) : null;
+      const pv = aid.pv;
+      return {
+        level: aid.level,
+        cam: app.rig.readView,
+        // The camera has arrived where its mode wants it (within 5 cm).
+        camSettled: (() => {
+          const goal = app.rig._goal(0).eye;
+          const e = app.rig.eye;
+          return Math.hypot(goal.x - e.x, goal.y - e.y, Math.max(goal.z, e.z) - e.z) < 0.05;
+        })(),
+        view: app.view,
+        read: rd ? { aimYaw: rd.aimYaw, F: rd.F, holed: rd.holed, breakLat: rd.breakLat, aimOffset: rd.aimOffset, plays: rd.plays, dz: rd.dz, sims: rd.sims, text: readText(rd, units(), { showAim: true }) } : null,
+        reading: !!aid.reader,
+        preview: pv ? { kind: pv.kind, holed: pv.holed, final: pv.final, power: pv.power, count: pv.kind === 'putt' ? aid.pvCount : aid.chipCount } : null,
+        aimYaw: g ? g.aimYaw : null,
+        puttRange: g ? g.puttRange : null,
+        targetPower: app.targetPower,
+        sims: aid.sims,
+        card: app.ui.el.readcard ? { hidden: app.ui.el.readcard.hidden, text: app.ui.el.readcard.textContent.replace(/\s+/g, ' ').trim() } : null,
+      };
+    },
+    aimAtRead,
+    readCam: setReadCam,
     // Mixed 18 tests: record the holes before i (par + toPar[k] strokes each) and load hole i.
     skipTo(i, toPar = []) {
       const g = app.game;
@@ -1509,7 +2069,406 @@ function installDebugHooks() {
       saveGame();
       return g.state.holeIndex;
     },
+    // The golfer (section 9.7): his animation state, what he holds, where he stands (screen px of
+    // his chest and pelvis) and the last launch ({strikeAt, launchAt, tImpact} in game seconds,
+    // headErr: club head to ball at the launch, m).
+    golferState() {
+      const A = golfer.anim;
+      const g = app.game;
+      if (!A) return null;
+      const r = app.renderer;
+      const at = (bone) => {
+        const p = A.jointWorld(bone);
+        const q = r.project(p.x, p.y, p.z);
+        return { x: p.x, y: p.y, z: p.z, sx: q.sx, sy: q.sy, visible: q.visible };
+      };
+      return {
+        shown: golferShown(g),
+        drawn: !!(app.lastScene && app.lastScene.golfer && app.lastScene.golfer.visible !== false),
+        state: A.state,
+        u: A.u,
+        power: A.power,
+        club: A.club,
+        shot: A.shot,
+        handed: A.handed,
+        style: A.style,
+        kind: A.kind,
+        placed: golfer.key !== '',
+        frame: golfer.frame,
+        pending: !!golfer.pending,
+        tImpact: golfer.pending ? golfer.pending.tImpact : null,
+        last: golfer.last,
+        clock: golfer.clock,
+        look: golfer.look,
+        chest: at(2),
+        pelvis: at(0),
+        head: at(4),
+        mirror: A.rig.mirror,
+        framing: app.rig.framing,
+      };
+    },
+    // The club head's impact point (world and screen) and the ball.
+    clubHead() {
+      const A = golfer.anim;
+      const g = app.game;
+      if (!A) return null;
+      const h = A.clubHeadWorld();
+      const q = app.renderer.project(h.x, h.y, h.z);
+      const b = g ? g.ballPos() : null;
+      return { x: h.x, y: h.y, z: h.z, sx: q.sx, sy: q.sy, ball: b, dist: b ? Math.hypot(h.x - b.x, h.y - b.y, h.z - b.z) : null };
+    },
+    // Draw without the golfer (pixel and draw-call comparisons), freeze the frame (screenshots),
+    // freeze on the next impact frame.
+    hideGolfer(on = true) {
+      golfer.hidden = !!on;
+      app.drewPaused = false;
+    },
+    freeze(on = true) {
+      app.frozen = !!on;
+      app.lastTime = 0;
+    },
+    freezeAtImpact: false,
   };
+}
+
+// ================================================================== golfer customiser
+// (section 9, Customiser) The Golfer screen (customiser.js) opens from the Golfer buttons on the menu
+// and the pause sheet (ui 'golfer'). While it is open, this section draws the studio preview instead
+// of the game or the menu backdrop: the golfer at address on the tee of the hole on the renderer
+// (the menu's course, or the hole being played), lit by a key light beside the camera, turned and
+// zoomed by the customiser's view (drag, pinch, tabs) and framed in its see-through stage by a lens
+// shift (cam.shiftX / shiftY). Look changes rebuild the mesh (kept per look and club; slider drags
+// are throttled by the customiser) and re-fit the rig when the body changes; Try swing plays a full
+// swing in the look's style with the preview club (whoosh and strike; the ball is gone until he is
+// back at address). Done saves the look (customiser.js) and hands it to the game
+// (app.applyGolferLook rebuilds the in-game golfer at once); Cancel changes nothing. The frame
+// allocates nothing. Hooks: initCustomiser() in boot, studioFrame() at the top of render().
+const STUDIO_HALF_FOV = 14 * DEG; // half the vertical field of view inside the stage's frame
+const STUDIO_HOLD_S = 1.3; // the finish is held this long before he steps back to address
+const STUDIO_MESHES = 8; // meshes kept (looks and clubs flicked back and forth rebuild nothing)
+const STUDIO_WHOOSH_LEAD = 0.16; // s: the whoosh starts this long before impact (it peaks there)
+const STUDIO_IMPACT = { D: 'driver', '7i': 'iron', SW: 'wedge', P: 'putter' };
+const studio = {
+  on: false,
+  anim: null,
+  mesh: null,
+  meshes: new Map(),
+  look: null,
+  club: 'D',
+  terrain: null,
+  H: 1.8,
+  ground: 0,
+  fx: 1, // the way he faces (toward the ball line), a horizontal unit vector
+  fy: 0,
+  hand: 1, // 1 right-handed, -1 left-handed
+  swing: 0, // 0 at address, 1 swinging, 2 holding the finish, 3 stepping back
+  t: 0,
+  tImpact: 0,
+  whoosh: false,
+  ballOut: false,
+  swings: 0, // swings started and impacts shown (tests)
+  impacts: 0,
+  pel: { x: 0, y: 0, z: 0 },
+  head: { x: 0, y: 0, z: 0 },
+  gaze: 0, // 0..1: how far his head turns from the ball to the camera (the face close-up)
+  ballG: new Float64Array(3), // the rig's own head target (the ball in his frame)
+  cam: { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fovY: 0.5, near: 0.1, far: 3000, shiftX: 0, shiftY: 0 },
+  scene: null,
+};
+studio.scene = {
+  time: 0,
+  cam: studio.cam,
+  ball: { x: 0, y: 0, z: 0, visible: true, minPx: 0 },
+  trail: null,
+  aim: null,
+  pin: { visible: true },
+  wind: { x: 1.2, y: 0.5 },
+  read: { on: false },
+  sunDir: { x: 0, y: 0, z: 1 },
+  golfer: { visible: true, mesh: null, bones: null, alpha: 1, fadeNear: false },
+};
+
+function initCustomiser() {
+  app.customiser = new Customiser(document, {
+    onChange: studioLook,
+    onClub: studioClub,
+    onTry: studioTry,
+    onDone: (look) => {
+      if (app.applyGolferLook) app.applyGolferLook(look);
+    },
+    onClose: closeStudio,
+  });
+  renderAvatars(document, studioLoadLook());
+  app.ui.on('golfer', openCustomiser);
+  if (app.debug) {
+    app.debug.studio = () => ({
+      open: !!(app.customiser && app.customiser.isOpen),
+      look: studio.look && { ...studio.look },
+      club: studio.club,
+      meshKey: studio.mesh ? studio.mesh.key : null,
+      state: studio.anim ? studio.anim.state : null,
+      swing: studio.swing,
+      swings: studio.swings,
+      impacts: studio.impacts,
+      ballOut: studio.ballOut,
+      frame: app.customiser && { ...app.customiser.frameRect },
+      shift: [studio.cam.shiftX, studio.cam.shiftY],
+    });
+    if (!app.debug.golferLook) app.debug.golferLook = () => (app.golfer && app.golfer.look ? { ...app.golfer.look } : null);
+  }
+}
+
+function openCustomiser() {
+  const cz = app.customiser;
+  if (!cz || cz.isOpen) return;
+  cz.open(studioLoadLook(), { from: app.game ? 'pause' : 'menu' });
+  studio.look = { ...cz.look };
+  studio.club = cz.club;
+  studio.on = true;
+  studioPlace();
+  updateInputMode();
+}
+
+// Done or Cancel: back to the menu backdrop or the paused game (drawn once more under the sheet).
+function closeStudio() {
+  studio.on = false;
+  studio.meshes.clear();
+  studio.mesh = null;
+  studio.scene.golfer.mesh = null;
+  app.drewPaused = false;
+  app.lastTime = 0;
+  updateInputMode();
+}
+
+// The golfer at address on the tee (the ball teed there), facing down the hole.
+function studioPlace() {
+  const t = app.holeTerrain;
+  studio.terrain = t;
+  let x = 0;
+  let y = 0;
+  let yaw = Math.PI / 2;
+  if (t) {
+    const tee = t.tee;
+    const ap = t.aimPoint ? t.aimPoint(tee) : t.cup;
+    x = tee.x;
+    y = tee.y;
+    yaw = Math.atan2(ap.y - tee.y, ap.x - tee.x);
+  }
+  const gz = t ? t.heightAt(x, y) : 0;
+  const ball = studio.scene.ball;
+  ball.x = x;
+  ball.y = y;
+  ball.z = gz + STUDIO_BALL_R;
+  const handed = app.ui.getSetting('handed') === 'L' ? 'L' : 'R';
+  const opts = { ball: { x, y, z: ball.z }, aimYaw: yaw, terrain: t || null, ground: t ? null : () => 0, handed, club: studio.club, look: studio.look };
+  if (!studio.anim) studio.anim = new StudioAnimator(studio.look, opts);
+  else studio.anim.place(opts);
+  studio.anim.style = studio.look.swing;
+  studio.hand = handed === 'L' ? -1 : 1;
+  // Facing: right(aim) for a right-hander, its mirror for a left-hander.
+  studio.fx = Math.sin(yaw) * studio.hand;
+  studio.fy = -Math.cos(yaw) * studio.hand;
+  studio.ground = gz;
+  studio.H = studio.look.height / 100;
+  studio.anim.jointWorld(STUDIO_BONES.pelvis, studio.pel);
+  studio.ballG.set(studio.anim.rig.ballG);
+  studio.gaze = 0;
+  studioSwingDone();
+  studioMeshNow();
+}
+
+function studioMeshNow() {
+  const k = `${studioLookKey(studio.look)}#${studio.club}`;
+  let m = studio.meshes.get(k);
+  if (m) studio.meshes.delete(k);
+  else m = buildStudioMesh(studio.look, studio.club);
+  studio.meshes.set(k, m);
+  while (studio.meshes.size > STUDIO_MESHES) studio.meshes.delete(studio.meshes.keys().next().value);
+  studio.mesh = m;
+}
+
+// A look change from the customiser: the mesh always, the rig only when the body changed (which
+// ends a swing in progress); the swing style takes effect on the next swing.
+function studioLook(look) {
+  if (!studio.on) return;
+  const prev = studio.look;
+  studio.look = { ...look };
+  if (prev.body !== look.body || prev.height !== look.height || prev.build !== look.build) studioPlace();
+  else {
+    studio.anim.look = studio.look;
+    if (studio.swing === 0) studio.anim.style = look.swing;
+    studioMeshNow();
+  }
+}
+
+function studioClub(id) {
+  if (!studio.on) return;
+  studio.club = id;
+  studioPlace();
+}
+
+function studioTry() {
+  const A = studio.anim;
+  if (!studio.on || !A || studio.swing === 1) return;
+  if (A.state !== 'address') A.reset();
+  studioSwingDone();
+  studioLookAt(0); // eyes back on the ball
+  const putt = studio.club === 'P';
+  const power = putt ? 0.5 : 1;
+  A.style = studio.look.swing;
+  studio.tImpact = A.strike({
+    power,
+    style: studio.look.swing,
+    onImpact: () => {
+      studio.ballOut = true;
+      studio.impacts++;
+      app.audio.impact(STUDIO_IMPACT[studio.club] || 'iron', power);
+    },
+  });
+  studio.t = 0;
+  studio.whoosh = putt;
+  studio.swing = 1;
+  studio.swings++;
+  app.customiser.setSwinging(true);
+}
+
+function studioSwingDone() {
+  studio.swing = 0;
+  studio.t = 0;
+  studio.ballOut = false;
+  if (app.customiser) app.customiser.setSwinging(false);
+}
+
+// Per frame while the customiser is open (called first in render()): true = drawn here.
+function studioFrame(time, dt) {
+  if (!studio.on) return false;
+  const A = studio.anim;
+  const cz = app.customiser;
+  if (!A || !cz) return true;
+  const sdt = dt * FAST; // the swing plays at ?fast like the game's (the camera does not)
+  // The swing: whoosh before impact, hold the finish, then ease back to address.
+  if (studio.swing === 1) {
+    studio.t += sdt;
+    if (!studio.whoosh && studio.tImpact - studio.t <= STUDIO_WHOOSH_LEAD) {
+      studio.whoosh = true;
+      app.audio.handle({ type: 'swing', power: 1 });
+    }
+    if (A.state === 'finish' || (A.state === 'follow' && studio.club === 'P' && studio.t > studio.tImpact + 0.9)) {
+      studio.swing = 2;
+      studio.t = 0;
+    }
+  } else if (studio.swing === 2) {
+    studio.t += sdt;
+    if (studio.t >= STUDIO_HOLD_S) {
+      A.cancel();
+      studio.swing = 3;
+    }
+  } else if (studio.swing === 3 && A.state === 'address') studioSwingDone();
+  // Face close-up at address: he looks up at the camera.
+  const want = studio.swing === 0 && A.state === 'address' && cz.view.zoom > 0.45 ? 1 : 0;
+  studioLookAt(studio.gaze + (want - studio.gaze) * (1 - Math.exp(-4 * dt)));
+  // In steps of at most 0.1 s (the animator's own clamp), stopping on the impact frame so it is drawn.
+  let left = Math.min(sdt, 1);
+  for (let i = 0; i < 10 && left > 1e-6; i++) {
+    const step = Math.min(0.1, left);
+    left -= step;
+    const before = A.state;
+    A.update(step);
+    if (before === 'downswing' && A.state === 'follow') break;
+  }
+  const v = cz.stepView(dt);
+  if (app.renderer.isNull) return true;
+  studioCamera(v, cz.frameRect);
+  const s = studio.scene;
+  s.time = time;
+  s.ball.visible = !studio.ballOut;
+  s.golfer.mesh = studio.mesh;
+  s.golfer.bones = A.bones;
+  app.renderer.draw(s);
+  return true;
+}
+
+// His head's look target (swing-anim.js aims the head at rig.ballG; the keys were solved from the
+// ball at placement, so at run time only the head reads it): from the ball (w 0) toward the camera
+// (w 1), written in his frame G (rig.W is G -> world: a rotation, mirrored for a left-hander).
+function studioLookAt(w) {
+  studio.gaze = w < 0.002 ? 0 : w;
+  const rig = studio.anim && studio.anim.rig;
+  if (!rig) return;
+  const bg = rig.ballG;
+  const b0 = studio.ballG;
+  if (!studio.gaze) {
+    bg[0] = b0[0];
+    bg[1] = b0[1];
+    bg[2] = b0[2];
+    return;
+  }
+  const W = rig.W;
+  const e = studio.cam.eye;
+  const px = e.x - W[12];
+  const py = e.y - W[13];
+  const pz = e.z - W[14];
+  const k = studio.gaze;
+  bg[0] = b0[0] + (W[0] * px + W[1] * py + W[2] * pz - b0[0]) * k;
+  bg[1] = b0[1] + (W[4] * px + W[5] * py + W[6] * pz - b0[1]) * k;
+  bg[2] = b0[2] + (W[8] * px + W[9] * py + W[10] * pz - b0[2]) * k;
+}
+
+// The preview camera: full body (zoom 0) to the face (zoom 1), wider for the swing (zoom < 0),
+// round the golfer by the view's yaw (0 = face on, + toward his target side), framed in the
+// stage's frame rect with a lens shift. Writes studio.cam and the key light (scene.sunDir).
+function studioCamera(v, fr) {
+  const s = studio;
+  const H = s.H;
+  const c = s.cam;
+  const zf = clamp(v.zoom, 0, 1);
+  const e = zf * zf * (3 - 2 * zf);
+  const wide = clamp(-v.zoom, 0, 0.6);
+  // Targets: the middle of the figure at address; the face (the head bone sits at the chin).
+  s.anim.jointWorld(STUDIO_BONES.head, s.head);
+  const k = H / 1.8;
+  const bx = s.pel.x + s.fx * 0.16 * k;
+  const by = s.pel.y + s.fy * 0.16 * k;
+  const bz = s.ground + (0.44 + 0.16 * wide) * H;
+  const hx = s.head.x + s.fx * 0.05 * k;
+  const hy = s.head.y + s.fy * 0.05 * k;
+  const hz = s.head.z + 0.09 * k;
+  const tx = bx + (hx - bx) * e;
+  const ty = by + (hy - by) * e;
+  const tz = bz + (hz - bz) * e;
+  // Distance: the body's half-height (and the club) fills the frame; the face about 0.2 m.
+  const tanH = Math.tan(STUDIO_HALF_FOV);
+  const dBody = ((0.6 + 0.75 * wide) * H + 0.1) / tanH;
+  const dFace = 0.3 / tanH;
+  const d = dBody * Math.pow(dFace / dBody, e);
+  const elev = 0.07 - 0.09 * e + v.pitch;
+  const a = v.yaw * s.hand;
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const dx = s.fx * ca - s.fy * sa;
+  const dy = s.fx * sa + s.fy * ca;
+  const ce = Math.cos(elev);
+  c.target.x = tx;
+  c.target.y = ty;
+  c.target.z = tz;
+  c.eye.x = tx + dx * d * ce;
+  c.eye.y = ty + dy * d * ce;
+  c.eye.z = tz + d * Math.sin(elev);
+  const t = s.terrain;
+  if (t) c.eye.z = Math.max(c.eye.z, t.heightAt(c.eye.x, c.eye.y) + 0.25);
+  // Lens: the frame rect's own field of view, centred on it.
+  const W = Math.max(1, app.cssW);
+  const Hc = Math.max(1, app.cssH);
+  c.fovY = 2 * Math.atan((tanH * Hc) / Math.max(40, fr.h));
+  c.shiftX = (2 * (fr.x + fr.w / 2)) / W - 1;
+  c.shiftY = 1 - (2 * (fr.y + fr.h / 2)) / Hc;
+  c.near = clamp(d * 0.25, 0.08, 0.6);
+  // Key light from beside the camera (up and to its left), so the face is always lit.
+  const kl = a + 0.6 * s.hand;
+  const sun = s.scene.sunDir;
+  sun.x = (s.fx * Math.cos(kl) - s.fy * Math.sin(kl)) * 0.72;
+  sun.y = (s.fx * Math.sin(kl) + s.fy * Math.cos(kl)) * 0.72;
+  sun.z = 0.69;
 }
 
 // ------------------------------------------------------------------ boot
@@ -1528,6 +2487,7 @@ function boot() {
   app.audio = new AudioFX();
   app.audio.setEnabled(settings.sound);
   app.rig = new CameraRig();
+  initGolfer();
   app.input = new InputController(canvas, {
     onAim,
     onSwingStart: () => app.ui.setHint(null),
@@ -1535,7 +2495,7 @@ function boot() {
     onSwing,
     onSwingCancel,
     onPadTap,
-    onOrbit: (dyaw) => app.rig.orbit(dyaw),
+    onOrbit,
     onTap,
     onSkip,
   });
@@ -1566,6 +2526,8 @@ function boot() {
   ui.on('club-prev', () => changeClub(-1));
   ui.on('club-next', () => changeClub(1));
   ui.on('read', () => setView(app.view === 'read' ? 'play' : 'read'));
+  ui.on('read-cam', setReadCam);
+  ui.on('aim-read', aimAtRead);
   ui.on('map', () => setView(app.view === 'map' ? 'play' : 'map'));
   ui.on('flyover', () => setView('flyover'));
   ui.on('putt-range+', () => app.game && (app.game.stepPuttRange(1), refreshClub()));
@@ -1575,6 +2537,7 @@ function boot() {
     resize();
   });
   ui.onChange(onSettings);
+  initCustomiser(); // the Golfer customiser (section 9, Customiser)
 
   // Size: the canvas follows the layout viewport; iOS changes it with the toolbars and rotation.
   const relayout = () => requestAnimationFrame(resize);
@@ -1596,6 +2559,7 @@ function boot() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       app.audio.suspend();
+      flushSwing(); // a swing on its way down is struck before the save
       saveGame();
     } else {
       app.audio.resume();
@@ -1603,7 +2567,10 @@ function boot() {
       if (app.game) requestWakeLock();
     }
   });
-  globalThis.addEventListener('pagehide', saveGame);
+  globalThis.addEventListener('pagehide', () => {
+    flushSwing();
+    saveGame();
+  });
 
   // Build the menu backdrop (hole 1) after the spinner has painted.
   ui.setLoading(true, 'Loading course');

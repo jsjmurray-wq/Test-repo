@@ -36,7 +36,8 @@ and the saved round remembers its course.
 | Special shot | Tap **Shot** beside the club picker and pick one (see below). It lasts one stroke |
 | Putt | Drag down to set the pace (the readout shows the flat-roll distance; the notch is the pace that finishes just past the cup), then release. Slide back up to the start, or off to the side, to cancel |
 | Putt range | **−** / **+** next to the putter |
-| Read the green | **Read**, then drag to look around (slope grid on the green) |
+| Read the green | On the green the **caddie's read** sits under the info card: how much the putt breaks and which way ("Breaks ~1 ft R→L"), uphill or downhill and how long it plays ("plays 21 ft"), and where to aim ("Aim 2 cups right"). **Aim at read** lines you up on it (and picks a putt range that fits); the gold notch is then the caddie's pace. A dotted **preview line** shows where the putt at your aim and pace rolls, bending with the break; it turns gold when it would drop (all of it on Easy, the start on Normal, none on Pro; Settings → Putt preview). **Read** shows the slope: streaks flowing downhill (green under 1%, yellow to 2.5%, orange to 4%, red steeper), arrows, height contours and the slope % at the ball and the hole; drag to look around, or **Behind ball**, **Behind hole** or **Overhead** |
+| Chip preview | Within 40 m of the green (not on Pro) a chip or pitch shows where it rolls after landing |
 | Map | **Map**, then tap a point on the course to aim straight at it |
 | Flyover | **Flyover** replays the hole preview |
 | Change club | ◀ / ▶ on the club picker (the caddie picks one for every new lie) |
@@ -59,10 +60,27 @@ The club readout, power arc, target notch and toast all follow the selected shot
 
 ## Your golfer
 
-The game has a realistic golfer character (smooth low-poly, console-golf proportions) who addresses
-the ball, swings and holds the finish. The character and its swing are built; showing it in the
-round, the customiser screen and the TV camera behind the golfer arrive with the next update.
-Meanwhile `tests/visual/golfer-preview.html` shows the golfer on the first tee of Hollow Pines.
+You see your golfer hit every shot: a realistic golfer (smooth low-poly, console-golf proportions)
+steps up to the ball at every address, on the tee, the fairway, in the rough, in a bunker and on the
+green, holding the club you picked and facing your aim (he turns with it), and waggles and glances
+at the target while you line up. The camera is the TV shot from behind him down the target line
+(on the left of the screen for a right-hander, the right for a left-hander), with the ball in the
+swing arc and the target, landing area and flag in view.
+
+- **Your swipe is his swing.** As you drag down he takes the club back as far as the power gauge
+  says (a half swipe is a half swing; the tap meter drives him the same way); let go to cancel and
+  he eases back to address. Flick up and he swings down: the ball leaves the club at impact, about
+  a quarter of a second later, with the swish of the club and the strike. Putts are a putting
+  stroke, and the special shots look the part (held-off stinger and punch, open-faced flop, a short
+  bump & run).
+- **TV coverage.** After the strike the camera holds on his follow-through as the ball leaves, then
+  follows it; he holds his finish until the camera has gone. Read, Map and the flyover leave him
+  out of the picture.
+- Your look, height and swing style are saved on the device (`golf.golfer.v1`). `?autoplay` and the
+  bot swing through him too.
+
+The character can also be viewed on its own in `tests/visual/golfer-preview.html`, on the first tee
+of Hollow Pines.
 
 | Choice | Options |
 |---|---|
@@ -99,8 +117,9 @@ or worse are boxed.
 
 Settings (persisted on the device): units (yards or metres), wind (off, light, breezy; the links
 adds more), swing control (swipe or tap meter), difficulty (easy, normal, pro: how much the shape of
-your swipe affects the ball; Easy also snaps power onto the target notch), left- or right-handed,
-sound, and graphics quality.
+your swipe affects the ball; Easy also snaps power onto the target notch), putt preview (auto, full,
+part, off: auto is full on Easy, part on Normal, off on Pro), left- or right-handed, sound, and
+graphics quality.
 
 ## Running
 
@@ -127,7 +146,10 @@ Eighteen), `?hole=N` (start a round at hole N),
 viewports, on both `index.html` and `dist/golf.html`: a Hollow Pines hole with a short-flick swing,
 a cancelled swing, a tap-meter shot, pause and resume, then the course picker and a round on each
 new course with a special shot from the shot sheet, reload and resume, a Mixed Nine round, and a Mixed
-Eighteen round taken to the 10th (the Out/In scorecard, rotation, reload and resume). `--shots` saves
+Eighteen round taken to the 10th (the Out/In scorecard, rotation, reload and resume), then green
+reading on three of its greens (the read card, the preview line, Read with each camera inside the
+draw-call budget, Aim at read and a touch putt on the notch that drops or finishes within 0.5 m, and
+the Putt preview setting). `--shots` saves
 screenshots to `screenshots/`; `--soak` adds a full autoplay round on every course and both mixed sizes
 (`--courses=desert,mixed18` for some; `--soak-only` skips the UI flow) and checks the renderer stays
 within its draw-call budget.
@@ -149,6 +171,7 @@ resume after closing Safari.
 | `src/noise.js`, `spline.js`, `terrain.js` | Procedural terrain from the hole data: corridors, desert/fescue/waste, pot bunkers, island and sea water, themed objects |
 | `src/course.js`, `course-desert.js`, `course-water.js`, `course-links.js`, `courses.js` | The four courses as data (Hollow Pines, Red Mesa, Coral Cay, Kittiwake Links) and the course registry |
 | `src/lie.js`, `swing.js`, `shots.js`, `caddie.js`, `rules.js`, `scoring.js`, `game.js`, `bot.js` | Gameplay: lies, swipe interpretation, special shots, club suggestions, rules, scorecard, state machine, autoplay bot |
+| `src/putting-aid.js`, `green-flow.js` | Green reading: the putt and chip previews, the caddie's read and its words, slope bands, the preview throttle; the flowing slope streaks |
 | `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js`, `themes.js` | WebGL renderer, per-course looks (parkland, desert, tropical, links) and camera rig |
 | `src/golfer.js`, `golfer-mesh.js`, `swing-anim.js` | The golfer: skeleton, customisable look and presets, the skinned mesh, swing poses, IK and the animator |
 | `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures and tap meter, DOM HUD and menus, synthesised audio, boot and loop |
