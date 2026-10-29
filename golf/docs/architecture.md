@@ -1927,6 +1927,21 @@ frozen before impact: pending, input off, a second swipe ignored, pause strikes 
 a left-hander (mirrored, right of the ball), a putt (putter, putting stroke, rolls at impact); `golferAt` on Red
 Mesa, Coral Cay and Kittiwake Links; the soak checks every bot shot was launched at impact.
 
+**Results** (SwiftShader, a machine shared with other e2e runs): `npm test` 360 tests pass (a hole-build timing
+test needed a re-run under load); ESLint clean; `--golfer` 84/84 checks (portrait, landscape and foldable on
+`index.html`; the stale `dist/` has no golfer and skips); the full flow on `index.html` passes everything except the
+foldable's two tap-meter timing checks (the SwiftShader load flake of §8.8 and §9.6: the second tap arrived seconds
+late); autoplay rounds on Hollow Pines, Red Mesa, Coral Cay, Kittiwake Links and a Mixed Nine (`?fast=20`): every
+bot shot (40, 38, 37, 41, 39) launched at the golfer's impact frame with the club head on the ball, no watchdog
+launches, no errors, peak 17–21 draw calls. Screenshots were reviewed in portrait and landscape: tee, approach,
+chip, bunker and putt addresses, a left-hander, the top of a live swipe, impact, the follow-through with the ball in
+flight, the pan after the hold, and a holed putt.
+
+**Known gaps:** the camera pan after the hold slides the golfer out of the bottom of the frame rather than cutting
+away; while a putt preview line is drawn the green-reading stage shows him see-through (his framing keeps him clear
+of the line anyway); the target notch of the power arc can sit over his head at low powers; a look changed from the
+pause sheet in mid-flight puts him back at address where he struck it.
+
 ### 9.8 Customiser (`customiser.js`, as built)
 
 The second half of the user request, "you can select what he looks like": a full-screen **Golfer** screen,

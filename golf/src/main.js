@@ -1242,8 +1242,8 @@ const PLACE_EVERY = 0.03; // s: an aim drag re-places him at most this often
 const golfer = {
   anim: null, // SwingAnimator
   look: null, // the player's look (golfer.js)
-  lookKey: '',
-  meshes: new Map(), // `${lookKey}#${club}` -> buildGolferMesh() result (LRU)
+  lookKey: '', // the look's key without the swing style (meshes and placement)
+  meshes: new Map(), // `${lookKey}#${club}` -> buildGolferMesh() result (LRU; old looks age out)
   meshLook: '', // the look of scene.mesh
   key: '', // what he was placed for (ball, aim, club, shot, hand, look); '' = not placed
   placedAt: -1,
@@ -1257,9 +1257,12 @@ const golfer = {
 };
 app.golfer = golfer;
 
+// The mesh does not depend on the swing style: a style-only change keeps it.
+const meshLookKey = (look) => lookKey({ ...look, swing: 'classic' });
+
 function initGolfer() {
   golfer.look = loadLook();
-  golfer.lookKey = lookKey(golfer.look);
+  golfer.lookKey = meshLookKey(golfer.look);
   golfer.anim = new SwingAnimator(golfer.look, { club: '7i' });
 }
 
@@ -1268,8 +1271,7 @@ function initGolfer() {
 function applyGolferLook(look) {
   flushSwing();
   golfer.look = normalizeLook(look);
-  golfer.lookKey = lookKey(golfer.look);
-  golfer.meshes.clear();
+  golfer.lookKey = meshLookKey(golfer.look);
   if (golfer.anim) golfer.anim.setLook(golfer.look);
   golfer.key = '';
   const g = app.game;
