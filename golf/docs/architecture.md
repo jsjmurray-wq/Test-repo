@@ -1986,7 +1986,7 @@ PREVIEW_CLUBS, TABS, SLIDER_MS
   game or the menu backdrop, on the same canvas and Renderer (no second WebGL context). The golfer stands at
   address on the tee of the hole on the renderer (`app.holeTerrain`: the menu's course backdrop, or the hole in
   play), facing its aim point, with the preview club and the player's hand; meshes are kept per look and club
-  (8), and the rig is re-fitted (about 0.5 ms) only when the figure, height, build or club change. The camera
+  (8; the swing style is not part of the mesh, and nothing is built without WebGL), and the rig is re-fitted (about 0.5 ms) only when the figure, height, build or club change. The camera
   is framed in `cz.frameRect` with its own vertical field of view (2 × 14° inside the frame: `fovY = 2 atan(tan
   14° · canvas height / frame height)`) and a lens shift onto it: `cam.shiftX` and the new **`cam.shiftY`** (NDC,
   + up; render.js `proj[9]`, used by `project` and `pickTerrain` too). Distance: (0.6 H + 0.1) / tan 14° for the

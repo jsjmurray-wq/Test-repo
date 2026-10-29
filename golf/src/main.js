@@ -2321,11 +2321,19 @@ function studioPlace() {
   studioMeshNow();
 }
 
+// The mesh for the look and club (kept per look and club; the swing style is not part of the mesh,
+// so a new style rebuilds nothing). Nothing is built without WebGL (nothing is drawn).
 function studioMeshNow() {
-  const k = `${studioLookKey(studio.look)}#${studio.club}`;
+  if (app.renderer.isNull) {
+    studio.mesh = null;
+    return;
+  }
+  const look = { ...studio.look, swing: 'classic' };
+  const k = `${studioLookKey(look)}#${studio.club}`;
+  if (studio.mesh && studio.meshes.get(k) === studio.mesh) return;
   let m = studio.meshes.get(k);
   if (m) studio.meshes.delete(k);
-  else m = buildStudioMesh(studio.look, studio.club);
+  else m = buildStudioMesh(look, studio.club);
   studio.meshes.set(k, m);
   while (studio.meshes.size > STUDIO_MESHES) studio.meshes.delete(studio.meshes.keys().next().value);
   studio.mesh = m;
