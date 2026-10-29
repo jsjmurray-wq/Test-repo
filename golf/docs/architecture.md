@@ -1877,6 +1877,13 @@ hands); a live backswing through a re-placement and a cancel taken over at once.
 timing checks on the foldable's `dist/golf.html`, a SwiftShader load flake that also fails on the build before this
 stage (the golfer is not drawn in the game yet).
 
+**Results after review 4** (SwiftShader): `npm test` 363/363; ESLint clean; `node tests/e2e.spec.mjs --shots` 1244/1244
+(portrait, landscape and foldable on `index.html` and `dist/golf.html`, golfer and customiser flows included; the
+e2e now blanks the game page before the customiser's own pages, retries a preset tap lost while its row scrolls, and
+counts a penalty drop apart in the paused-swing stroke check); `--soak-only` 48/48 (every course on both builds, the
+golfer struck every bot shot at impact, 17–20 draw calls). `golfer-shots.mjs` sheets reviewed: driver, 7-iron,
+wedge, putter, a left-hander.
+
 **Known gaps**: (the game showing the golfer: §9.7) faces are deliberately simple (no texture maps); two-bone
 blending shows soft creases (not seams) at the knees and wrists in extreme poses, and a faint crease remains under
 the lead buttock in the finish; long hair does not collide with the shoulders; the club does not flex.
