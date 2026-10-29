@@ -1481,7 +1481,11 @@ The fixed courses stay at nine holes.
   (18 picks, par 72), `debug.skipTo(8, ...)`, a real touch putt on the 9th, the scorecard (Out/In/Tot, 18 chips,
   Out = holes 1–9, two blocks in portrait and one row in landscape, no overflow), rotation with the card open, Next
   hole → 10, reload → "Mixed Eighteen · Hole 10" → Resume with the same draw and card. The soak adds `mixed18`
-  (`?course=mixed&holes=18`, 18 holes, 30 min timeout).
+  (`?course=mixed&holes=18`, 18 holes, 30 min timeout; skipped on a build without Mixed Eighteen).
+- Results when built: `npm test` 328/328; ESLint clean; e2e on `index.html` in all three viewports: every Mixed Nine
+  and Mixed Eighteen check passes, no console errors (the foldable's tap-meter timing checks failed while two e2e
+  runs shared the CPU); soak `mixed18` on `index.html`: 18 holes in 238 s, peak 16 draw calls, no errors. `dist/` is
+  rebuilt by the release step (until then its runs skip Mixed Eighteen).
 
 ## 9. Golfer (as built)
 
