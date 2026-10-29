@@ -1650,18 +1650,26 @@ export class SwingAnimator {
     return res;
   }
 
-  // Evaluate a named pose immediately (previews and tests): 'address' | 'top' | 'impact' |
-  // 'finish' | 'half' | 'P2'.. | {phase:'back'|'down'|'follow', u}
+  // Evaluate a named pose immediately (previews and tests): 'address' | 'P2' | 'half' (P3) | 'top'
+  // (P4, at this power) | 'P5' | 'P6' | 'impact' (P7) | 'P8' | 'P9' | 'finish' (P10). Putts map the
+  // names onto the stroke: back halfway (P2, P3), top, coming down (P5, P6), impact, through (P8,
+  // P9), finish.
   showPose(name, power = 1) {
     const k = this.rig.keys;
     const out = this.prm;
     if (k.putt) {
-      out.set(k.P1);
-      if (name === 'top') out[P.rock] = puttRock(power);
-      else if (name === 'finish') {
+      const top = puttRock(power);
+      const back = { P2: 0.5, half: 0.8, P3: 0.8, top: 1, P4: 1, P5: 0.6, P6: 0.25 }[name];
+      const thru = { P8: 0.45, P9: 0.8, finish: 1.15, P10: 1.15 }[name];
+      if (back != null) {
+        if (name === 'P5' || name === 'P6') mixParams(out, k.P1, k.P7, name === 'P6' ? 0.7 : 0.3);
+        else out.set(k.P1);
+        out[P.rock] = top * back;
+      } else if (thru != null) {
         out.set(k.P7);
-        out[P.rock] = -puttRock(power) * 1.15;
-      } else if (name === 'impact') out.set(k.P7);
+        out[P.rock] = -top * thru;
+      } else if (name === 'impact' || name === 'P7') out.set(k.P7);
+      else out.set(k.P1);
     } else if (name === 'address' || name === 'P1') out.set(k.P1);
     else if (name === 'impact' || name === 'P7') out.set(k.P7);
     else if (name === 'top' || name === 'P4') splineKeys(k.back, backU(power, this.style), out);

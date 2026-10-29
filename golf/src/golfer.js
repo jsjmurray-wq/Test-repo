@@ -16,7 +16,8 @@
 //
 // Exports
 //   BONES, BONE_COUNT, B (name -> index), BONE_PARENT
-//   SKIN_TONES, HAIR_COLORS, CLOTH_COLORS (palettes: {id, name, hex}), OPTIONS (every look option)
+//   SKIN_TONES, HAIR_COLORS, CLOTH_COLORS (palettes: {id, name, hex}), OPTIONS (every look option),
+//   OPTION_NAMES (display names)
 //   DEFAULT_LOOK, normalizeLook(any), PRESETS, presetById(id), randomLook(rng), lookKey(look)
 //   hexToRgb(hex) -> [r,g,b] 0..1 (sRGB)
 //   CLUB_SPECS, clubSpec(club | id | kind, heightM) -> {id, kind, head, len, lie, loft, ...}

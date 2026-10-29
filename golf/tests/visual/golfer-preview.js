@@ -7,8 +7,9 @@
 //   club=<id> (D, 3W, 4H, 7i, SW, P ...), handed=R|L, shot=<shots.js id>, power=0..1.1
 //   pose=address|P2|half|top|P5|P6|impact|P8|P9|finish (a key pose), or t=<seconds> into a scripted
 //        swing (address 0.4 s, backswing to `power`, a pause, strike; impact at about 1.7 s)
-//   cam=behind|face|side|target|top|close (behind = down the line, the in-game TV view), turn=deg
-//        (turntable round the golfer), dist=m, fov=deg, anim=1 (play the swing live, looping)
+//   cam=behind|face|side|close|profile|hands|clubhead|clubface (behind = down the line, the TV view),
+//        turn=deg (turntable round the golfer), spin=1 (auto-rotating turntable), dist=m, fov=deg,
+//        anim=1 (play the swing live, looping), gl1=1 (force WebGL1)
 //   course=pines|desert|water|links, hole=1..9, slope=x,y (a synthetic tilted ground instead)
 // window.__golfer.set({...same keys}) re-poses without a reload (screenshot scripts).
 
@@ -123,8 +124,8 @@ function main() {
     let at;
     if (mode === 'behind') {
       const k = dist || 4.2;
-      eye = { x: ball.x - d.x * k - f.x * 0.55, y: ball.y - d.y * k - f.y * 0.55, z: ball.z + 1.45 };
-      at = { x: ball.x + d.x * 3 - f.x * 0.45, y: ball.y + d.y * 3 - f.y * 0.45, z: ball.z + 0.75 };
+      eye = { x: ball.x - d.x * k - f.x * 0.6, y: ball.y - d.y * k - f.y * 0.6, z: ball.z + 1.45 };
+      at = { x: ball.x + d.x * 3 - f.x * 0.75, y: ball.y + d.y * 3 - f.y * 0.75, z: ball.z + 0.8 };
     } else if (mode === 'face') {
       const k = dist || 3.6;
       eye = { x: gc.x + f.x * k, y: gc.y + f.y * k, z: ball.z + 1.15 };
@@ -205,14 +206,29 @@ function main() {
   set(o);
   window.__golfer = { set, renderer, state, presets: PRESETS.map((p) => p.id) };
   document.body.dataset.ready = '1';
-  if (qs.get('anim') === '1') {
+  if (qs.get('anim') === '1' || qs.get('spin') === '1') {
     let last = performance.now();
     let t0 = 0;
+    let turn = Number(qs.get('turn')) || 0;
+    const swing = qs.get('anim') === '1';
     const loop = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const anim = state.anim;
       t0 += dt;
+      // Turntable: the camera circles the golfer at 24 degrees a second.
+      if (qs.get('spin') === '1') {
+        turn = (turn + dt * 24) % 360;
+        state.opts.turn = turn;
+        state.cam = cameraFor(state.opts, anim, state.ball, aimYaw);
+      }
+      if (!swing) {
+        anim.update(dt);
+        state.simT += dt;
+        draw();
+        requestAnimationFrame(loop);
+        return;
+      }
       if (t0 > 0.6 && anim.state === 'address' && !state.live) {
         state.live = true;
         anim.strike({ power: 1 });

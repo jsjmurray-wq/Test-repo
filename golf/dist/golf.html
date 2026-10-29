@@ -625,6 +625,20 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {
 /* Mixed Nine: a wide card under the four, its thumbnail the four courses' colours in slices. */
 .course-card.cc-mixed { grid-column: 1 / -1; flex-direction: row; align-items: center; }
 .course-card.cc-mixed .cc-thumb { width: 92px; height: auto; align-self: stretch; min-height: 56px; }
+/* With the 9 | 18 switch (a div card: the switch's buttons cannot sit in a button): the switch
+   under the text in portrait, on the right in landscape. */
+div.course-card.cc-mixed {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr); grid-template-rows: auto auto;
+  color: #fff; cursor: pointer; touch-action: manipulation;
+}
+div.course-card.cc-mixed .cc-thumb { grid-row: 1 / span 2; }
+div.course-card.cc-mixed .cc-body { padding-bottom: 6px; }
+.cc-holes {
+  grid-column: 2; justify-self: start; display: flex; margin: 0 10px 9px;
+  background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 2px;
+}
+.cc-holes button { min-width: 78px; height: 34px; padding: 0 12px; border-radius: 8px; font-size: 13.5px; font-weight: 700; color: rgba(255, 255, 255, 0.78); white-space: nowrap; }
+.cc-holes button[aria-pressed="true"] { background: #fff; color: #0b1a24; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
 .course-card.cc-mixed .cc-tag { min-height: 0; -webkit-line-clamp: 1; }
 .course-card.cc-mixed .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
 .course-card[data-theme="mixed"] .cc-thumb {
@@ -682,6 +696,17 @@ table.sc { width: 100%; border-collapse: separate; border-spacing: 0; font-size:
 .sc tr.r-hole td.tot { background: rgba(19, 122, 60, 0.95); }
 .sc td.cur { background: rgba(255, 210, 90, 0.12); }
 .sc tr.r-hole td.cur { background: var(--gold); color: #1b1606; }
+/* Eighteen holes (Mixed Eighteen): two blocks (portrait) or one long row (landscape). */
+#scorecard[data-holes="18"] .sc th { letter-spacing: 0.02em; padding-right: 4px; }
+#scorecard[data-holes="18"] .sc th, #scorecard[data-holes="18"] .sc td { min-width: 0; }
+#scorecard[data-holes="18"] .sc td.tot { padding: 0 2px; }
+#scorecard[data-holes="18"] .mk { width: 21px; height: 21px; }
+#scorecard[data-holes="18"] .sc tr.r-yds td { font-size: 10px; letter-spacing: -0.02em; }
+#scorecard[data-holes="18"] .sc { font-size: 12.5px; }
+.sc td.gap { background: none !important; border-bottom: 0 !important; }
+.sc tbody.sc-front tr.r-hole td.tot { border-radius: 0 8px 8px 0; }
+.sc tbody.sc-back tr.r-hole > * { border-top: 8px solid transparent; background-clip: padding-box; height: 38px; }
+#scorecard[data-card-layout="split"] .card { padding-left: 12px; padding-right: 12px; }
 .mk { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; line-height: 1; position: relative; }
 .mk.circ { border: 1.6px solid var(--red); border-radius: 50%; color: var(--red); }
 .mk.circ2 { border: 1.6px solid var(--red); border-radius: 50%; color: var(--red); box-shadow: 0 0 0 2px var(--glass-strong), 0 0 0 3.6px var(--red); }
@@ -761,6 +786,10 @@ body[data-layout="landscape"] .course-card { flex-direction: row; align-items: c
 body[data-layout="landscape"] .course-card.cc-mixed { min-height: 0; }
 body[data-layout="landscape"] .course-card.cc-mixed .cc-thumb { width: 58px; min-height: 44px; }
 body[data-layout="landscape"] .course-card.cc-mixed .cc-body { padding: 5px 9px; }
+body[data-layout="landscape"] div.course-card.cc-mixed { grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-rows: auto; }
+body[data-layout="landscape"] div.course-card.cc-mixed .cc-thumb { grid-row: 1; }
+body[data-layout="landscape"] .cc-holes { grid-column: 3; align-self: center; margin: 0 8px 0 0; }
+body[data-layout="landscape"] .cc-holes button { min-width: 64px; height: 32px; padding: 0 8px; font-size: 12.5px; }
 body[data-layout="landscape"] .cc-thumb { width: 58px; height: auto; align-self: stretch; }
 body[data-layout="landscape"] .cc-best { right: 4px; left: 4px; top: auto; bottom: 5px; text-align: center; padding: 1px 2px; font-size: 9.5px; }
 body[data-layout="landscape"] .cc-body { padding: 6px 9px; }
@@ -771,6 +800,7 @@ body[data-layout="landscape"] .course-card[data-theme="links"] .cc-thumb { backg
 body[data-layout="landscape"] .menu-actions { grid-column: 2; grid-row: 1 / span 2; align-self: center; max-width: 300px; }
 body[data-layout="landscape"] .sheet { max-width: 460px; padding: 16px 18px; }
 body[data-layout="landscape"] .card { max-width: 640px; }
+body[data-layout="landscape"] #scorecard[data-holes="18"] .card { max-width: 780px; }
 body[data-layout="landscape"] .sheet-t { font-size: 21px; }
 body[data-layout="landscape"] .btn { min-height: 44px; }
 body[data-layout="landscape"] .set-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 22px; }
@@ -4942,8 +4972,17 @@ const __m_courses = (() => {
 //       missing -> drawn from the seed). Each hole keeps its own course: holeCourse(course, i)
 //       gives the course to build hole i with (theme, conditions, wind), the course itself for a
 //       normal round.
-//   mixedSummary() -> menu card data for the mixed round (par 36, no fixed length)
-//   isCourseId(id)  a known course id or 'mixed';  courseName(id) -> display name
+//   mixedSummary(n = 9) -> menu card data for a mixed round (par 36 / 72, no fixed length)
+//   isCourseId(id)  a known course id, 'mixed' or 'mixed18';  courseName(id) -> display name
+//
+// Mixed Eighteen (section 8.8): MIXED18_ID 'mixed18' plays 18 holes drawn the same way.
+//   drawMixedHoles(seed, 18) -> two par-36 nines with no hole twice (4 par 3s, 4 par 5s, par 72),
+//       four or five holes from each course, par 4s on the 1st and 10th, never two holes of one
+//       course in a row (also across 9 -> 10) and no back-to-back par 3s or par 5s when a retry
+//       can avoid them. The nine-hole draw (n = 9) is unchanged for every seed.
+//   mixedCourse(seed, picks?, n?) -> as above with n holes (n: explicit, else a valid saved
+//       draw's length, else 9); MIXED_SIZES [9, 18]; isMixedId(id); mixedId(n) -> 'mixed' |
+//       'mixed18'; mixedHoles(id) -> 9 | 18 (0 for a fixed course)
 const { COURSE } = __m_course;
 const { DESERT } = __m_course_desert;
 const { WATER } = __m_course_water;
@@ -4991,12 +5030,29 @@ const MIX_PARS = { 3: 2, 4: 5, 5: 2 }; // par 36, the same make-up as every cour
 const MIX_MIN = 2; // holes per course (9 = 2 + 2 + 2 + 3)
 const MIX_MAX = 3;
 
+const MIXED18_ID = 'mixed18';
+const MIXED18_NAME = 'Mixed Eighteen';
+const MIXED18_TAGLINE = 'Eighteen random holes from all four courses';
+const MIXED_SIZES = [9, 18];
+
+function isMixedId(id) {
+  return id === MIXED_ID || id === MIXED18_ID;
+}
+
+function mixedId(n) {
+  return Number(n) === 18 ? MIXED18_ID : MIXED_ID;
+}
+
+function mixedHoles(id) {
+  return id === MIXED18_ID ? 18 : id === MIXED_ID ? 9 : 0;
+}
+
 function isCourseId(id) {
-  return id === MIXED_ID || COURSES.some((c) => c.id === id);
+  return isMixedId(id) || COURSES.some((c) => c.id === id);
 }
 
 function courseName(id) {
-  return id === MIXED_ID ? MIXED_NAME : courseById(id).name;
+  return id === MIXED18_ID ? MIXED18_NAME : id === MIXED_ID ? MIXED_NAME : courseById(id).name;
 }
 
 function shuffle(a, rng) {
@@ -5029,7 +5085,8 @@ function mixOrder(picks) {
   return out;
 }
 
-function drawMixedHoles(seed) {
+function drawMixedHoles(seed, n = 9) {
+  if (Number(n) === 18) return drawMixed18(seed);
   const rng = mulberry32(((seed >>> 0) ^ 0x6d1f3a5b) >>> 0);
   const all = [];
   for (const c of COURSES) c.holes.forEach((h, i) => all.push({ courseId: c.id, hole: i, par: h.par }));
@@ -5059,9 +5116,111 @@ function drawMixedHoles(seed) {
   return mixOrder(pick).map((h) => ({ courseId: h.courseId, hole: h.hole }));
 }
 
-// A saved draw is used as is when it names nine real holes.
-function validPicks(picks) {
-  if (!Array.isArray(picks) || picks.length !== 9) return null;
+// ---- Mixed Eighteen: two nines, each with the par make-up and course spread of a Mixed Nine.
+
+// One nine from `pool`: pars 2/5/2, two or three holes per course, exactly one course giving
+// three (never `noThree`, the course that gave the other nine its third). -> {got, three} | null
+function pickNine(pool, rng, noThree) {
+  for (let attempt = 0; attempt < 64; attempt++) {
+    shuffle(pool, rng);
+    const need = { ...MIX_PARS };
+    const per = {};
+    const got = [];
+    let three = null;
+    for (const h of pool) {
+      if (got.length === 9) break;
+      const k = per[h.courseId] || 0;
+      if (!need[h.par] || k >= MIX_MAX || (k === MIX_MAX - 1 && (three || h.courseId === noThree))) continue;
+      got.push(h);
+      need[h.par]--;
+      per[h.courseId] = k + 1;
+      if (k + 1 === MIX_MAX) three = h.courseId;
+    }
+    if (got.length === 9 && COURSES.every((c) => (per[c.id] || 0) >= MIX_MIN)) return { got, three };
+  }
+  return null;
+}
+
+// Playing order of one nine after the hole `prev` ({courseId, par} or null): a par 4 from another
+// course to open, then the course with the most holes left that is not the last one's; among
+// those, a hole whose par differs from a par-3 or par-5 predecessor.
+function mixOrder18(picks, prev = null) {
+  const left = picks.slice();
+  const out = [];
+  const count = (arr) => {
+    const c = {};
+    for (const h of arr) c[h.courseId] = (c[h.courseId] || 0) + 1;
+    return c;
+  };
+  let cnt = count(left);
+  let f = -1;
+  for (let j = 0; j < left.length; j++) {
+    const h = left[j];
+    if (h.par === 4 && (!prev || h.courseId !== prev.courseId) && (f < 0 || cnt[h.courseId] > cnt[left[f].courseId])) f = j;
+  }
+  out.push(left.splice(f < 0 ? 0 : f, 1)[0]);
+  while (left.length) {
+    const p = out[out.length - 1];
+    cnt = count(left);
+    const parOk = (h) => (p.par === 4 || h.par !== p.par ? 1 : 0);
+    let k = -1;
+    for (let j = 0; j < left.length; j++) {
+      const h = left[j];
+      if (h.courseId === p.courseId) continue;
+      if (k < 0) {
+        k = j;
+        continue;
+      }
+      const b = left[k];
+      const d = cnt[h.courseId] - cnt[b.courseId];
+      if (d > 0 || (d === 0 && parOk(h) > parOk(b))) k = j;
+    }
+    out.push(left.splice(k < 0 ? 0 : k, 1)[0]);
+  }
+  return out;
+}
+
+function parPairs(holes) {
+  let n = 0;
+  for (let i = 1; i < holes.length; i++) if (holes[i].par !== 4 && holes[i].par === holes[i - 1].par) n++;
+  return n;
+}
+
+function drawMixed18(seed) {
+  const rng = mulberry32(((seed >>> 0) ^ 0x6d1f3a5b ^ 0x1b873593) >>> 0);
+  const all = [];
+  for (const c of COURSES) c.holes.forEach((h, i) => all.push({ courseId: c.id, hole: i, par: h.par }));
+  let best = null;
+  let bestPairs = Infinity;
+  for (let attempt = 0; attempt < 32 && bestPairs > 0; attempt++) {
+    const a = pickNine(all.slice(), rng, null);
+    if (!a) continue;
+    const used = new Set(a.got.map((h) => `${h.courseId}:${h.hole}`));
+    const b = pickNine(all.filter((h) => !used.has(`${h.courseId}:${h.hole}`)), rng, a.three);
+    if (!b) continue;
+    const front = mixOrder18(a.got);
+    const back = mixOrder18(b.got, front[8]);
+    const r = front.concat(back);
+    let ok = r[0].par === 4 && r[9].par === 4;
+    for (let i = 1; i < 18 && ok; i++) if (r[i].courseId === r[i - 1].courseId) ok = false;
+    if (!ok) continue;
+    const pairs = parPairs(r);
+    if (pairs < bestPairs) {
+      best = r;
+      bestPairs = pairs;
+    }
+  }
+  // (Practically unreachable) fallback: two nines of the par make-up from distinct holes.
+  if (!best) {
+    const need = { 3: 4, 4: 10, 5: 4 };
+    best = all.filter((h) => need[h.par] > 0 && need[h.par]--);
+  }
+  return best.map((h) => ({ courseId: h.courseId, hole: h.hole }));
+}
+
+// A saved draw is used as is when it names n (9 or 18; any of those when n is null) real holes.
+function validPicks(picks, n = null) {
+  if (!Array.isArray(picks) || !(n == null ? MIXED_SIZES.includes(picks.length) : picks.length === n)) return null;
   for (const p of picks) {
     const c = p && COURSES.find((k) => k.id === p.courseId);
     if (!c || !Number.isInteger(p.hole) || !c.holes[p.hole]) return null;
@@ -5069,13 +5228,15 @@ function validPicks(picks) {
   return picks.map((p) => ({ courseId: p.courseId, hole: p.hole }));
 }
 
-function mixedCourse(seed, picks = null) {
-  const p = validPicks(picks) || drawMixedHoles(seed);
+function mixedCourse(seed, picks = null, n = null) {
+  const size = n != null && MIXED_SIZES.includes(Number(n)) ? Number(n) : null;
+  const p = validPicks(picks, size) || drawMixedHoles(seed, size || 9);
   const holeCourses = p.map((q) => courseById(q.courseId));
+  const eighteen = p.length === 18;
   return {
-    id: MIXED_ID,
-    name: MIXED_NAME,
-    tagline: MIXED_TAGLINE,
+    id: eighteen ? MIXED18_ID : MIXED_ID,
+    name: eighteen ? MIXED18_NAME : MIXED_NAME,
+    tagline: eighteen ? MIXED18_TAGLINE : MIXED_TAGLINE,
     theme: 'mixed',
     mixed: true,
     conditions: { ...DEFAULT_CONDITIONS },
@@ -5089,14 +5250,15 @@ function holeCourse(course, i) {
   return (course && course.holeCourses && course.holeCourses[i]) || course;
 }
 
-function mixedSummary() {
+function mixedSummary(n = 9) {
+  const holes = Number(n) === 18 ? 18 : 9;
   return {
-    id: MIXED_ID,
-    name: MIXED_NAME,
-    tagline: MIXED_TAGLINE,
+    id: mixedId(holes),
+    name: holes === 18 ? MIXED18_NAME : MIXED_NAME,
+    tagline: holes === 18 ? MIXED18_TAGLINE : MIXED_TAGLINE,
     theme: 'mixed',
-    holes: 9,
-    par: Object.entries(MIX_PARS).reduce((a, [par, n]) => a + par * n, 0),
+    holes,
+    par: (holes / 9) * Object.entries(MIX_PARS).reduce((a, [par, k]) => a + par * k, 0),
     lengthM: null,
     yards: null,
     mixed: true,
@@ -5104,7 +5266,7 @@ function mixedSummary() {
   };
 }
 
-return { PINES, COURSES, DEFAULT_COURSE_ID, courseById, courseSummary, MIXED_ID, MIXED_NAME, MIXED_TAGLINE, isCourseId, courseName, drawMixedHoles, mixedCourse, holeCourse, mixedSummary };
+return { PINES, COURSES, DEFAULT_COURSE_ID, courseById, courseSummary, MIXED_ID, MIXED_NAME, MIXED_TAGLINE, MIXED18_ID, MIXED18_NAME, MIXED18_TAGLINE, MIXED_SIZES, isMixedId, mixedId, mixedHoles, isCourseId, courseName, drawMixedHoles, mixedCourse, holeCourse, mixedSummary };
 })();
 
 // ---- src/clubs.js ----
@@ -8433,11 +8595,13 @@ const __m_scoring = (() => {
 //
 //   newCard(course) -> {course, holes:[{n, par, si, lengthM, strokes:null, putts:null,
 //                       penalties:null, fir:null, gir:null, pickUp:false}]}
-//       A mixed round (course.mixed) numbers its holes 1-9 in playing order and adds each hole's
+//       A mixed round (course.mixed) numbers its holes 1..n in playing order and adds each hole's
 //       own course: from {courseId, name, theme, n}.
 //   recordHole(card, i, {strokes, putts, penalties, fir, gir, pickUp}) -> card (mutated)
 //   totals(card) -> {played, strokes, par, toPar, coursePar, putts, penalties,
-//                    fir:{hit, of}, gir:{hit, of}, pickUps}
+//                    fir:{hit, of}, gir:{hit, of}, pickUps, out, in}
+//       out: holes 1-9, in: holes 10-18 (null on a nine-hole card), each
+//       {played, strokes, par, toPar, coursePar, putts}.
 //
 // fir is null on par 3s (no fairway to hit). toPar counts only the holes played so far.
 const { buildPath } = __m_spline;
@@ -8491,6 +8655,23 @@ function totals(card) {
     if (h.gir) t.gir.hit++;
   }
   t.toPar = t.strokes - t.par;
+  t.out = sumHoles(card.holes.slice(0, 9));
+  t.in = card.holes.length > 9 ? sumHoles(card.holes.slice(9, 18)) : null;
+  return t;
+}
+
+// Out / In: the front and back nine's sums.
+function sumHoles(holes) {
+  const t = { played: 0, strokes: 0, par: 0, toPar: 0, coursePar: 0, putts: 0 };
+  for (const h of holes) {
+    t.coursePar += h.par;
+    if (h.strokes == null) continue;
+    t.played++;
+    t.strokes += h.strokes;
+    t.par += h.par;
+    t.putts += h.putts || 0;
+  }
+  t.toPar = t.strokes - t.par;
   return t;
 }
 
@@ -8529,10 +8710,11 @@ const __m_game = (() => {
 // conditions; a 'windy' course adds WINDY_EXTRA m/s to the Light and Breezy wind ranges. The save
 // stores state.courseId; restore() picks the course from it (a save without one is Hollow Pines).
 //
-// Mixed rounds (courses.js mixedCourse): course.mixed is a nine drawn from all four courses. Each
-// hole is built and played with its own course (courseOf(i): theme, conditions, a windy course's
-// wind), state.mix stores the draw (serialized, so a resumed round plays the same holes), the card
-// numbers the holes 1-9 in playing order and holeInfo() adds the hole's own course and number.
+// Mixed rounds (courses.js mixedCourse): course.mixed is a nine ('mixed') or eighteen ('mixed18')
+// drawn from all four courses. Each hole is built and played with its own course (courseOf(i):
+// theme, conditions, a windy course's wind), state.mix stores the draw (serialized, so a resumed
+// round plays the same holes; its length says nine or eighteen), the card numbers the holes 1..n
+// in playing order and holeInfo() adds the hole's own course and number.
 //
 // Special shots (section 8.4, shots.js): state.shotType ('normal' by default, serialized) is the
 // shot the next swing plays. setShot(id) only takes a shot that the club and lie allow
@@ -8543,13 +8725,16 @@ const __m_game = (() => {
 // shot's (the caddie picks the club for a normal swing).
 //
 // Saves and best rounds (section 8.5): pure helpers for main.js, which owns the storage:
-//   courseFromParam(value) -> course id | null       (?course=desert|water|links|pines|mixed)
+//   courseFromParam(value, holes?) -> course id | null  (?course=desert|water|links|pines|mixed,
+//       &holes=18 with mixed -> 'mixed18'; fixed courses ignore holes)
 //   saveCourseId(save) -> course id                  (the wrapper's or the game's; old saves: pines)
 //   bestMap(raw) -> {[courseId]: {strokes, toPar, date}}   (an old single record counts as pines)
 //   mergeBest(a, b) -> map: per course the newer record by date (stored vs in-memory copies)
-//   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only)
+//   recordBest(map, courseId, totals, holes) -> {map, best, isNew}   (complete rounds only; a
+//       mixed round's best is the lowest score to par, a fixed course's the fewest strokes)
+//   game.debugSkipTo(i, strokesFor?) (tests) records the unplayed holes before i and loads hole i.
 const { COURSE } = __m_course;
-const { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, MIXED_ID } = __m_courses;
+const { courseById, DEFAULT_COURSE_ID, isCourseId, holeCourse, mixedCourse, isMixedId, mixedId, mixedHoles } = __m_courses;
 const { buildHole: defaultBuildHole } = __m_terrain;
 const { SURF, BALL_R, WINDY_EXTRA } = __m_constants;
 const { mulberry32, randInt } = __m_rng;
@@ -8727,7 +8912,7 @@ class Game {
     return this.terrain;
   }
 
-  // n is the hole's number in this round (1-9 in playing order; a mixed round renumbers them);
+  // n is the hole's number in this round (1..n in playing order; a mixed round renumbers them);
   // holeCourseId / holeCourseName / holeN are the course the hole comes from and its number there.
   holeInfo() {
     const t = this.terrain;
@@ -9181,6 +9366,21 @@ class Game {
     this._setPhase('address');
   }
 
+  // Tests and debugging: record every unplayed hole before i (strokesFor(k, par) strokes, two
+  // putts) and load hole i, as if those holes had been played.
+  debugSkipTo(i, strokesFor = (k, par) => par) {
+    const st = this.state;
+    const n = this.course.holes.length;
+    const to = Math.max(0, Math.min(n - 1, i | 0));
+    for (let k = 0; k < to; k++) {
+      const h = st.card.holes[k];
+      if (h.strokes != null) continue;
+      const strokes = Math.max(1, Math.round(strokesFor(k, h.par)));
+      recordHole(st.card, k, { strokes, putts: Math.min(2, strokes), fir: h.par >= 4, gir: strokes <= h.par });
+    }
+    return this.loadHole(to);
+  }
+
   // ------------------------------------------------------------------ save / restore
 
   // JSON-safe snapshot. A save taken during a flight stores the position before the shot plus
@@ -9200,7 +9400,8 @@ class Game {
   static restore(json, opts = {}) {
     const data = typeof json === 'string' ? JSON.parse(json) : clone(json);
     if (!data || data.v !== SAVE_VERSION || !data.hole || !Array.isArray(data.pins)) throw new Error('Game.restore: unsupported save');
-    const course = opts.course || (data.courseId === MIXED_ID ? mixedCourse(data.seed, data.mix) : courseById(data.courseId || 'pines'));
+    const course = opts.course || (isMixedId(data.courseId) ? mixedCourse(data.seed, data.mix, mixedHoles(data.courseId)) : courseById(data.courseId || 'pines'));
+    if (!Number.isInteger(data.holeIndex) || data.holeIndex < 0 || data.holeIndex >= course.holes.length) throw new Error('Game.restore: hole out of range');
     const g = new Game({ course, seed: data.seed, settings: data.settings, buildHole: opts.buildHole || defaultBuildHole });
     const pending = data.pendingShot;
     delete data.pendingShot;
@@ -9227,10 +9428,14 @@ class Game {
 // ------------------------------------------------------------------ saves and best rounds
 // Pure helpers for main.js (which owns localStorage and the in-memory fallback), section 8.5.
 
-// ?course= value -> a known course id (or 'mixed'), or null (unknown or missing: keep the menu's choice).
-function courseFromParam(value) {
-  const v = String(value ?? '').trim().toLowerCase();
-  return isCourseId(v) ? v : null;
+// ?course= value -> a known course id (or 'mixed' / 'mixed18'), or null (unknown or missing: keep
+// the menu's choice). holes (?holes=9|18) picks the mixed round's size; fixed courses ignore it.
+function courseFromParam(value, holes = null) {
+  let v = String(value ?? '').trim().toLowerCase();
+  if (v === 'mixed9') v = 'mixed';
+  if (!isCourseId(v)) return null;
+  const n = parseInt(holes, 10);
+  return isMixedId(v) && (n === 9 || n === 18) ? mixedId(n) : v;
 }
 
 // Course of a stored save {v, savedAt, courseId?, game}: the wrapper's id, else the game's; saves
@@ -9243,8 +9448,8 @@ function saveCourseId(save) {
 const isRecord = (r) => !!r && typeof r === 'object' && Number.isFinite(r.strokes);
 
 // Best rounds by course. golf.best.v1 used to hold one record {strokes, toPar, date} (Hollow Pines,
-// the only course then); now it is a map {[courseId]: record} (mixed rounds share one 'mixed'
-// record: every draw is par 36). Anything else is ignored.
+// the only course then); now it is a map {[courseId]: record} (Mixed Nine rounds share one 'mixed'
+// record, kept from before Mixed Eighteen, which has its own 'mixed18'). Anything else is ignored.
 function bestMap(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
@@ -9266,13 +9471,14 @@ function mergeBest(a, b) {
 }
 
 // Records a finished round on a course: only a complete round (totals.played >= holes) counts, and
-// it is the new best when the course has none yet or it took fewer strokes. Returns the updated
-// map (a copy), the course's best and whether this round set it.
+// it is the new best when the course has none yet or it took fewer strokes (a mixed round: a lower
+// score to par, since every draw is different). Returns the updated map (a copy), the course's
+// best and whether this round set it.
 function recordBest(map, courseId, totals, holes, date = Date.now()) {
   const m = bestMap(map);
   const prev = m[courseId] || null;
   if (!totals || totals.played < holes) return { map: m, best: prev, isNew: false };
-  const isNew = !prev || totals.strokes < prev.strokes;
+  const isNew = !prev || (isMixedId(courseId) ? totals.toPar < prev.toPar : totals.strokes < prev.strokes);
   if (isNew) m[courseId] = { strokes: totals.strokes, toPar: totals.toPar, date };
   return { map: m, best: m[courseId], isNew };
 }
@@ -11733,6 +11939,490 @@ function bakeNoise(seed = 3, size = 256) {
 return { SUN_DIR, boxBlur, bakeTerrainColor, WATER_DEPTH_MAX, bakeWaterDepth, bakeClouds, bakeNoise };
 })();
 
+// ---- src/golfer.js ----
+const __m_golfer = (() => {
+// The golfer character: skeleton, body proportions, the customisable LOOK and the club specs the
+// mesh (golfer-mesh.js) and the swing animation (swing-anim.js) share. Pure module (no DOM).
+//
+// Golfer frame "G" (the space poses are built in, docs/architecture.md section 9): +X forward
+// (from the golfer toward the ball line), +Y toward the target (the golfer's LEFT for a
+// right-hander), +Z up, origin on the ground at the centre of the stance. A right-hander faces
+// right(d) = d x z for an aim direction d and stands on the LEFT of the ball looking down the
+// target line from behind. Left-handers are the mirror image (G's Y flipped), so bone names are
+// lead/trail by their right-handed side: 'L' = lead side, 'R' = trail side.
+//
+// Rest pose ("bind" space = G at rest): standing upright, arms hanging straight down, legs
+// straight, every bone's rest orientation the identity. Limb segments lie exactly along -Z at rest
+// (shoulder/elbow/wrist share x, y; so do hip/knee/ankle), so a bone's local -Z axis is its
+// segment direction and its local +X is the way the joint below it bends (elbow: forearm forward;
+// knee: the knee points forward).
+//
+// Exports
+//   BONES, BONE_COUNT, B (name -> index), BONE_PARENT
+//   SKIN_TONES, HAIR_COLORS, CLOTH_COLORS (palettes: {id, name, hex}), OPTIONS (every look option),
+//   OPTION_NAMES (display names)
+//   DEFAULT_LOOK, normalizeLook(any), PRESETS, presetById(id), randomLook(rng), lookKey(look)
+//   hexToRgb(hex) -> [r,g,b] 0..1 (sRGB)
+//   CLUB_SPECS, clubSpec(club | id | kind, heightM) -> {id, kind, head, len, lie, loft, ...}
+//   bodyDims(look) -> proportions, rest joints (Float64Array BONE_COUNT*3), segment lengths and
+//                     the grip frames (hand bone poses in club space)
+const { clubById } = __m_clubs;
+
+const BONES = [
+  'pelvis', 'spine', 'chest', 'neck', 'head',
+  'clavL', 'upperArmL', 'forearmL', 'handL',
+  'clavR', 'upperArmR', 'forearmR', 'handR',
+  'thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR',
+  'club',
+];
+const BONE_COUNT = BONES.length; // 20 (the shader's uniform array; <= 24 for WebGL1)
+const B = Object.freeze(Object.fromEntries(BONES.map((n, i) => [n, i])));
+// Parent of each bone (-1 = root). The club hangs from the lead hand; the trail hand grips the
+// club below it (solved each frame by IK in swing-anim.js).
+const BONE_PARENT = [-1, 0, 1, 2, 3, 2, 5, 6, 7, 2, 9, 10, 11, 0, 13, 14, 0, 16, 17, 8];
+
+// ------------------------------------------------------------------ palettes (sRGB hex)
+const SKIN_TONES = [
+  { id: 'fair', name: 'Fair', hex: '#f3d3bf' },
+  { id: 'light', name: 'Light', hex: '#e8bf9f' },
+  { id: 'lightmed', name: 'Light medium', hex: '#d8a581' },
+  { id: 'medium', name: 'Medium', hex: '#c58c64' },
+  { id: 'tan', name: 'Tan', hex: '#a9724c' },
+  { id: 'brown', name: 'Brown', hex: '#8b5a3a' },
+  { id: 'dark', name: 'Dark', hex: '#6a4129' },
+  { id: 'deep', name: 'Deep', hex: '#4b2d1c' },
+];
+
+const HAIR_COLORS = [
+  { id: 'black', name: 'Black', hex: '#1d1a18' },
+  { id: 'darkbrown', name: 'Dark brown', hex: '#3a281d' },
+  { id: 'brown', name: 'Brown', hex: '#5d3f2b' },
+  { id: 'lightbrown', name: 'Light brown', hex: '#8a643f' },
+  { id: 'blonde', name: 'Blonde', hex: '#c9a265' },
+  { id: 'platinum', name: 'Platinum', hex: '#e2d4b2' },
+  { id: 'auburn', name: 'Auburn', hex: '#7e351c' },
+  { id: 'ginger', name: 'Ginger', hex: '#b2602b' },
+  { id: 'grey', name: 'Grey', hex: '#99958f' },
+  { id: 'white', name: 'White', hex: '#dddad3' },
+];
+
+const CLOTH_COLORS = [
+  { id: 'white', name: 'White', hex: '#f2f2ee' },
+  { id: 'black', name: 'Black', hex: '#1e1f23' },
+  { id: 'navy', name: 'Navy', hex: '#1f2d52' },
+  { id: 'royal', name: 'Royal blue', hex: '#2a57bd' },
+  { id: 'sky', name: 'Sky blue', hex: '#8dbfe6' },
+  { id: 'red', name: 'Red', hex: '#b51f2b' },
+  { id: 'burgundy', name: 'Burgundy', hex: '#6a1e2d' },
+  { id: 'pink', name: 'Pink', hex: '#e68aa4' },
+  { id: 'coral', name: 'Coral', hex: '#ec7a61' },
+  { id: 'orange', name: 'Orange', hex: '#e5802e' },
+  { id: 'yellow', name: 'Yellow', hex: '#f0cd3c' },
+  { id: 'lime', name: 'Lime', hex: '#a6cd44' },
+  { id: 'green', name: 'Green', hex: '#2e7b3d' },
+  { id: 'teal', name: 'Teal', hex: '#1e8888' },
+  { id: 'lavender', name: 'Lavender', hex: '#a798d4' },
+  { id: 'khaki', name: 'Khaki', hex: '#c5b088' },
+  { id: 'tan', name: 'Tan', hex: '#ad8d61' },
+  { id: 'brown', name: 'Brown', hex: '#6a492f' },
+  { id: 'grey', name: 'Grey', hex: '#898c90' },
+  { id: 'charcoal', name: 'Charcoal', hex: '#3c3f45' },
+];
+
+// Every option of the look, in menu order (the customiser shows these).
+const OPTIONS = Object.freeze({
+  body: ['male', 'female'],
+  build: ['slim', 'regular', 'athletic', 'heavy'],
+  hair: ['short', 'buzz', 'sidepart', 'curly', 'long', 'ponytail', 'bald'],
+  facialHair: ['none', 'stubble', 'moustache', 'beard'],
+  headwear: ['none', 'cap', 'visor', 'bucket', 'flatcap'],
+  shirt: ['polo', 'striped', 'vest'],
+  legwear: ['trousers', 'shorts'],
+  swing: ['classic', 'compact', 'bigfinish', 'smooth'],
+  height: [155, 200],
+});
+
+const OPTION_NAMES = Object.freeze({
+  body: { male: 'Male', female: 'Female' },
+  build: { slim: 'Slim', regular: 'Regular', athletic: 'Athletic', heavy: 'Heavy' },
+  hair: { short: 'Short', buzz: 'Buzz cut', sidepart: 'Side part', curly: 'Curly', long: 'Long', ponytail: 'Ponytail', bald: 'Bald' },
+  facialHair: { none: 'None', stubble: 'Stubble', moustache: 'Moustache', beard: 'Beard' },
+  headwear: { none: 'None', cap: 'Cap', visor: 'Visor', bucket: 'Bucket hat', flatcap: 'Flat cap' },
+  shirt: { polo: 'Polo', striped: 'Striped polo', vest: 'Sweater vest' },
+  legwear: { trousers: 'Trousers', shorts: 'Shorts' },
+  swing: { classic: 'Classic', compact: 'Compact', bigfinish: 'Big finish', smooth: 'Smooth' },
+});
+
+const DEFAULT_LOOK = Object.freeze({
+  body: 'male',
+  skin: 2,
+  height: 180,
+  build: 'regular',
+  hair: 'short',
+  hairColor: '#3a281d',
+  facialHair: 'none',
+  sunglasses: false,
+  headwear: 'cap',
+  hatColor: '#f2f2ee',
+  shirt: 'polo',
+  shirtColor: '#1f2d52',
+  shirtColor2: '#f2f2ee',
+  legwear: 'trousers',
+  legColor: '#3c3f45',
+  shoeColor: '#f2f2ee',
+  gloveColor: '#f2f2ee',
+  swing: 'classic',
+});
+
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+const ALL_COLORS = [...SKIN_TONES, ...HAIR_COLORS, ...CLOTH_COLORS];
+
+// A colour value: '#rrggbb', a palette id ('navy', 'blonde'), or anything else -> fallback.
+function normColor(v, palette, fallback) {
+  if (typeof v === 'string') {
+    if (HEX_RE.test(v)) return v.toLowerCase();
+    const p = palette.find((c) => c.id === v) || ALL_COLORS.find((c) => c.id === v);
+    if (p) return p.hex;
+  }
+  return fallback;
+}
+
+function normEnum(v, list, fallback) {
+  return typeof v === 'string' && list.includes(v) ? v : fallback;
+}
+
+// Any value (a saved look, a partial look, garbage) -> a complete, valid look. Unknown keys are
+// dropped; every field falls back to the default (female figures default to 168 cm).
+function normalizeLook(any) {
+  const src = any && typeof any === 'object' && !Array.isArray(any) ? any : {};
+  const D = DEFAULT_LOOK;
+  const body = normEnum(src.body, OPTIONS.body, D.body);
+  let skin = src.skin;
+  if (typeof skin === 'string') {
+    const k = SKIN_TONES.findIndex((s) => s.id === skin);
+    skin = k >= 0 ? k : Number(skin);
+  }
+  skin = Number.isFinite(skin) ? Math.min(SKIN_TONES.length - 1, Math.max(0, Math.round(skin))) : D.skin;
+  let height = Number(src.height);
+  if (!Number.isFinite(height)) height = body === 'female' ? 168 : D.height;
+  height = Math.min(OPTIONS.height[1], Math.max(OPTIONS.height[0], Math.round(height)));
+  return {
+    body,
+    skin,
+    height,
+    build: normEnum(src.build, OPTIONS.build, D.build),
+    hair: normEnum(src.hair, OPTIONS.hair, D.hair),
+    hairColor: normColor(src.hairColor, HAIR_COLORS, D.hairColor),
+    facialHair: body === 'female' ? 'none' : normEnum(src.facialHair, OPTIONS.facialHair, D.facialHair),
+    sunglasses: src.sunglasses === true || src.sunglasses === 1 || src.sunglasses === 'true',
+    headwear: normEnum(src.headwear, OPTIONS.headwear, D.headwear),
+    hatColor: normColor(src.hatColor, CLOTH_COLORS, D.hatColor),
+    shirt: normEnum(src.shirt, OPTIONS.shirt, D.shirt),
+    shirtColor: normColor(src.shirtColor, CLOTH_COLORS, D.shirtColor),
+    shirtColor2: normColor(src.shirtColor2, CLOTH_COLORS, D.shirtColor2),
+    legwear: normEnum(src.legwear, OPTIONS.legwear, D.legwear),
+    legColor: normColor(src.legColor, CLOTH_COLORS, D.legColor),
+    shoeColor: normColor(src.shoeColor, CLOTH_COLORS, D.shoeColor),
+    gloveColor: normColor(src.gloveColor, CLOTH_COLORS, D.gloveColor),
+    swing: normEnum(src.swing, OPTIONS.swing, D.swing),
+  };
+}
+
+// Stable string for caching meshes per look.
+function lookKey(look) {
+  const L = normalizeLook(look);
+  return OPTIONS_KEYS.map((k) => L[k]).join('|');
+}
+const OPTIONS_KEYS = Object.keys(DEFAULT_LOOK);
+
+const C = (id) => CLOTH_COLORS.find((c) => c.id === id).hex;
+const HC = (id) => HAIR_COLORS.find((c) => c.id === id).hex;
+
+// Ready-made golfers (the customiser's starting points).
+const PRESETS = [
+  {
+    id: 'tour', name: 'Tour Pro',
+    look: { body: 'male', skin: 2, height: 183, build: 'athletic', hair: 'short', hairColor: HC('darkbrown'), facialHair: 'none',
+      sunglasses: false, headwear: 'cap', hatColor: C('white'), shirt: 'polo', shirtColor: C('navy'), shirtColor2: C('white'),
+      legwear: 'trousers', legColor: C('grey'), shoeColor: C('white'), gloveColor: C('white'), swing: 'classic' },
+  },
+  {
+    id: 'ladypro', name: 'Lady Pro',
+    look: { body: 'female', skin: 1, height: 170, build: 'athletic', hair: 'ponytail', hairColor: HC('blonde'), facialHair: 'none',
+      sunglasses: true, headwear: 'visor', hatColor: C('white'), shirt: 'polo', shirtColor: C('coral'), shirtColor2: C('white'),
+      legwear: 'shorts', legColor: C('white'), shoeColor: C('white'), gloveColor: C('white'), swing: 'smooth' },
+  },
+  {
+    id: 'power', name: 'Power Hitter',
+    look: { body: 'male', skin: 6, height: 193, build: 'athletic', hair: 'buzz', hairColor: HC('black'), facialHair: 'beard',
+      sunglasses: false, headwear: 'none', hatColor: C('black'), shirt: 'polo', shirtColor: C('black'), shirtColor2: C('white'),
+      legwear: 'trousers', legColor: C('white'), shoeColor: C('black'), gloveColor: C('white'), swing: 'bigfinish' },
+  },
+  {
+    id: 'gent', name: 'Classic Gent',
+    look: { body: 'male', skin: 0, height: 177, build: 'regular', hair: 'sidepart', hairColor: HC('grey'), facialHair: 'moustache',
+      sunglasses: false, headwear: 'flatcap', hatColor: C('tan'), shirt: 'vest', shirtColor: C('burgundy'), shirtColor2: C('white'),
+      legwear: 'trousers', legColor: C('khaki'), shoeColor: C('brown'), gloveColor: C('white'), swing: 'smooth' },
+  },
+  {
+    id: 'weekend', name: 'Weekend Warrior',
+    look: { body: 'male', skin: 4, height: 175, build: 'heavy', hair: 'bald', hairColor: HC('brown'), facialHair: 'stubble',
+      sunglasses: true, headwear: 'bucket', hatColor: C('khaki'), shirt: 'striped', shirtColor: C('green'), shirtColor2: C('white'),
+      legwear: 'shorts', legColor: C('navy'), shoeColor: C('white'), gloveColor: C('white'), swing: 'compact' },
+  },
+  {
+    id: 'rising', name: 'Rising Star',
+    look: { body: 'female', skin: 5, height: 164, build: 'slim', hair: 'long', hairColor: HC('black'), facialHair: 'none',
+      sunglasses: false, headwear: 'none', hatColor: C('white'), shirt: 'polo', shirtColor: C('teal'), shirtColor2: C('white'),
+      legwear: 'trousers', legColor: C('navy'), shoeColor: C('white'), gloveColor: C('white'), swing: 'compact' },
+  },
+  {
+    id: 'links', name: 'Links Veteran',
+    look: { body: 'male', skin: 1, height: 172, build: 'regular', hair: 'curly', hairColor: HC('ginger'), facialHair: 'beard',
+      sunglasses: false, headwear: 'none', hatColor: C('charcoal'), shirt: 'vest', shirtColor: C('navy'), shirtColor2: C('sky'),
+      legwear: 'trousers', legColor: C('charcoal'), shoeColor: C('brown'), gloveColor: C('white'), swing: 'smooth' },
+  },
+  {
+    id: 'collegiate', name: 'Collegiate',
+    look: { body: 'female', skin: 7, height: 176, build: 'athletic', hair: 'curly', hairColor: HC('black'), facialHair: 'none',
+      sunglasses: false, headwear: 'cap', hatColor: C('navy'), shirt: 'striped', shirtColor: C('white'), shirtColor2: C('navy'),
+      legwear: 'shorts', legColor: C('khaki'), shoeColor: C('white'), gloveColor: C('white'), swing: 'classic' },
+  },
+].map((p) => ({ ...p, look: Object.freeze(normalizeLook(p.look)) }));
+
+function presetById(id) {
+  return PRESETS.find((p) => p.id === id) || null;
+}
+
+const pick = (rng, list) => list[Math.min(list.length - 1, Math.floor(rng() * list.length))];
+
+// A random, tasteful look (colour pairs come from short lists that go together).
+function randomLook(rng = Math.random) {
+  const body = rng() < 0.5 ? 'male' : 'female';
+  const fem = body === 'female';
+  const shirtColor = pick(rng, CLOTH_COLORS).hex;
+  const darkLegs = ['navy', 'charcoal', 'grey', 'black', 'khaki', 'tan', 'white'];
+  const hair = fem ? pick(rng, ['ponytail', 'long', 'short', 'curly', 'sidepart']) : pick(rng, ['short', 'buzz', 'sidepart', 'curly', 'bald', 'short']);
+  const older = rng() < 0.2;
+  return normalizeLook({
+    body,
+    skin: Math.floor(rng() * SKIN_TONES.length),
+    height: Math.round(fem ? 158 + rng() * 22 : 168 + rng() * 26),
+    build: pick(rng, ['slim', 'regular', 'regular', 'athletic', 'athletic', 'heavy']),
+    hair,
+    hairColor: older ? pick(rng, ['#99958f', '#dddad3']) : pick(rng, HAIR_COLORS.slice(0, 8)).hex,
+    facialHair: fem ? 'none' : pick(rng, ['none', 'none', 'stubble', 'moustache', 'beard']),
+    sunglasses: rng() < 0.3,
+    headwear: pick(rng, fem ? ['none', 'visor', 'cap', 'none', 'bucket'] : ['cap', 'cap', 'none', 'visor', 'bucket', 'flatcap']),
+    hatColor: pick(rng, ['white', 'navy', 'black', 'khaki', 'grey', 'red']),
+    shirt: pick(rng, ['polo', 'polo', 'striped', 'vest']),
+    shirtColor,
+    shirtColor2: pick(rng, ['white', 'navy', 'grey', 'sky', 'black']),
+    legwear: rng() < (fem ? 0.5 : 0.3) ? 'shorts' : 'trousers',
+    legColor: pick(rng, darkLegs),
+    shoeColor: pick(rng, ['white', 'white', 'black', 'brown', 'grey']),
+    gloveColor: pick(rng, ['white', 'white', 'white', 'black', 'navy']),
+    swing: pick(rng, OPTIONS.swing),
+  });
+}
+
+function hexToRgb(hex) {
+  const h = HEX_RE.test(hex) ? hex : '#808080';
+  return [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
+}
+
+// ------------------------------------------------------------------ clubs
+// Standard (men's steel/graphite) lengths in metres and address lie angles (deg, the shaft's
+// angle above the ground with the sole flat); `head` picks the mesh. Lengths are fitted to the
+// golfer: +/- 3% per 10% of height from 1.78 m (a tall player plays longer clubs).
+const CLUB_SPECS = {
+  D: { len: 1.143, lie: 56, head: 'driver' },
+  '3W': { len: 1.092, lie: 57, head: 'wood' },
+  '5W': { len: 1.067, lie: 58, head: 'wood' },
+  '4H': { len: 1.016, lie: 59.5, head: 'hybrid' },
+  '5i': { len: 0.965, lie: 61, head: 'iron' },
+  '6i': { len: 0.953, lie: 61.5, head: 'iron' },
+  '7i': { len: 0.94, lie: 62, head: 'iron' },
+  '8i': { len: 0.927, lie: 62.5, head: 'iron' },
+  '9i': { len: 0.914, lie: 63, head: 'iron' },
+  PW: { len: 0.908, lie: 63.5, head: 'wedge' },
+  GW: { len: 0.902, lie: 64, head: 'wedge' },
+  SW: { len: 0.895, lie: 64, head: 'wedge' },
+  LW: { len: 0.889, lie: 64, head: 'wedge' },
+  P: { len: 0.864, lie: 71, head: 'putter' },
+};
+const KIND_DEFAULT = { driver: 'D', wood: '3W', hybrid: '4H', iron: '7i', wedge: 'SW', putter: 'P' };
+
+// Head geometry per head type (m): heel-to-sweet-spot distance along the sole, sweet-spot height
+// above the sole, face progression (face ahead of the shaft line), head length heel-toe, depth
+// front-back and height.
+const HEADS = {
+  driver: { heel: 0.06, ss: 0.03, prog: 0.018, length: 0.118, depth: 0.112, height: 0.06 },
+  wood: { heel: 0.045, ss: 0.019, prog: 0.014, length: 0.098, depth: 0.084, height: 0.036 },
+  hybrid: { heel: 0.04, ss: 0.018, prog: 0.008, length: 0.09, depth: 0.06, height: 0.034 },
+  iron: { heel: 0.034, ss: 0.017, prog: 0.002, length: 0.076, depth: 0.022, height: 0.046 },
+  wedge: { heel: 0.033, ss: 0.017, prog: 0.004, length: 0.074, depth: 0.026, height: 0.054 },
+  putter: { heel: 0.05, ss: 0.013, prog: 0.0, length: 0.105, depth: 0.026, height: 0.024 },
+};
+
+// Club spec for a club object, a club id ('7i') or a kind ('wood', 'iron', 'putter'...), fitted
+// to a golfer of heightM metres. Club space (the club bone's frame): origin at the lead hand's
+// grip point on the shaft axis, -Z down the shaft toward the head, +X the square face normal
+// (unlofted), -Y toward the toe. Returned vectors are in club space:
+//   hosel   the bottom of the shaft (heel of the sole)
+//   toe, up, faceN   unit head axes (toe direction along the sole, up from the sole, lofted face normal)
+//   sweet   the sweet spot on the face
+//   impact  where the CENTRE of a ball struck on the sweet spot sits (sweet + faceN * ball radius):
+//           the club head reference point (swing-anim.js puts it on the ball at impact)
+function clubSpec(club, heightM = 1.78) {
+  let id = null;
+  if (club && typeof club === 'object') id = club.id;
+  else if (typeof club === 'string') id = CLUB_SPECS[club] ? club : KIND_DEFAULT[club] || null;
+  if (!id || !CLUB_SPECS[id]) id = '7i';
+  const s = CLUB_SPECS[id];
+  const c = clubById(id);
+  const hh = Math.min(2.05, Math.max(1.5, heightM));
+  const fit = 1 + 0.42 * (hh / 1.78 - 1);
+  const len = s.len * fit;
+  // Fitted lie: shorter players play flatter clubs (hands lower), taller ones more upright.
+  const lie = ((s.lie + (s.head === 'putter' ? 0 : 6 * (hh - 1.78))) * Math.PI) / 180;
+  const loft = ((c ? c.loft : 30) * Math.PI) / 180;
+  const head = HEADS[s.head];
+  const butt = 0.042; // butt end above the lead grip point
+  const hosel = [0, 0, -(len - butt)];
+  const toe = [0, -Math.sin(lie), -Math.cos(lie)];
+  const up = [0, -Math.cos(lie), Math.sin(lie)];
+  const cl = Math.cos(loft);
+  const sl = Math.sin(loft);
+  const faceN = [cl, up[1] * sl, up[2] * sl];
+  const sweet = [
+    head.prog,
+    hosel[1] + toe[1] * head.heel + up[1] * head.ss,
+    hosel[2] + toe[2] * head.heel + up[2] * head.ss,
+  ];
+  const R = 0.02135;
+  const impact = [sweet[0] + faceN[0] * R, sweet[1] + faceN[1] * R, sweet[2] + faceN[2] * R];
+  return {
+    id, kind: c ? c.kind : s.head, head: s.head, len, lie, loft, butt,
+    hosel, toe, up, faceN, sweet, impact, dims: head,
+  };
+}
+
+// ------------------------------------------------------------------ body proportions
+const BUILD = {
+  slim: { shoulder: 0.96, chest: 0.92, waist: 0.9, belly: 0.88, hip: 0.95, limb: 0.88, neck: 0.92 },
+  regular: { shoulder: 1, chest: 1, waist: 1, belly: 1, hip: 1, limb: 1, neck: 1 },
+  athletic: { shoulder: 1.07, chest: 1.07, waist: 0.96, belly: 0.92, hip: 0.98, limb: 1.1, neck: 1.08 },
+  heavy: { shoulder: 1.04, chest: 1.12, waist: 1.24, belly: 1.55, hip: 1.12, limb: 1.16, neck: 1.15 },
+};
+
+// Proportions of a look. All rest positions are in G at rest (metres). Fractions of the height H
+// follow adult anthropometry (shoulder joint centre 0.80 H, hip joint 0.52 H, knee 0.283 H,
+// ankle 0.042 H; upper arm 0.186 H, forearm 0.146 H); the head grows more slowly than the body
+// (a tall golfer is not a scaled-up short one), about 7.7 heads tall at 1.78 m.
+function bodyDims(look) {
+  const L = normalizeLook(look);
+  const H = L.height / 100;
+  const fem = L.body === 'female';
+  const bf = BUILD[L.build];
+  const headH = 0.232 * Math.pow(H / 1.78, 0.45) * (fem ? 0.955 : 1);
+  const sh = (fem ? 0.101 : 0.112) * bf.shoulder; // shoulder joint half-width / H
+  const hipHalf = (fem ? 0.055 : 0.05) * (0.5 + 0.5 * bf.hip);
+  const j = new Float64Array(BONE_COUNT * 3);
+  const set = (b, x, y, z) => {
+    j[b * 3] = x;
+    j[b * 3 + 1] = y;
+    j[b * 3 + 2] = z;
+  };
+  const hipZ = 0.52 * H;
+  const kneeZ = 0.283 * H;
+  const ankleZ = 0.042 * H;
+  const shZ = 0.8 * H;
+  const chinZ = H - headH;
+  set(B.pelvis, 0, 0, hipZ);
+  set(B.spine, -0.006 * H, 0, 0.578 * H);
+  set(B.chest, -0.012 * H, 0, 0.668 * H);
+  set(B.neck, -0.022 * H, 0, 0.82 * H);
+  set(B.head, -0.012 * H, 0, chinZ + 0.012 * H);
+  for (const [side, cl, ua, fa, hd] of [[1, B.clavL, B.upperArmL, B.forearmL, B.handL], [-1, B.clavR, B.upperArmR, B.forearmR, B.handR]]) {
+    const y = side * sh * H;
+    set(cl, 0.014 * H, side * 0.016 * H, shZ + 0.004 * H);
+    set(ua, -0.008 * H, y, shZ);
+    set(fa, -0.008 * H, y, shZ - 0.186 * H);
+    set(hd, -0.008 * H, y, shZ - 0.186 * H - 0.146 * H);
+  }
+  for (const [side, th, sn, ft] of [[1, B.thighL, B.shinL, B.footL], [-1, B.thighR, B.shinR, B.footR]]) {
+    const y = side * hipHalf * H;
+    set(th, 0, y, hipZ);
+    set(sn, 0, y, kneeZ);
+    set(ft, 0, y, ankleZ);
+  }
+  // The club bone's rest origin: any fixed point; under the lead hand.
+  set(B.club, -0.008 * H, sh * H, shZ - 0.186 * H - 0.146 * H - 0.08 * H);
+  const handS = H * (fem ? 0.93 : 1) * (0.96 + 0.04 * bf.limb);
+  return {
+    look: L, H, fem, build: bf, headH, chinZ, hipZ, kneeZ, ankleZ, shZ,
+    shoulderHalf: sh * H, hipHalf: hipHalf * H,
+    joints: j,
+    upperArm: 0.186 * H,
+    forearm: 0.146 * H,
+    thigh: hipZ - kneeZ,
+    shin: kneeZ - ankleZ,
+    foot: { toe: 0.118 * H, heel: 0.04 * H, ball: 0.078 * H, width: 0.05 * H, sole: ankleZ },
+    hand: handS,
+    grip: gripFrames(handS),
+  };
+}
+
+// The hand bones' poses in club space: {rot (3x3 column-major: the hand's local axes), wrist (the
+// hand bone origin), grip (where the hand's middle sits on the shaft)} for the lead and trail hand.
+// The lead hand's palm faces away from the target, its back toward it; the trail hand sits one
+// hand-width lower with its palm toward the target. The forearm directions are those of a
+// neutral address (the wrists hinge from there during the swing).
+function gripFrames(hs) {
+  const s = hs / 1.8;
+  const frame = (zDir, yHint, wrist, grip) => {
+    const z = norm3(zDir);
+    const y = norm3(sub3(yHint, scale3(z, dot3(yHint, z))));
+    const x = cross3(y, z);
+    return { rot: new Float64Array([x[0], x[1], x[2], y[0], y[1], y[2], z[0], z[1], z[2]]), wrist, grip };
+  };
+  const leadZ = norm3([0.16, -0.3, 0.94]);
+  const lead = frame(leadZ, [1, 0, 0], null, [0, 0, 0]);
+  // Wrist: up the forearm from the grip, a little toward the back of the hand.
+  lead.wrist = new Float64Array(add3(scale3(leadZ, 0.083 * s), scale3([lead.rot[3], lead.rot[4], lead.rot[5]], 0.012 * s)));
+  const gap = 0.088 * s;
+  const trailZ = norm3([-0.3, -0.26, 0.92]);
+  const trail = frame(trailZ, [1, 0, 0], null, [0, 0, -gap]);
+  // The right hand's back faces -Y_hand (its palm faces the target, +X club).
+  trail.wrist = new Float64Array(add3(add3([0, 0, -gap], scale3(trailZ, 0.083 * s)), scale3([trail.rot[3], trail.rot[4], trail.rot[5]], -0.012 * s)));
+  return { lead, trail, gap, scale: s };
+}
+
+// Tiny 3-vector helpers on arrays (setup code only; swing-anim.js has allocation-free versions).
+function add3(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+function sub3(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+function scale3(a, s) {
+  return [a[0] * s, a[1] * s, a[2] * s];
+}
+function dot3(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+function cross3(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function norm3(a) {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+}
+
+return { BONES, BONE_COUNT, B, BONE_PARENT, SKIN_TONES, HAIR_COLORS, CLOTH_COLORS, OPTIONS, OPTION_NAMES, DEFAULT_LOOK, normalizeLook, lookKey, PRESETS, presetById, randomLook, hexToRgb, CLUB_SPECS, clubSpec, bodyDims };
+})();
+
 // ---- src/shaders.js ----
 const __m_shaders = (() => {
 // GLSL 100 shader sources (run unchanged on WebGL1 and WebGL2). All lighting happens in linear
@@ -11743,6 +12433,7 @@ const __m_shaders = (() => {
 // Positions are camera-relative: vertex shaders receive (or compute) p - eye in highp, and uVP is
 // projection * view-rotation only. Large world coordinates therefore never meet the view
 // translation, which keeps far geometry stable on mobile GPUs.
+const { BONE_COUNT } = __m_golfer;
 
 // Shared fragment chunk: sky model, fog and tone mapping. Every colour constant of the look comes
 // from the course theme (themes.js) through uniforms; parkland's values are the shipped constants.
@@ -12729,7 +13420,1866 @@ void main() {
   gl_FragColor = vec4(c, a * mask * uAlpha);
 }`;
 
-return { SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, OBJ_VS, OBJ_FS, PROP_VS, PROP_FS, FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS };
+// ---------------------------------------------------------------- golfer (rigid skinning)
+// One merged mesh (golfer-mesh.js); each vertex follows one bone's skin matrix (uBones, camera-
+// relative translation; GOLFER_BONES mat4s = 80 vertex uniform vectors, within WebGL1's 128).
+// aBM = (bone index, material): 0 cloth, 1 skin, 2 hair, 3 metal, 4 gloss, 5 rubber/leather,
+// 6 eyes. Lit like the rest of the scene (theme sun, hemisphere ambient, fog) plus a soft
+// sky-tinted rim light; skin wraps the light with a warm terminator. uAlpha fades the figure
+// (dithered, no sorting), and so does a camera within ~1 m.
+const GOLFER_BONES = BONE_COUNT;
+const GOLFER_VS = `
+attribute vec3 aPos;
+attribute vec3 aNrm;
+attribute vec3 aCol;
+attribute vec2 aBM;
+uniform mat4 uVP;
+uniform mat4 uBones[${BONE_COUNT}];
+varying vec3 vRel;
+varying vec3 vN;
+varying vec3 vCol;
+varying float vMat;
+void main() {
+  mat4 m = uBones[int(aBM.x + 0.5)];
+  vec4 p = m * vec4(aPos, 1.0);
+  vRel = p.xyz;
+  vN = (m * vec4(aNrm, 0.0)).xyz;
+  vCol = aCol;
+  vMat = aBM.y;
+  gl_Position = uVP * vec4(vRel, 1.0);
+}`;
+
+const GOLFER_FS = `${COMMON}
+uniform float uAlpha;
+uniform float uNear;     // 1: fade out within ~1 m of the camera, 0: never
+varying vec3 vRel;
+varying vec3 vN;
+varying vec3 vCol;
+varying float vMat;
+void main() {
+  float dist = length(vRel);
+  float a = uAlpha * mix(1.0, smoothstep(0.45, 1.05, dist), uNear);
+  if (a < 0.999 && a < bayer4(gl_FragCoord.xy) * 0.96 + 0.02) discard;
+  vec3 v = vRel / max(dist, 1e-4);
+  vec3 n = normalize(vN);
+  if (!gl_FrontFacing) n = -n;
+  float m = vMat;
+  bool skin = m > 0.5 && m < 1.5;
+  bool hair = m > 1.5 && m < 2.5;
+  bool metal = m > 2.5 && m < 3.5;
+  bool gloss = m > 3.5 && m < 4.5;
+  bool rubber = m > 4.5 && m < 5.5;
+  bool eye = m > 5.5;
+  vec3 alb = toLin(vCol);
+  float ndl = dot(n, uSun);
+  float wrap = skin ? 0.4 : hair ? 0.25 : 0.18;
+  float diff = max((ndl + wrap) / (1.0 + wrap), 0.0);
+  vec3 h = normalize(uSun - v);
+  float nh = max(dot(n, h), 0.0);
+  float sp = skin ? pow(nh, 22.0) * 0.06 : hair ? pow(nh, 28.0) * 0.09 : metal ? pow(nh, 70.0) * 1.4
+           : gloss ? pow(nh, 90.0) * 0.7 : rubber ? pow(nh, 10.0) * 0.03 : eye ? pow(nh, 140.0) * 0.8 : pow(nh, 10.0) * 0.035;
+  sp *= smoothstep(-0.1, 0.15, ndl);
+  vec3 amb = ambient(n);
+  vec3 c;
+  if (metal) {
+    vec3 r = reflect(v, n);
+    vec3 env = skyCol(normalize(vec3(r.xy, max(r.z, -0.25))));
+    env = mix(env, uAmbGround * 2.0, smoothstep(0.0, -0.3, r.z));
+    c = alb * (uSunCol * diff * 0.35 + amb * 0.5) + env * alb * 0.9 + uSunCol * sp;
+  } else {
+    // Soft cloth sheen at grazing angles; a warm terminator on skin.
+    float fres = pow(1.0 - max(dot(n, -v), 0.0), 4.0);
+    vec3 sss = skin ? vec3(0.28, 0.08, 0.04) * smoothstep(-0.35, 0.1, ndl) * (1.0 - smoothstep(0.1, 0.6, ndl)) : vec3(0.0);
+    c = alb * (uSunCol * (diff + sss) + amb * 1.3) + uSunCol * sp;
+    if (!skin && !eye) c += alb * amb * fres * 0.6;
+  }
+  // Rim: a cool sky light from behind keeps the silhouette readable against the ground.
+  float rim = pow(1.0 - max(dot(n, -v), 0.0), 3.0) * (0.55 + 0.45 * n.z);
+  c += rim * (uZenith * 0.18 + uSunCol * 0.05) * (metal ? 0.3 : 1.0);
+  c = applyFog(c, vRel);
+  gl_FragColor = vec4(finish(c), 1.0);
+}`;
+
+// Ground shadow of the golfer: the skinned mesh flattened along the sun onto the ground plane
+// under the feet, drawn as white into a small mask texture whose square (centre uC, axes uE1,
+// uE2, half-size 1/uInvHalf; camera-relative) lies on that plane. Overlaps write the same white,
+// so the shadow darkens once; GOLFER_GROUND then lays the blurred mask on the ground.
+const GOLFER_MASK_VS = `
+attribute vec3 aPos;
+attribute vec2 aBM;
+uniform mat4 uBones[${BONE_COUNT}];
+uniform vec3 uSun;
+uniform vec4 uPlane;
+uniform vec3 uC;
+uniform vec3 uE1;
+uniform vec3 uE2;
+uniform float uInvHalf;
+void main() {
+  vec4 p = uBones[int(aBM.x + 0.5)] * vec4(aPos, 1.0);
+  float hgt = dot(uPlane.xyz, p.xyz) + uPlane.w;
+  float ln = max(dot(uPlane.xyz, uSun), 0.2);
+  vec3 q = p.xyz - uSun * (max(hgt, 0.0) / ln);
+  vec3 r = q - uC;
+  gl_Position = vec4(dot(r, uE1) * uInvHalf, dot(r, uE2) * uInvHalf, 0.0, 1.0);
+}`;
+
+const GOLFER_MASK_FS = `
+precision mediump float;
+void main() {
+  gl_FragColor = vec4(1.0);
+}`;
+
+const GOLFER_GROUND_VS = `
+attribute vec3 aPos;
+attribute vec3 aMisc;
+uniform mat4 uVP;
+varying vec2 vUV;
+void main() {
+  vUV = aMisc.xy * 0.5 + 0.5;
+  gl_Position = uVP * vec4(aPos, 1.0);
+}`;
+
+const GOLFER_GROUND_FS = `
+precision highp float;
+uniform sampler2D uMask;
+uniform float uAlpha;
+uniform vec2 uTexel;
+varying vec2 vUV;
+void main() {
+  vec2 t = uTexel;
+  float s = texture2D(uMask, vUV).r * 0.2;
+  s += (texture2D(uMask, vUV + vec2(t.x, 0.0)).r + texture2D(uMask, vUV - vec2(t.x, 0.0)).r
+      + texture2D(uMask, vUV + vec2(0.0, t.y)).r + texture2D(uMask, vUV - vec2(0.0, t.y)).r) * 0.125;
+  s += (texture2D(uMask, vUV + t).r + texture2D(uMask, vUV - t).r
+      + texture2D(uMask, vUV + vec2(t.x, -t.y)).r + texture2D(uMask, vUV + vec2(-t.x, t.y)).r) * 0.075;
+  float edge = smoothstep(0.0, 0.04, min(min(vUV.x, vUV.y), min(1.0 - vUV.x, 1.0 - vUV.y)));
+  float a = s * uAlpha * edge;
+  if (a < 0.003) discard;
+  gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+}`;
+
+return { SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, OBJ_VS, OBJ_FS, PROP_VS, PROP_FS, FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, GOLFER_BONES, GOLFER_VS, GOLFER_FS, GOLFER_MASK_VS, GOLFER_MASK_FS, GOLFER_GROUND_VS, GOLFER_GROUND_FS };
+})();
+
+// ---- src/golfer-mesh.js ----
+const __m_golfer_mesh = (() => {
+// The golfer's mesh: one merged, rigidly skinned, smooth-shaded low-poly figure for a LOOK and a
+// club (docs/architecture.md section 9). Pure module.
+//
+//   buildGolferMesh(look, club) -> {pos, nrm, col, bone, mat, idx, tris, verts, center, height, key}
+//     pos   Float32Array xyz in the rest ("bind") space of golfer.js (G at rest, metres)
+//     nrm   Float32Array unit normals
+//     col   Float32Array rgb 0..1 (sRGB albedo; the shader linearises)
+//     bone  Float32Array bone index per vertex (rigid skinning: one bone per vertex)
+//     mat   Float32Array material per vertex: 0 cloth, 1 skin, 2 hair, 3 metal, 4 gloss (paint,
+//           lenses), 5 rubber/leather, 6 eyes
+//     idx   Uint16Array triangles (counter-clockwise from outside)
+//     tris  triangle count (~6-8k; tests cap it at 9000)
+//   `club` is a club object, id ('7i') or kind ('wood'); the club and both hands are built in club
+//   space (golfer.js clubSpec) and carried into the bind space of their bones, so the hands always
+//   wrap the grip.
+//
+// Every part is a parametric surface (lofted tubes with elliptical / superelliptical sections,
+// ellipsoids, shells offset from the head) with normals averaged across coincident vertices, so
+// seams between rings and stripes stay smooth. Parts overlap at the joints (rounded caps buried
+// in the neighbour), which keeps rigid skinning free of gaps when the joints bend.
+const { B, BONE_COUNT, bodyDims, clubSpec, hexToRgb, SKIN_TONES, normalizeLook, lookKey } = __m_golfer;
+
+const TAU = Math.PI * 2;
+const smooth = (e0, e1, x) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+const bump = (x, c, w) => {
+  const d = (x - c) / w;
+  return Math.exp(-d * d);
+};
+const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const mul3 = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const tint3 = (a, k) => [Math.min(1, a[0] * k[0]), Math.min(1, a[1] * k[1]), Math.min(1, a[2] * k[2])];
+const lin = (a, b, t) => a + (b - a) * t;
+
+// Piecewise-linear lookup in a table of rows [x, ...values] sorted by x; returns value column k.
+function table(rows, x, k) {
+  if (x <= rows[0][0]) return rows[0][k];
+  for (let i = 1; i < rows.length; i++) {
+    if (x <= rows[i][0]) {
+      const t = (x - rows[i - 1][0]) / (rows[i][0] - rows[i - 1][0]);
+      // Smooth (cosine) blend so profiles have no creases at the rows.
+      const s = 0.5 - 0.5 * Math.cos(Math.PI * t);
+      return rows[i - 1][k] + (rows[i][k] - rows[i - 1][k]) * s;
+    }
+  }
+  return rows[rows.length - 1][k];
+}
+
+// ------------------------------------------------------------------ geometry builder
+class Geo {
+  constructor() {
+    this.P = [];
+    this.N = [];
+    this.C = [];
+    this.Bn = [];
+    this.M = [];
+    this.I = [];
+    this.R = null; // optional transform: rotation (3x3 column-major) and translation
+    this.T = null;
+  }
+  get count() {
+    return this.P.length / 3;
+  }
+  setXform(R, T) {
+    this.R = R;
+    this.T = T;
+  }
+  clearXform() {
+    this.R = null;
+    this.T = null;
+  }
+  _xp(p) {
+    const R = this.R;
+    if (!R) return p;
+    return [
+      R[0] * p[0] + R[3] * p[1] + R[6] * p[2] + this.T[0],
+      R[1] * p[0] + R[4] * p[1] + R[7] * p[2] + this.T[1],
+      R[2] * p[0] + R[5] * p[1] + R[8] * p[2] + this.T[2],
+    ];
+  }
+  // Parametric grid. us/vs: parameter samples (duplicates in vs give crisp colour bands). pos(u, v,
+  // j, i) -> [x,y,z]; col(u, v, j, i, p) -> rgb. Rows run along v; with closeU the u direction
+  // wraps (us must not repeat its first value). Winding: u turning counter-clockwise about the
+  // direction v grows gives outward faces (flip reverses).
+  grid({ us, vs, pos, col, bone, mat = 0, closeU = true, flip = false, matFn = null }) {
+    const nu = us.length;
+    const nv = vs.length;
+    const base = this.count;
+    const pts = [];
+    for (let j = 0; j < nv; j++) {
+      for (let i = 0; i < nu; i++) {
+        const p = this._xp(pos(us[i], vs[j], j, i));
+        pts.push(p);
+        this.P.push(p[0], p[1], p[2]);
+        const c = typeof col === 'function' ? col(us[i], vs[j], j, i, p) : col;
+        this.C.push(c[0], c[1], c[2]);
+        this.Bn.push(bone);
+        this.M.push(matFn ? matFn(us[i], vs[j], j, i) : mat);
+      }
+    }
+    const nrm = new Float64Array(nu * nv * 3);
+    const cu = closeU ? nu : nu - 1;
+    const tri = (a, b, c) => {
+      if (flip) this.I.push(base + a, base + c, base + b);
+      else this.I.push(base + a, base + b, base + c);
+      const pa = pts[a];
+      const pb = pts[b];
+      const pc = pts[c];
+      const ux = pb[0] - pa[0];
+      const uy = pb[1] - pa[1];
+      const uz = pb[2] - pa[2];
+      const vx = pc[0] - pa[0];
+      const vy = pc[1] - pa[1];
+      const vz = pc[2] - pa[2];
+      const s = flip ? -1 : 1;
+      const nx = (uy * vz - uz * vy) * s;
+      const ny = (uz * vx - ux * vz) * s;
+      const nz = (ux * vy - uy * vx) * s;
+      for (const k of [a, b, c]) {
+        nrm[k * 3] += nx;
+        nrm[k * 3 + 1] += ny;
+        nrm[k * 3 + 2] += nz;
+      }
+    };
+    for (let j = 0; j < nv - 1; j++) {
+      for (let i = 0; i < cu; i++) {
+        const i1 = (i + 1) % nu;
+        const a = j * nu + i;
+        const b = j * nu + i1;
+        const c = (j + 1) * nu + i1;
+        const d = (j + 1) * nu + i;
+        tri(a, b, c);
+        tri(a, c, d);
+      }
+    }
+    // Average normals over coincident vertices (poles, duplicate stripe rows, closed seams).
+    const key = (p) => `${Math.round(p[0] * 2e4)},${Math.round(p[1] * 2e4)},${Math.round(p[2] * 2e4)}`;
+    const groups = new Map();
+    for (let k = 0; k < pts.length; k++) {
+      const kk = key(pts[k]);
+      let g = groups.get(kk);
+      if (!g) groups.set(kk, (g = []));
+      g.push(k);
+    }
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      for (const k of g) {
+        x += nrm[k * 3];
+        y += nrm[k * 3 + 1];
+        z += nrm[k * 3 + 2];
+      }
+      for (const k of g) {
+        nrm[k * 3] = x;
+        nrm[k * 3 + 1] = y;
+        nrm[k * 3 + 2] = z;
+      }
+    }
+    for (let k = 0; k < pts.length; k++) {
+      let x = nrm[k * 3];
+      let y = nrm[k * 3 + 1];
+      let z = nrm[k * 3 + 2];
+      const l = Math.hypot(x, y, z);
+      if (l < 1e-12) {
+        x = 0;
+        y = 0;
+        z = 1;
+      } else {
+        x /= l;
+        y /= l;
+        z /= l;
+      }
+      this.N.push(x, y, z);
+    }
+  }
+  // Ellipsoid with semi-axes r = [a, b, c] along the columns of rot (3x3 column-major, default
+  // identity) centred at c.
+  ellipsoid(c, r, { rot = null, nu = 10, nv = 7, col, bone, mat = 0, shape = null }) {
+    const us = [];
+    for (let i = 0; i < nu; i++) us.push((i / nu) * TAU);
+    const vs = [];
+    for (let j = 0; j <= nv; j++) vs.push(-Math.PI / 2 + (j / nv) * Math.PI);
+    const R = rot || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    this.grid({
+      us, vs, bone, mat, col,
+      pos: (u, v) => {
+        let x = Math.cos(v) * Math.cos(u) * r[0];
+        let y = Math.cos(v) * Math.sin(u) * r[1];
+        let z = Math.sin(v) * r[2];
+        if (shape) [x, y, z] = shape(x, y, z, u, v);
+        return [c[0] + R[0] * x + R[3] * y + R[6] * z, c[1] + R[1] * x + R[4] * y + R[7] * z, c[2] + R[2] * x + R[5] * y + R[8] * z];
+      },
+    });
+  }
+  // Tube along the frame (e1, e2, ax) (columns of a rotation; ax = e1 x e2) through rings at
+  // parameter vs: ring(v) -> {c:[x,y,z] (in the frame's coordinates), r1, r2, n?: superellipse
+  // exponent, f?: (u) -> radial factor}. Rings with r -> 0 close the ends.
+  tube({ vs, ring, frame = null, origin = [0, 0, 0], nu = 12, col, bone, mat = 0, matFn = null, us = null, flip = false }) {
+    const F = frame || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    const U = us || Array.from({ length: nu }, (_, i) => (i / nu) * TAU);
+    this.grid({
+      us: U, vs, bone, mat, col, matFn, flip,
+      pos: (u, v, j) => {
+        const rg = ring(v, j);
+        const cu = Math.cos(u);
+        const su = Math.sin(u);
+        const n = rg.n || 2;
+        const ex = n === 2 ? cu : Math.sign(cu) * Math.pow(Math.abs(cu), 2 / n);
+        const ey = n === 2 ? su : Math.sign(su) * Math.pow(Math.abs(su), 2 / n);
+        const f = rg.f ? rg.f(u) : 1;
+        const r1 = (cu >= 0 || rg.r1b == null ? rg.r1 : rg.r1b) * f;
+        const r2 = rg.r2 * f;
+        const lx = rg.c[0] + ex * r1;
+        const ly = rg.c[1] + ey * r2;
+        const lz = rg.c[2];
+        return [
+          origin[0] + F[0] * lx + F[3] * ly + F[6] * lz,
+          origin[1] + F[1] * lx + F[4] * ly + F[7] * lz,
+          origin[2] + F[2] * lx + F[5] * ly + F[8] * lz,
+        ];
+      },
+    });
+  }
+  // Tube along a curve: center(v) -> [x,y,z] (bone rest space), radius(v) -> [r1, r2] (r1 along
+  // the reference direction `up` projected off the tangent). Rings with zero radius close the ends.
+  sweep({ vs, center, radius, up = [0, 0, 1], nu = 8, col, bone, mat = 0 }) {
+    const us = Array.from({ length: nu }, (_, i) => (i / nu) * TAU);
+    const fr = vs.map((v) => {
+      const e = 1e-3;
+      const a = center(Math.max(0, v - e));
+      const b = center(Math.min(1, v + e));
+      let T = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const tl = Math.hypot(T[0], T[1], T[2]) || 1;
+      T = [T[0] / tl, T[1] / tl, T[2] / tl];
+      const d = up[0] * T[0] + up[1] * T[1] + up[2] * T[2];
+      let e1 = [up[0] - T[0] * d, up[1] - T[1] * d, up[2] - T[2] * d];
+      const l1 = Math.hypot(e1[0], e1[1], e1[2]) || 1;
+      e1 = [e1[0] / l1, e1[1] / l1, e1[2] / l1];
+      const e2 = [T[1] * e1[2] - T[2] * e1[1], T[2] * e1[0] - T[0] * e1[2], T[0] * e1[1] - T[1] * e1[0]];
+      return { c: center(v), e1, e2, r: radius(v) };
+    });
+    this.grid({
+      us, vs, bone, mat, col,
+      pos: (u, v, j) => {
+        const f = fr[j];
+        const cu = Math.cos(u) * f.r[0];
+        const su = Math.sin(u) * f.r[1];
+        return [f.c[0] + f.e1[0] * cu + f.e2[0] * su, f.c[1] + f.e1[1] * cu + f.e2[1] * su, f.c[2] + f.e1[2] * cu + f.e2[2] * su];
+      },
+    });
+  }
+  // Spherical cap of radius r round unit axis `ax` from centre c, out to half-angle maxA.
+  cap(c, ax, r, maxA, { nu = 10, nv = 3, col, bone, mat = 0 }) {
+    const ref = Math.abs(ax[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    const d = ref[0] * ax[0] + ref[1] * ax[1] + ref[2] * ax[2];
+    let e1 = [ref[0] - ax[0] * d, ref[1] - ax[1] * d, ref[2] - ax[2] * d];
+    const l = Math.hypot(e1[0], e1[1], e1[2]);
+    e1 = [e1[0] / l, e1[1] / l, e1[2] / l];
+    const e2 = [ax[1] * e1[2] - ax[2] * e1[1], ax[2] * e1[0] - ax[0] * e1[2], ax[0] * e1[1] - ax[1] * e1[0]];
+    // v runs from the rim (0) to the pole (1) so u turning about ax gives outward faces.
+    const vs = Array.from({ length: nv + 1 }, (_, j) => j / nv);
+    this.grid({
+      us: Array.from({ length: nu }, (_, i) => (i / nu) * TAU), vs, bone, mat, col,
+      pos: (u, v) => {
+        const a = maxA * (1 - v);
+        const sa = Math.sin(a) * r;
+        const ca = Math.cos(a) * r;
+        const cu = Math.cos(u) * sa;
+        const su = Math.sin(u) * sa;
+        return [c[0] + ax[0] * ca + e1[0] * cu + e2[0] * su, c[1] + ax[1] * ca + e1[1] * cu + e2[1] * su, c[2] + ax[2] * ca + e1[2] * cu + e2[2] * su];
+      },
+    });
+  }
+  // Triangle (a, b, c) wound so its face points along dir.
+  triFacing(a, b, c, dir) {
+    const P = this.P;
+    const ux = P[b * 3] - P[a * 3];
+    const uy = P[b * 3 + 1] - P[a * 3 + 1];
+    const uz = P[b * 3 + 2] - P[a * 3 + 2];
+    const vx = P[c * 3] - P[a * 3];
+    const vy = P[c * 3 + 1] - P[a * 3 + 1];
+    const vz = P[c * 3 + 2] - P[a * 3 + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    if (nx * dir[0] + ny * dir[1] + nz * dir[2] >= 0) this.I.push(a, b, c);
+    else this.I.push(a, c, b);
+  }
+  // A closed flat polygon slab: outline points in the plane spanned by unit a, b (any winding),
+  // front face normal n (world), thickness depth(pt) behind it. Used for the iron heads.
+  slab({ outline, origin, a, b, n, depth, col, colBack, bone, mat }) {
+    const m = outline.length;
+    const P = (pt, d) => [
+      origin[0] + a[0] * pt[0] + b[0] * pt[1] - n[0] * d,
+      origin[1] + a[1] * pt[0] + b[1] * pt[1] - n[1] * d,
+      origin[2] + a[2] * pt[0] + b[2] * pt[1] - n[2] * d,
+    ];
+    let cx = 0;
+    let cy = 0;
+    let area = 0;
+    for (let k = 0; k < m; k++) {
+      const p = outline[k];
+      const q = outline[(k + 1) % m];
+      cx += p[0] / m;
+      cy += p[1] / m;
+      area += p[0] * q[1] - q[0] * p[1];
+    }
+    const ccw = area > 0 ? 1 : -1;
+    const wn = this.R ? [this.R[0] * n[0] + this.R[3] * n[1] + this.R[6] * n[2], this.R[1] * n[0] + this.R[4] * n[1] + this.R[7] * n[2], this.R[2] * n[0] + this.R[5] * n[1] + this.R[8] * n[2]] : n;
+    const f0 = this.count;
+    const front = [P([cx, cy], 0), ...outline.map((p) => P(p, 0))];
+    for (const p of front) this._vert(p, n, col, bone, mat);
+    for (let k = 0; k < m; k++) this.triFacing(f0, f0 + 1 + k, f0 + 1 + ((k + 1) % m), wn);
+    const b0 = this.count;
+    const back = [P([cx, cy], depth([cx, cy])), ...outline.map((p) => P(p, depth(p)))];
+    const nb = [-n[0], -n[1], -n[2]];
+    const wnb = [-wn[0], -wn[1], -wn[2]];
+    for (const p of back) this._vert(p, nb, colBack || col, bone, mat);
+    for (let k = 0; k < m; k++) this.triFacing(b0, b0 + 1 + k, b0 + 1 + ((k + 1) % m), wnb);
+    const w0 = this.count;
+    const outs = [];
+    for (let k = 0; k < m; k++) {
+      const p0 = outline[(k + m - 1) % m];
+      const p1 = outline[(k + 1) % m];
+      let ex = p1[0] - p0[0];
+      let ey = p1[1] - p0[1];
+      const el = Math.hypot(ex, ey) || 1;
+      ex = (ex / el) * ccw;
+      ey = (ey / el) * ccw;
+      const on = [a[0] * ey - b[0] * ex, a[1] * ey - b[1] * ex, a[2] * ey - b[2] * ex];
+      outs.push(on);
+      this._vert(front[k + 1], on, colBack || col, bone, mat);
+      this._vert(back[k + 1], on, colBack || col, bone, mat);
+    }
+    for (let k = 0; k < m; k++) {
+      const k1 = (k + 1) % m;
+      const a0 = w0 + k * 2;
+      const a1 = w0 + k1 * 2;
+      const o = outs[k];
+      const wo = this.R ? [this.R[0] * o[0] + this.R[3] * o[1] + this.R[6] * o[2], this.R[1] * o[0] + this.R[4] * o[1] + this.R[7] * o[2], this.R[2] * o[0] + this.R[5] * o[1] + this.R[8] * o[2]] : o;
+      this.triFacing(a0, a0 + 1, a1 + 1, wo);
+      this.triFacing(a0, a1 + 1, a1, wo);
+    }
+  }
+  _vert(p, n, col, bone, mat) {
+    const q = this._xp(p);
+    let nn = n;
+    if (this.R) {
+      const R = this.R;
+      nn = [R[0] * n[0] + R[3] * n[1] + R[6] * n[2], R[1] * n[0] + R[4] * n[1] + R[7] * n[2], R[2] * n[0] + R[5] * n[1] + R[8] * n[2]];
+    }
+    const l = Math.hypot(nn[0], nn[1], nn[2]) || 1;
+    this.P.push(q[0], q[1], q[2]);
+    this.N.push(nn[0] / l, nn[1] / l, nn[2] / l);
+    this.C.push(col[0], col[1], col[2]);
+    this.Bn.push(bone);
+    this.M.push(mat);
+  }
+  build() {
+    return {
+      pos: new Float32Array(this.P),
+      nrm: new Float32Array(this.N),
+      col: new Float32Array(this.C),
+      bone: new Float32Array(this.Bn),
+      mat: new Float32Array(this.M),
+      idx: new Uint16Array(this.I),
+      tris: this.I.length / 3,
+      verts: this.P.length / 3,
+    };
+  }
+}
+
+const linspace = (a, b, n) => Array.from({ length: n }, (_, i) => a + ((b - a) * i) / (n - 1));
+const ring = (n, off = 0) => Array.from({ length: n }, (_, i) => off + (i / n) * TAU);
+
+// ------------------------------------------------------------------ colours
+function palette(L) {
+  const skin = hexToRgb(SKIN_TONES[L.skin].hex);
+  const hair = hexToRgb(L.hairColor);
+  const lum = 0.3 * skin[0] + 0.55 * skin[1] + 0.15 * skin[2];
+  return {
+    skin,
+    skinDark: tint3(skin, [0.86, 0.8, 0.8]),
+    lip: mix3(tint3(skin, [0.92, 0.72, 0.7]), [0.62, 0.3, 0.3], lum > 0.5 ? 0.18 : 0.05),
+    hair,
+    hairDark: mul3(hair, 0.72),
+    // Stubble reads as a cool darkening of the skin.
+    stubble: mix3(skin, mix3(hair, [0.2, 0.18, 0.17], 0.5), 0.32),
+    shirt: hexToRgb(L.shirtColor),
+    shirt2: hexToRgb(L.shirtColor2),
+    legs: hexToRgb(L.legColor),
+    shoe: hexToRgb(L.shoeColor),
+    glove: hexToRgb(L.gloveColor),
+    hat: hexToRgb(L.hatColor),
+    belt: [0.13, 0.1, 0.08],
+    sole: [0.16, 0.16, 0.17],
+    sock: [0.93, 0.93, 0.9],
+    iris: lum > 0.55 ? [0.3, 0.38, 0.45] : [0.22, 0.14, 0.09],
+    sclera: [0.86, 0.84, 0.8],
+  };
+}
+
+// ------------------------------------------------------------------ main entry
+function buildGolferMesh(look, club = '7i') {
+  const L = normalizeLook(look);
+  const D = bodyDims(L);
+  const spec = clubSpec(club, D.H);
+  const pal = palette(L);
+  const g = new Geo();
+  const J = (b) => [D.joints[b * 3], D.joints[b * 3 + 1], D.joints[b * 3 + 2]];
+  const parts = {};
+  const part = (name, fn) => {
+    const n0 = g.I.length;
+    fn();
+    parts[name] = (g.I.length - n0) / 3;
+  };
+  part('torso', () => buildTorso(g, D, L, pal, J));
+  part('neck', () => buildNeck(g, D, L, pal, J));
+  part('head', () => buildHead(g, D, L, pal, J));
+  part('arms', () => buildArms(g, D, L, pal, J));
+  part('legs', () => buildLegs(g, D, L, pal, J));
+  part('handsClub', () => buildHandsAndClub(g, D, L, pal, J, spec));
+  const m = g.build();
+  m.parts = { ...parts, ...(g.sub || {}) };
+  const pel = J(B.pelvis);
+  return { ...m, center: pel, height: D.H, key: `${lookKey(L)}#${spec.id}`, club: spec.id, bones: BONE_COUNT };
+}
+
+// ------------------------------------------------------------------ torso
+// Cross-sections as rows [z/H, half-width/H, front depth/H, back depth/H, centre x/H].
+const PELVIS_ROWS = [
+  [0.448, 0.03, 0.022, 0.024, 0.0],
+  [0.46, 0.066, 0.045, 0.05, -0.002],
+  [0.478, 0.088, 0.054, 0.056, -0.004],
+  [0.5, 0.097, 0.056, 0.06, -0.006],
+  [0.525, 0.099, 0.056, 0.06, -0.006],
+  [0.552, 0.096, 0.055, 0.055, -0.004],
+  [0.58, 0.091, 0.055, 0.053, -0.002],
+  [0.6, 0.088, 0.055, 0.05, 0.0],
+  [0.613, 0.087, 0.055, 0.049, 0.0],
+  [0.622, 0.07, 0.04, 0.036, 0.0],
+  [0.626, 0.02, 0.01, 0.01, 0.0],
+];
+const SPINE_ROWS = [
+  [0.585, 0.03, 0.02, 0.02, 0.0],
+  [0.592, 0.08, 0.05, 0.044, 0.0],
+  [0.605, 0.087, 0.055, 0.047, 0.0],
+  [0.635, 0.088, 0.058, 0.048, 0.001],
+  [0.665, 0.091, 0.059, 0.05, 0.0],
+  [0.69, 0.095, 0.06, 0.052, -0.002],
+  [0.705, 0.09, 0.054, 0.048, -0.002],
+  [0.712, 0.04, 0.02, 0.02, -0.002],
+];
+const CHEST_ROWS = [
+  [0.664, 0.04, 0.02, 0.02, -0.004],
+  [0.672, 0.09, 0.054, 0.049, -0.004],
+  [0.695, 0.099, 0.062, 0.055, -0.005],
+  [0.725, 0.106, 0.068, 0.059, -0.006],
+  [0.755, 0.11, 0.068, 0.062, -0.008],
+  [0.782, 0.112, 0.063, 0.061, -0.01],
+  [0.802, 0.105, 0.056, 0.058, -0.012],
+  [0.818, 0.084, 0.047, 0.052, -0.014],
+  [0.831, 0.055, 0.037, 0.043, -0.016],
+  [0.84, 0.04, 0.032, 0.036, -0.017],
+  [0.846, 0.012, 0.01, 0.01, -0.017],
+];
+
+function torsoDims(D, L) {
+  const bf = D.build;
+  const fem = D.fem;
+  return {
+    pelvis: { w: (fem ? 1.07 : 1) * bf.hip, dF: (fem ? 0.98 : 1) * (0.7 + 0.3 * bf.belly), dB: (fem ? 1.1 : 1) * bf.hip },
+    spine: { w: (fem ? 0.86 : 1) * bf.waist, dF: (fem ? 0.9 : 1) * bf.belly, dB: (fem ? 0.92 : 1) * (0.6 + 0.4 * bf.waist) },
+    chest: { w: (fem ? 0.9 : 1) * bf.chest, dF: (fem ? 0.93 : 1) * bf.chest, dB: (fem ? 0.92 : 1) * bf.chest, bust: fem ? 0.016 : 0 },
+  };
+}
+
+function buildTorso(g, D, L, pal, J) {
+  const H = D.H;
+  const td = torsoDims(D, L);
+  const shirt = L.shirt;
+  const stripes = shirt === 'striped';
+  const vest = shirt === 'vest';
+  const legC = pal.legs;
+  const torsoCol = pal.shirt;
+  const underCol = vest ? pal.shirt2 : pal.shirt;
+  const nu = 20;
+  const us = ring(nu, 0);
+  // Stripe bands: 0.03 H tall (about 5 cm), duplicated rows at every boundary for crisp edges.
+  const stripeBand = 0.03;
+  const vsWithStripes = (z0, z1, rows) => {
+    const vs = [];
+    for (const r of rows) if (r[0] >= z0 - 1e-9 && r[0] <= z1 + 1e-9) vs.push(r[0]);
+    if (stripes) {
+      for (let z = Math.ceil(z0 / stripeBand) * stripeBand; z < z1 - 0.004; z += stripeBand) {
+        if (z > z0 + 0.004) vs.push(z - 1e-6, z + 1e-6);
+      }
+    }
+    return vs.sort((a, b) => a - b);
+  };
+  const stripeCol = (z) => {
+    const k = Math.floor((z + 1e-7) / stripeBand);
+    return k % 2 === 0 ? pal.shirt : pal.shirt2;
+  };
+  const section = (rows, f, zH, u, extra = 0) => {
+    const w = table(rows, zH, 1) * f.w * H;
+    const dF = table(rows, zH, 2) * f.dF * H;
+    const dB = table(rows, zH, 3) * f.dB * H;
+    const cx = table(rows, zH, 4) * H;
+    const cu = Math.cos(u);
+    const su = Math.sin(u);
+    const n = 2.5;
+    const ex = Math.sign(cu) * Math.pow(Math.abs(cu), 2 / n);
+    const ey = Math.sign(su) * Math.pow(Math.abs(su), 2 / n);
+    let dx = (cu >= 0 ? dF : dB) * ex;
+    // Bust (female) and pecs (male): two soft lobes on the front of the chest.
+    if (extra) dx += extra * H * cu * cu * (bump(u, 0.5, 0.42) + bump(u, -0.5, 0.42) + bump(u, TAU - 0.5, 0.42));
+    return [cx + dx, w * ey, zH * H];
+  };
+  // Pelvis (trousers, belt band) ---------------------------------------------------
+  {
+    const rows = PELVIS_ROWS;
+    const vs = rows.map((r) => r[0]);
+    vs.push(0.598 - 1e-6, 0.598 + 1e-6, 0.616 - 1e-6, 0.616 + 1e-6);
+    vs.sort((a, b) => a - b);
+    g.grid({
+      us, vs, bone: B.pelvis,
+      pos: (u, v) => {
+        const p = section(rows, td.pelvis, v, u);
+        if (v > 0.597 && v < 0.617) {
+          const k = 1 + 0.035;
+          p[0] *= k;
+          p[1] *= k;
+        }
+        return p;
+      },
+      col: (u, v) => {
+        if (v > 0.597 && v < 0.617) {
+          // Buckle at the front.
+          if (Math.cos(u) > 0.985) return [0.75, 0.74, 0.7];
+          return pal.belt;
+        }
+        // Shirt tucked in: a sliver of shirt above the belt.
+        return v > 0.617 ? torsoCol : legC;
+      },
+      matFn: (u, v) => (v > 0.597 && v < 0.617 ? (Math.cos(u) > 0.985 ? 3 : 5) : 0),
+    });
+  }
+  // Abdomen (spine bone) --------------------------------------------------------------
+  {
+    const rows = SPINE_ROWS;
+    const vs = vsWithStripes(0.585, 0.712, rows);
+    g.grid({
+      us, vs, bone: B.spine,
+      pos: (u, v) => section(rows, td.spine, v, u),
+      col: (u, v, j) => {
+        if (stripes) return stripeCol(vs[j]);
+        if (vest && v < 0.61) return mul3(torsoCol, 0.85); // ribbed hem
+        return torsoCol;
+      },
+    });
+  }
+  // Chest ----------------------------------------------------------------------------------
+  {
+    const rows = CHEST_ROWS;
+    const vs = vsWithStripes(0.664, 0.846, rows);
+    const pecs = D.fem ? td.chest.bust : 0.004 * D.build.chest;
+    const vBottom = 0.742;
+    const amtAt = (v) => pecs * bump(v, D.fem ? 0.735 : 0.745, D.fem ? 0.03 : 0.028);
+    if (vest) {
+      // Sweater vest: columns 1/2 and N-1 sit exactly on the V's edges (duplicated, so the
+      // polo-to-knit edge is crisp); below the V they collapse onto the front centre.
+      const N = nu + 4;
+      const aV = (v) => (v > vBottom ? 0.07 + 0.6 * Math.min(1, (v - vBottom) / (0.832 - vBottom)) : 0);
+      const ang = (i, v) => {
+        const a = aV(v);
+        if (i === 0) return 0;
+        if (i === 1 || i === 2) return a;
+        if (i === N - 1) return TAU - a;
+        return a + ((i - 2) / (N - 4)) * (TAU - 2 * a);
+      };
+      g.grid({
+        us: Array.from({ length: N }, (_, i) => i), vs, bone: B.chest,
+        pos: (i, v) => section(rows, td.chest, v, ang(i, v), amtAt(v)),
+        col: (i, v) => {
+          if (v > 0.836) return underCol; // the polo's neckline above the knit
+          if (aV(v) > 0 && (i === 0 || i === 1 || i === N - 1)) return underCol;
+          return torsoCol;
+        },
+      });
+    } else {
+      g.grid({
+        us, vs, bone: B.chest,
+        pos: (u, v) => section(rows, td.chest, v, u, amtAt(v)),
+        col: (u, v, j) => {
+          const a = Math.atan2(Math.sin(u), Math.cos(u)); // -pi..pi, 0 = front
+          let c = stripes ? stripeCol(vs[j]) : torsoCol;
+          // Placket: a narrow darker strip down the front from the collar.
+          if (v > 0.775 && Math.abs(a) < 0.07 && Math.cos(u) > 0) c = mul3(stripes ? pal.shirt : torsoCol, 0.86);
+          return c;
+        },
+      });
+    }
+  }
+  // Shoulder tops (trapezius) on the clavicles: they follow the shoulder girdle as it shrugs and
+  // reaches across at the top of the backswing.
+  for (const [cl, ua] of [[B.clavL, B.upperArmL], [B.clavR, B.upperArmR]]) {
+    const a = J(cl);
+    const b = J(ua);
+    const c = [lin(a[0], b[0], 0.55) - 0.008 * H, lin(a[1], b[1], 0.55), b[2] + 0.001 * H];
+    g.ellipsoid(c, [0.027 * H * td.chest.dF, 0.042 * H * td.chest.w, 0.016 * H], {
+      nu: 8, nv: 4, bone: cl, mat: 0, col: stripes ? pal.shirt : torsoCol,
+    });
+  }
+  // Polo collar (open at the front): an outer band and its inner face.
+  buildCollar(g, D, L, vest ? pal.shirt2 : pal.shirt);
+}
+
+function buildCollar(g, D, L, col) {
+  const H = D.H;
+  const neck = J0(D, B.neck);
+  const r0 = 0.037 * H * D.build.neck * (D.fem ? 0.9 : 1);
+  const cx = neck[0] + 0.004 * H;
+  const z0 = 0.826 * H;
+  const gap = 0.42; // half-angle of the opening at the front (rad)
+  const us = linspace(gap, TAU - gap, 18);
+  const prof = [
+    [0, r0 * 1.06, 0],
+    [0.4, r0 * 1.12, 0.013 * H],
+    [0.75, r0 * 1.22, 0.021 * H],
+    [1, r0 * 1.42, 0.012 * H],
+  ];
+  const pos = (inset) => (u, v) => {
+    const k = Math.min(prof.length - 1, Math.round(v * (prof.length - 1)));
+    const p = prof[k];
+    // Collar points: longer at the front.
+    const front = smooth(1.2, 0.4, Math.min(Math.abs(u), Math.abs(TAU - u)));
+    const r = p[1] * (1 + 0.08 * front) - inset;
+    const z = z0 + p[2] - (v > 0.9 ? 0.012 * H * front : 0);
+    return [cx + Math.cos(u) * r * 1.05, Math.sin(u) * r, z];
+  };
+  const vs = prof.map((p) => p[0]);
+  g.grid({ us, vs, closeU: false, bone: B.chest, col, pos: pos(0) });
+  g.grid({ us, vs, closeU: false, bone: B.chest, col: mul3(col, 0.8), pos: pos(0.002 * H), flip: true });
+}
+
+function J0(D, b) {
+  return [D.joints[b * 3], D.joints[b * 3 + 1], D.joints[b * 3 + 2]];
+}
+
+// ------------------------------------------------------------------ neck
+function buildNeck(g, D, L, pal, J) {
+  const H = D.H;
+  const n = J(B.neck);
+  const r = 0.0335 * H * D.build.neck * (D.fem ? 0.85 : 1);
+  const zTop = D.chinZ + 0.03 * H;
+  g.tube({
+    vs: linspace(0, 1, 5), nu: 12, bone: B.neck, mat: 1, col: pal.skin,
+    ring: (v) => {
+      const z = lin(0.808 * H, zTop, v);
+      const cap = v === 0 || v === 1 ? 0.5 : 1;
+      return { c: [lin(n[0] - 0.002 * H, n[0] + 0.006 * H, v), 0, z], r1: r * 1.04 * cap, r2: r * 1.1 * cap };
+    },
+  });
+}
+
+// ------------------------------------------------------------------ head
+// The head is lofted from horizontal sections given by a profile table (front depth, back depth
+// and half-width against height, measured on a real head: a fairly upright forehead, the brow
+// ridge, the nasion, cheekbones, lips, chin, the jaw under the ear and the full cranium behind),
+// with local touches for the eye sockets, cheekbones and lips. Features (nose, ears, eyes and
+// lids, brows) are separate small parts on the head bone. Head-local axes are G's (x toward the
+// face). Positions are addressed by (th: angle round the head from the face, + = left; ph: an
+// elevation whose sine is the height, so ph = +-pi/2 are the crown and under the chin).
+// Rows: [z / 0.116 (-1 chin .. 1 crown), centre x, front depth, back depth, half-width] in m for a
+// 0.232 m head (scaled by s).
+const HEAD_M = [
+  [-1.0, 0.024, 0.0, 0.0, 0.0],
+  [-0.975, 0.022, 0.034, 0.03, 0.02],
+  [-0.93, 0.016, 0.06, 0.042, 0.034],
+  [-0.86, 0.01, 0.077, 0.05, 0.046],
+  [-0.76, 0.004, 0.087, 0.056, 0.056],
+  [-0.66, 0.0, 0.091, 0.062, 0.061],
+  [-0.57, 0.0, 0.092, 0.07, 0.064],
+  [-0.48, 0.0, 0.094, 0.078, 0.067],
+  [-0.37, 0.0, 0.093, 0.087, 0.071],
+  [-0.22, 0.0, 0.092, 0.094, 0.075],
+  [-0.06, 0.0, 0.091, 0.098, 0.077],
+  [0.1, 0.0, 0.094, 0.1, 0.078],
+  [0.22, 0.0, 0.097, 0.101, 0.078],
+  [0.35, 0.0, 0.095, 0.101, 0.077],
+  [0.55, 0.0, 0.089, 0.098, 0.073],
+  [0.72, 0.0, 0.077, 0.088, 0.065],
+  [0.85, 0.0, 0.06, 0.071, 0.053],
+  [0.94, 0.0, 0.038, 0.046, 0.035],
+  [0.985, 0.0, 0.017, 0.02, 0.016],
+  [1.0, 0.0, 0.0, 0.0, 0.0],
+];
+// A female head: smaller brow ridge, narrower jaw and chin, fuller lips (in the touches).
+const HEAD_F = HEAD_M.map((r) => {
+  const z = r[0];
+  const jaw = z < -0.4 ? 1 - 0.13 * Math.min(1, (-0.4 - z) / 0.45) : 1;
+  const brow = z > 0.1 && z < 0.4 ? 0.985 : 1;
+  return [z, r[1] * 0.85, r[2] * brow * (z < -0.7 ? 0.97 : 1), r[3], r[4] * jaw];
+});
+
+function headShape(D, L) {
+  const s = D.headH / 0.232;
+  const fem = D.fem;
+  const az = 0.116 * s;
+  const c = [0.008 * D.H, 0, D.chinZ + az * 0.99];
+  const rows = fem ? HEAD_F : HEAD_M;
+  const at = (th, ph) => {
+    const zn = Math.sin(ph);
+    const ct = Math.cos(th);
+    const st = Math.sin(th);
+    const cx = table(rows, zn, 1) * s;
+    const xF = table(rows, zn, 2) * s;
+    const xB = table(rows, zn, 3) * s;
+    const w = table(rows, zn, 4) * s;
+    const nf = 2.55;
+    const nb = 2.1;
+    const n = ct > 0 ? nf : nb;
+    const ex = Math.sign(ct) * Math.pow(Math.abs(ct), 2 / n);
+    const ey = Math.sign(st) * Math.pow(Math.abs(st), 2 / n);
+    let x = cx + (ct > 0 ? xF : xB) * ex;
+    let y = w * ey;
+    const z = zn * az;
+    if (ct > 0) {
+      const fw = Math.pow(ct, 1.5);
+      // Eye sockets, under the brow.
+      for (const e of [0.42, -0.42]) x -= 0.0085 * s * bump(th, e, 0.19) * bump(zn, -0.02, 0.11);
+      // Nasion notch between the eyes; cheekbones; lips and the line between them.
+      x -= 0.003 * s * bump(th, 0, 0.12) * bump(zn, 0.06, 0.06);
+      y += Math.sign(st) * 0.0045 * s * bump(Math.abs(th), 0.85, 0.22) * bump(zn, -0.2, 0.13);
+      const lw = bump(th, 0, 0.27);
+      x += (fem ? 0.0048 : 0.0038) * s * lw * (bump(zn, -0.5, 0.045) + (fem ? 1.2 : 1) * bump(zn, -0.635, 0.05));
+      x -= 0.0022 * s * lw * bump(zn, -0.57, 0.022);
+      // Mouth corners sit back; a soft chin.
+      x -= 0.0025 * s * (bump(th, 0.3, 0.07) + bump(th, -0.3, 0.07)) * bump(zn, -0.57, 0.06);
+      x += (fem ? 0.002 : 0.004) * s * bump(th, 0, 0.5) * bump(zn, -0.84, 0.08) * fw;
+    }
+    // Jaw angle under the ear (men) and slimmer temples.
+    if (!fem) y += Math.sign(st) * 0.004 * s * bump(Math.abs(th), 1.3, 0.3) * bump(zn, -0.62, 0.14);
+    y *= 1 - 0.04 * bump(zn, 0.5, 0.2) * Math.abs(st);
+    return [x, y, z];
+  };
+  // Outward normal by finite differences (for shells: hair, hats, beard, glasses).
+  const normal = (th, ph) => {
+    const e = 0.004;
+    const a = at(th - e, ph);
+    const b = at(th + e, ph);
+    const p0 = at(th, Math.max(-Math.PI / 2, ph - e));
+    const p1 = at(th, Math.min(Math.PI / 2, ph + e));
+    const du = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const dv = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let n = cross(du, dv);
+    const l = Math.hypot(n[0], n[1], n[2]);
+    if (l < 1e-12) return Math.sin(ph) > 0 ? [0, 0, 1] : [0, 0, -1];
+    n = [n[0] / l, n[1] / l, n[2] / l];
+    const p = at(th, ph);
+    if (n[0] * p[0] + n[1] * p[1] + n[2] * p[2] < 0) n = [-n[0], -n[1], -n[2]];
+    return n;
+  };
+  return { s, az, c, at, normal, ax: 0.097 * s, ay: 0.077 * s };
+}
+
+function buildHead(g, D, L, pal, J) {
+  const hs = headShape(D, L);
+  const c = hs.c;
+  const bone = B.head;
+  // Theta samples: dense over the face, sparse at the back.
+  const ths = [];
+  for (let i = 0; i < 16; i++) ths.push(-1.7 + (i / 16) * 3.4);
+  for (let i = 0; i < 6; i++) ths.push(1.7 + ((i / 6) * (TAU - 3.4)));
+  const zns = [-1, -0.97, -0.9, -0.8, -0.7, -0.635, -0.57, -0.5, -0.43, -0.32, -0.2, -0.08, 0.04, 0.16, 0.28, 0.42, 0.58, 0.74, 0.87, 0.96, 1];
+  const phs = zns.map((z) => Math.asin(z));
+  const hairCol = pal.hair;
+  const bald = L.hair === 'bald';
+  const hairLine = hairlineFor(L);
+  const beardRegion = (th, ph) => {
+    const a = Math.abs(th);
+    if (a > 1.62) return 0;
+    const cheek = lin(-0.16, -0.5, smooth(0.9, 1.6, a));
+    if (ph > cheek) return 0;
+    // Keep the lips clear.
+    const zn = Math.sin(ph);
+    if (a < 0.32 && zn > -0.68 && zn < -0.45) return 0;
+    return smooth(cheek, cheek - 0.12, ph) * smooth(1.62, 1.4, a);
+  };
+  g.grid({
+    us: ths, vs: phs, bone, mat: 1,
+    pos: (th, ph) => {
+      const p = hs.at(th, ph);
+      return [c[0] + p[0], c[1] + p[1], c[2] + p[2]];
+    },
+    col: (th, ph) => {
+      let col = pal.skin;
+      const a = Math.abs(th);
+      // Lips (a gentle tint, a little stronger on the lower lip).
+      const zn = Math.sin(ph);
+      if (a < 0.34 && zn > -0.7 && zn < -0.44 && Math.cos(th) > 0) {
+        const k = bump(th, 0, 0.22) * (0.8 * bump(zn, -0.5, 0.04) + bump(zn, -0.635, 0.045));
+        col = mix3(col, pal.lip, Math.min(0.85, k));
+      }
+      // Scalp under the hair takes the hair colour (no skin shows at the hairline).
+      const hl = hairLine(th);
+      if (!bald && ph > hl - 0.04) col = mix3(col, pal.hairDark, smooth(hl - 0.04, hl + 0.06, ph) * 0.9);
+      if (bald) {
+        // A close-cropped fringe round the back and sides.
+        const fr = smooth(0.0, 0.28, ph) * smooth(0.55, 0.3, ph) * smooth(1.0, 1.7, a);
+        col = mix3(col, mix3(pal.skin, hairCol, 0.6), fr * 0.7);
+      }
+      if (L.facialHair === 'stubble' || L.facialHair === 'beard') col = mix3(col, pal.stubble, beardRegion(th, ph));
+      // Slightly warmer cheeks and ears, cooler jaw.
+      col = mix3(col, tint3(col, [1.03, 0.94, 0.93]), 0.5 * bump(a, 0.75, 0.25) * bump(ph, -0.15, 0.2));
+      return col;
+    },
+  });
+  const P = (th, ph, out = 0) => {
+    const p = hs.at(th, ph);
+    if (!out) return [c[0] + p[0], c[1] + p[1], c[2] + p[2]];
+    const n = hs.normal(th, ph);
+    return [c[0] + p[0] + n[0] * out, c[1] + p[1] + n[1] * out, c[2] + p[2] + n[2] * out];
+  };
+  const t = (name, fn) => {
+    const n0 = g.I.length;
+    fn();
+    g.sub = g.sub || {};
+    g.sub[name] = (g.I.length - n0) / 3;
+  };
+  t('face', () => buildFace(g, D, L, pal, hs, P));
+  t('hair', () => buildHair(g, D, L, pal, hs, P, hairLine));
+  t('facialHair', () => buildFacialHair(g, D, L, pal, hs, P, beardRegion));
+  t('headwear', () => buildHeadwear(g, D, L, pal, hs, P));
+  if (L.sunglasses) t('glasses', () => buildSunglasses(g, D, L, pal, hs, P));
+}
+
+// Hairline height (ph) by angle round the head: forehead, temples, above the ears, nape.
+function hairlineFor(L) {
+  const fem = L.body === 'female';
+  return (th) => {
+    const a = Math.abs(Math.atan2(Math.sin(th), Math.cos(th)));
+    const rows = [
+      [0, fem ? 0.6 : 0.64],
+      [0.55, fem ? 0.56 : 0.6],
+      [0.95, fem ? 0.38 : 0.44],
+      [1.3, 0.3],
+      [1.55, 0.22],
+      [1.85, -0.05],
+      [2.3, -0.4],
+      [Math.PI, -0.62],
+    ];
+    return table(rows, a, 1);
+  };
+}
+
+function buildFace(g, D, L, pal, hs, P) {
+  const s = hs.s;
+  const bone = B.head;
+  const c = hs.c;
+  const fem = D.fem;
+  // Nose: one smooth wedge from the bridge to the tip, narrow at the root, widening into the
+  // wings at the base, its back half buried in the face.
+  {
+    const zr = Math.asin(0.06);
+    const zb = Math.asin(-0.39);
+    const root = P(0, zr);
+    const base = P(0, zb);
+    const midZ = (root[2] + base[2]) / 2;
+    const rz = (root[2] - base[2]) / 2;
+    const mid = P(0, Math.asin((midZ - hs.c[2]) / hs.az));
+    const nk = fem ? 0.88 : 1;
+    g.ellipsoid([mid[0] - 0.0065 * s, 0, midZ], [0.0155 * s * nk, 0.0185 * s * nk, rz], {
+      nu: 10, nv: 7, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.97, 0.96]),
+      shape: (x, y, z) => {
+        const t = 0.5 - z / (2 * rz); // 0 at the root, 1 at the base
+        // Width grows toward the wings; the bridge stays slim.
+        const wy = 0.42 + 0.58 * Math.pow(t, 1.6);
+        // Protrusion grows toward the tip, which sits just above the base.
+        const px = 0.35 + 0.65 * Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5);
+        let xx = x * (x > 0 ? px : 0.6);
+        // Flatter underside and a slightly rounded tip.
+        let zz = z;
+        if (t > 0.8 && x > 0) zz = z + (t - 0.8) * 0.25 * rz * (x / (0.017 * s));
+        return [xx, y * wy, zz];
+      },
+    });
+  }
+  // Eyes: dark-irised spheres in the sockets with upper and lower lids, and brows.
+  for (const sd of [1, -1]) {
+    const th = sd * 0.42;
+    const eye = P(th, Math.asin(-0.01), -0.0079 * s);
+    const er = 0.0127 * s;
+    const fwd = [Math.cos(th * 0.35), Math.sin(th * 0.35), -0.05];
+    g.ellipsoid(eye, [er, er, er], { nu: 8, nv: 5, bone, mat: 6, col: pal.sclera });
+    // Iris and pupil: a cap just proud of the eyeball, looking forward.
+    const fl = Math.hypot(fwd[0], fwd[1], fwd[2]);
+    const fa = [fwd[0] / fl, fwd[1] / fl, fwd[2] / fl];
+    g.cap(eye, fa, er * 1.006, 0.46, { nu: 8, nv: 2, bone, mat: 6, col: pal.iris });
+    g.cap(eye, fa, er * 1.012, 0.19, { nu: 6, nv: 1, bone, mat: 6, col: [0.04, 0.035, 0.03] });
+    // Lids: skin shells covering the top 45% and bottom 30% of the eyeball.
+    const lidR = er * 1.12;
+    // Upper lid (its edge a touch darker: lashes), lower lid; the opening is about 1 cm.
+    const lidVs = [0.42, 0.54, 0.88, 1.45];
+    g.grid({
+      us: linspace(-1.45, 1.45, 7), vs: lidVs, bone, mat: 1, closeU: false,
+      col: (u, v, j) => (j === 0 ? mix3(pal.skin, [0.12, 0.09, 0.08], 0.55) : tint3(pal.skin, [0.97, 0.93, 0.92])),
+      pos: (u, v) => {
+        // The lid line tilts down toward the outer corner a little.
+        const vv = v - (j0(v) ? 0.06 * sd * Math.sin(u) : 0);
+        return [eye[0] + Math.cos(vv) * Math.cos(u) * lidR, eye[1] + Math.cos(vv) * Math.sin(u) * lidR, eye[2] + Math.sin(vv) * lidR];
+      },
+    });
+    g.grid({
+      us: linspace(-1.45, 1.45, 7), vs: linspace(-1.4, -0.47, 3), bone, mat: 1, closeU: false, col: pal.skin,
+      pos: (u, v) => [eye[0] + Math.cos(v) * Math.cos(u) * lidR * 0.98, eye[1] + Math.cos(v) * Math.sin(u) * lidR * 0.98, eye[2] + Math.sin(v) * lidR * 0.98],
+    });
+    // Brow: a slim arc on the brow ridge.
+    const browCol = L.hair === 'bald' ? mix3(pal.hair, pal.skin, 0.3) : mix3(pal.hair, [0.1, 0.08, 0.07], 0.25);
+    g.sweep({
+      vs: linspace(0, 1, 5), nu: 5, bone, mat: 2, col: browCol, up: [1, 0, 0],
+      center: (v) => P(sd * lin(0.17, 0.74, v), Math.asin(0.2 + 0.03 * Math.sin(v * Math.PI) - 0.04 * v * v), 0.0012 * s),
+      radius: (v) => {
+        const r = (fem ? 0.0021 : 0.0029) * s * (v === 0 || v === 1 ? 0.25 : 1 - 0.35 * v);
+        return [r * 0.6, r];
+      },
+    });
+  }
+  // Ears.
+  for (const sd of [1, -1]) {
+    const p = P(sd * 1.62, Math.asin(-0.12), -0.002 * s);
+    const rot = earRot(sd);
+    g.ellipsoid([p[0] - 0.006 * s, p[1] + sd * 0.004 * s, p[2]], [0.017 * s, 0.0075 * s, 0.03 * s], {
+      rot, nu: 8, nv: 6, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.93, 0.9]),
+      shape: (x, y, z) => {
+        // Hollow the outer face a little (concha) and thin the lobe.
+        const k = sd * y > 0 ? 1 - 0.45 * bump(x / (0.017 * s), 0.1, 0.5) * bump(z / (0.03 * s), -0.1, 0.5) : 1;
+        return [x * (z < 0 ? 0.85 : 1), y * k, z];
+      },
+    });
+  }
+  void c;
+}
+
+const j0 = (v) => v < 0.43;
+
+function earRot(sd) {
+  // Tilted back 15 degrees, turned slightly forward.
+  const a = 0.26;
+  const b = sd * 0.25;
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cb = Math.cos(b);
+  const sb = Math.sin(b);
+  // R = Rz(b) * Ry(-a)
+  const x = [cb * ca, sb * ca, sa];
+  const y = [-sb, cb, 0];
+  const z = [-cb * sa, -sb * sa, ca];
+  return [...x, ...y, ...z];
+}
+
+function buildHair(g, D, L, pal, hs, P, hairLine) {
+  const style = L.hair;
+  if (style === 'bald') return;
+  const s = hs.s;
+  const bone = B.head;
+  const hat = L.headwear;
+  const hatLine = hatLineFor(hat);
+  const col = pal.hair;
+  const buzz = style === 'buzz';
+  const curly = style === 'curly';
+  const side = style === 'sidepart';
+  const thick = (th, ph) => {
+    const a = Math.abs(Math.atan2(Math.sin(th), Math.cos(th)));
+    const top = smooth(0.0, 1.2, ph);
+    let t;
+    if (buzz) t = 0.0028;
+    else if (curly) t = 0.011 + 0.008 * top + 0.0035 * Math.sin(9 * th + 2.1) * Math.sin(8 * ph + 0.7) + 0.002 * Math.sin(17 * th) * Math.cos(13 * ph);
+    else if (side) t = 0.006 + 0.008 * top + 0.007 * bump(th, -0.2, 0.7) * bump(ph, 0.9, 0.45) + 0.004 * smooth(0.3, 1.2, a) * (Math.sin(th) < 0 ? 1 : 0.4);
+    else if (style === 'long' || style === 'ponytail') t = 0.006 + 0.005 * top;
+    else t = 0.005 + 0.0065 * top + 0.003 * bump(th, 0, 0.6) * bump(ph, 0.75, 0.25);
+    // Thin out toward the hairline so the shell meets the scalp softly.
+    const hl = hairLine(th);
+    t *= 0.25 + 0.75 * smooth(hl, hl + 0.22, ph);
+    if (hat !== 'none' && hat !== 'visor') t = Math.min(t, 0.0045);
+    return t * s;
+  };
+  const ths = ring(24, 0);
+  // Rows from the hairline (per column) to the crown.
+  const rows = 8;
+  const vs = linspace(0, 1, rows);
+  const phAt = (th, v) => {
+    const hl = hairLine(th);
+    const top = hat === 'none' || hat === 'visor' ? Math.PI / 2 : Math.min(Math.PI / 2, hatLine(th) + 0.08);
+    return lin(hl, top, v);
+  };
+  if (!(hat !== 'none' && hat !== 'visor' && style === 'buzz')) {
+    g.grid({
+      us: ths, vs, bone, mat: 2,
+      pos: (th, v) => {
+        const ph = phAt(th, v);
+        return P(th, ph, thick(th, ph));
+      },
+      col: (th, v) => {
+        const ph = phAt(th, v);
+        let c = buzz ? mix3(col, pal.skin, 0.35) : col;
+        // Side parting: a fine lighter line on the left.
+        if (side && Math.abs(th - 0.55) < 0.07 && ph > 0.6) c = mix3(c, pal.skin, 0.35);
+        // Lighter crown highlight band, darker under-layers near the nape.
+        c = mul3(c, 0.88 + 0.16 * smooth(-0.4, 1.0, ph));
+        return c;
+      },
+    });
+  }
+  // Long hair: a curtain falling to the shoulders behind and beside the face.
+  if (style === 'long') {
+    const us = linspace(0.95, TAU - 0.95, 13);
+    g.grid({
+      us, vs: linspace(0, 1, 6), bone, mat: 2, closeU: false, flip: true, col: mul3(col, 0.95),
+      pos: (th, v) => {
+        const hl = Math.min(hairLine(th), 0.1);
+        const p = P(th, hl, thick(th, hl) * 0.9);
+        const drop = v * 0.2 * s;
+        const out = (0.004 + 0.02 * v) * s;
+        const ct = Math.cos(th);
+        const st = Math.sin(th);
+        // Hang below the jaw, flaring a little; shorter toward the front.
+        const front = smooth(1.6, 1.0, Math.min(Math.abs(Math.atan2(st, ct)), 3));
+        return [p[0] + ct * out * 0.6, p[1] + st * out, p[2] - drop * (1 - 0.45 * front)];
+      },
+    });
+    // Inner face of the curtain (so it is solid from the side).
+    g.grid({
+      us, vs: linspace(0, 1, 6), bone, mat: 2, closeU: false, col: mul3(col, 0.7),
+      pos: (th, v) => {
+        const hl = Math.min(hairLine(th), 0.1);
+        const p = P(th, hl, thick(th, hl) * 0.9 - 0.004 * s);
+        const drop = v * 0.2 * s;
+        const out = (0.0 + 0.018 * v) * s;
+        const ct = Math.cos(th);
+        const st = Math.sin(th);
+        const front = smooth(1.6, 1.0, Math.min(Math.abs(Math.atan2(st, ct)), 3));
+        return [p[0] + ct * out * 0.6, p[1] + st * out, p[2] - drop * (1 - 0.45 * front)];
+      },
+    });
+  }
+  if (style === 'ponytail') {
+    const root = P(Math.PI, -0.05, 0.004 * s);
+    // Band, then a tapering tail falling down the back.
+    const vsP = [0, 0.06, 0.12, 0.12 + 1e-4, 0.25, 0.45, 0.65, 0.85, 1];
+    g.sweep({
+      vs: vsP, nu: 9, bone, mat: 2, up: [-1, 0, 0],
+      col: (u, v, j) => (vsP[j] <= 0.12 ? mul3(pal.hat, 0.55) : mul3(col, 0.9 + 0.1 * Math.sin(u * 3))),
+      center: (v) => [root[0] - 0.012 * s - 0.03 * s * Math.sin(v * 1.7), root[1], root[2] - 0.17 * s * v],
+      radius: (v) => {
+        const r = (v <= 0.12 ? 0.0135 : 0.017 * (1 - 0.7 * v) + 0.003) * s * (v === 1 ? 0.25 : v === 0 ? 0.6 : 1);
+        return [r, r * 1.1];
+      },
+    });
+  }
+}
+
+// Lower edge (ph) of a hat crown round the head.
+function hatLineFor(hat) {
+  return (th) => {
+    const a = Math.abs(Math.atan2(Math.sin(th), Math.cos(th)));
+    if (hat === 'bucket') return table([[0, 0.42], [1.4, 0.3], [Math.PI, 0.18]], a, 1);
+    if (hat === 'flatcap') return table([[0, 0.44], [1.4, 0.36], [Math.PI, 0.2]], a, 1);
+    return table([[0, 0.48], [1.2, 0.4], [2.2, 0.26], [Math.PI, 0.16]], a, 1);
+  };
+}
+
+function buildFacialHair(g, D, L, pal, hs, P, beardRegion) {
+  const fh = L.facialHair;
+  if (fh !== 'moustache' && fh !== 'beard') return;
+  const s = hs.s;
+  const bone = B.head;
+  const col = mix3(pal.hair, [0.12, 0.1, 0.09], 0.15);
+  // Moustache: a soft bar over the upper lip, tapering at the corners.
+  g.sweep({
+    vs: linspace(0, 1, 8), nu: 6, bone, mat: 2, col, up: [1, 0, 0],
+    center: (v) => {
+      const th = lin(-0.38, 0.38, v);
+      const ph = -0.425 - 0.08 * Math.pow(Math.abs(v - 0.5) * 2, 2.2);
+      return P(th, ph, 0.003 * s);
+    },
+    radius: (v) => {
+      const e = Math.abs(v - 0.5) * 2;
+      const r = 0.0055 * s * (1 - 0.55 * e * e) * (v === 0 || v === 1 ? 0.25 : 1);
+      return [r * 0.7, r];
+    },
+  });
+  if (fh === 'beard') {
+    // A short full beard: a shell over the jaw, chin and cheeks, clear of the lips.
+    const us = linspace(-1.62, 1.62, 17);
+    const vs = linspace(-Math.PI / 2 + 0.05, -0.12, 8);
+    g.grid({
+      us, vs, bone, mat: 2, closeU: false, col,
+      pos: (th, ph) => {
+        const w = beardRegion(th, ph);
+        const t = (0.0095 * w - 0.0012) * s * (ph < -1.0 ? 1.15 : 1);
+        return P(th, ph, t);
+      },
+      col: (th, ph) => mix3(pal.stubble, col, Math.min(1, beardRegion(th, ph) * 1.6)),
+    });
+  }
+}
+
+function buildHeadwear(g, D, L, pal, hs, P) {
+  const hat = L.headwear;
+  if (hat === 'none') return;
+  const s = hs.s;
+  const bone = B.head;
+  const col = pal.hat;
+  const hatLine = hatLineFor(hat);
+  const off = hat === 'bucket' ? 0.011 * s : 0.0085 * s;
+  if (hat !== 'visor') {
+    // Crown: a shell from the hat line to the top, a little taller than the head.
+    const ths = ring(20, 0);
+    const vs = linspace(0, 1, 6);
+    const phAt = (th, v) => lin(hatLine(th), Math.PI / 2, v);
+    g.grid({
+      us: ths, vs, bone, mat: 0,
+      pos: (th, v) => {
+        const ph = phAt(th, v);
+        let o = off + (hat === 'flatcap' ? 0.004 : 0.008) * s * Math.sin(v * Math.PI * 0.5);
+        const p = P(th, ph, o);
+        if (hat === 'bucket') p[2] = Math.min(p[2], hs.c[2] + hs.az * 1.0);
+        if (hat === 'flatcap') {
+          // Flat crown pulled forward over the brim.
+          const fwd = Math.max(0, Math.cos(th));
+          p[0] += 0.016 * s * fwd * v;
+          p[2] = Math.min(p[2], hs.c[2] + hs.az * 0.9 + 0.01 * s * (1 - fwd));
+        }
+        return p;
+      },
+      col: (th, v) => {
+        let c = col;
+        // Panel seams on a cap.
+        if (hat === 'cap' && v > 0.15) {
+          const seam = Math.abs(Math.sin(th * 3));
+          if (seam < 0.09) c = mul3(c, 0.88);
+        }
+        if (hat === 'flatcap') c = mul3(c, 0.94 + 0.08 * Math.sin(th * 23) * Math.sin(v * 19));
+        // Sweat band edge.
+        if (v < 0.07) c = mul3(c, 0.9);
+        return c;
+      },
+    });
+    if (hat === 'cap') {
+      const top = P(0, Math.PI / 2, off + 0.0105 * s);
+      g.ellipsoid(top, [0.006 * s, 0.006 * s, 0.003 * s], { nu: 8, nv: 4, bone, mat: 0, col: mul3(col, 0.9) });
+    }
+  } else {
+    // Visor band.
+    const ths = ring(20, 0);
+    g.grid({
+      us: ths, vs: [0, 1], bone, mat: 0, col,
+      pos: (th, v) => P(th, hatLine(th) + v * 0.17, off * 0.7),
+    });
+    g.grid({
+      us: ths, vs: [0, 1], bone, mat: 0, col: mul3(col, 0.8), flip: true,
+      pos: (th, v) => P(th, hatLine(th) + v * 0.17, off * 0.7 - 0.0015 * s),
+    });
+  }
+  // Bills and brims.
+  if (hat === 'cap' || hat === 'visor' || hat === 'flatcap') {
+    const len = (hat === 'flatcap' ? 0.045 : 0.074) * s;
+    const half = hat === 'flatcap' ? 1.0 : 0.95;
+    const us = linspace(-half, half, 11);
+    const vs = linspace(0, 1, 4);
+    const edge = (th) => P(th, hatLine(th) + (hat === 'flatcap' ? 0.0 : 0.01), off * 0.95);
+    const billPos = (th, v, dz) => {
+      const e = edge(th);
+      const w = Math.cos((th / half) * Math.PI * 0.5);
+      const reach = len * Math.sqrt(Math.max(0, w)) * v;
+      const pitch = hat === 'flatcap' ? 0.35 : 0.2;
+      // Out along the head's radial direction, curving down at the sides.
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      return [e[0] + ct * reach, e[1] + st * reach * 0.85, e[2] - reach * pitch - 0.01 * s * v * (1 - w) + dz];
+    };
+    g.grid({ us, vs, closeU: false, bone, mat: 0, flip: true, col, pos: (th, v) => billPos(th, v, 0.0012 * s) });
+    g.grid({
+      us, vs, closeU: false, bone, mat: 0, col: hat === 'flatcap' ? mul3(col, 0.8) : mix3(mul3(col, 0.75), [0.2, 0.35, 0.25], 0.25),
+      pos: (th, v) => billPos(th, v, -0.0012 * s),
+    });
+  }
+  if (hat === 'bucket') {
+    const ths = ring(20, 0);
+    const vs = linspace(0, 1, 4);
+    const brim = (th, v, dz) => {
+      const e = P(th, hatLine(th), off);
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      const r = 0.05 * s * v;
+      return [e[0] + ct * r, e[1] + st * r, e[2] - r * 0.5 + dz];
+    };
+    g.grid({
+      us: ths, vs, bone, mat: 0, flip: true, pos: (th, v) => brim(th, v, 0.0015 * s),
+      col: (th, v) => (Math.abs(v - 0.34) < 0.05 || Math.abs(v - 0.67) < 0.05 ? mul3(col, 0.86) : col),
+    });
+    g.grid({ us: ths, vs, bone, mat: 0, col: mul3(col, 0.78), pos: (th, v) => brim(th, v, -0.0015 * s) });
+  }
+}
+
+function buildSunglasses(g, D, L, pal, hs, P) {
+  const s = hs.s;
+  const bone = B.head;
+  const lens = [0.1, 0.095, 0.09];
+  const frame = [0.06, 0.06, 0.065];
+  // Wraparound lens band in front of the eyes, a notch for the nose.
+  const us = linspace(-1.02, 1.02, 13);
+  const vs = [0, 0.5, 1];
+  const posAt = (th, v, out) => {
+    const a = Math.abs(th);
+    // Two rounded lenses joined by a bridge over the nose; the wrap narrows at the temples.
+    const e = (a - 0.44) / 0.42;
+    let bottom = -0.13 + 0.11 * e * e;
+    bottom = lin(bottom, 0.15, smooth(0.11, 0.04, a));
+    const top = 0.235 - 0.06 * smooth(0.75, 1.02, a) - 0.02 * smooth(0.1, 0.0, a);
+    const ph = Math.asin(lin(bottom, top, v));
+    return P(th, ph, out);
+  };
+  g.grid({ us, vs, closeU: false, bone, mat: 4, col: (th, v) => (v > 0.9 ? frame : lens), pos: (th, v) => posAt(th, v, 0.017 * s) });
+  g.grid({ us, vs, closeU: false, bone, mat: 4, flip: true, col: frame, pos: (th, v) => posAt(th, v, 0.0145 * s) });
+  // Temple arms back to the ears.
+  for (const sd of [1, -1]) {
+    g.sweep({
+      vs: linspace(0, 1, 5), nu: 5, bone, mat: 4, col: frame, up: [0, 0, 1],
+      center: (v) => P(sd * lin(1.0, 1.72, v), 0.2 - 0.03 * v, lin(0.012, 0.004, v) * s),
+      radius: (v) => {
+        const r = 0.0022 * s * (v === 0 || v === 1 ? 0.5 : 1);
+        return [r * 1.5, r];
+      },
+    });
+  }
+}
+
+// ------------------------------------------------------------------ arms
+function buildArms(g, D, L, pal, J) {
+  const H = D.H;
+  const limb = D.build.limb * (D.fem ? 0.88 : 1);
+  const vest = L.shirt === 'vest';
+  const sleeveCol = vest ? pal.shirt2 : pal.shirt;
+  const stripes = L.shirt === 'striped';
+  for (const [sd, ua, fa, cl] of [[1, B.upperArmL, B.forearmL, B.clavL], [-1, B.upperArmR, B.forearmR, B.clavR]]) {
+    const sh = J(ua);
+    const el = J(fa);
+    const wr = J(sd > 0 ? B.handL : B.handR);
+    const lenU = sh[2] - el[2];
+    const sleeveEnd = 0.45; // fraction of the upper arm from the shoulder
+    // Upper arm: rounded elbow end, biceps, deltoid cap above the joint.
+    const vsU = [0, 0.04, 0.12, 0.3, 0.5, 0.55 - 1e-4, 0.55, 0.62, 0.75, 0.86, 0.94, 1.0];
+    g.tube({
+      vs: vsU, nu: 10, bone: ua,
+      mat: 0,
+      matFn: (u, v) => (v < 0.55 ? 1 : 0),
+      col: (u, v) => {
+        if (v < 0.55) return pal.skin;
+        if (stripes) return Math.floor((sh[2] - lenU * (1 - v)) / (0.03 * H) + 1e-6) % 2 === 0 ? pal.shirt : pal.shirt2;
+        return v < 0.6 ? mul3(sleeveCol, 0.93) : sleeveCol;
+      },
+      ring: (v) => {
+        const z = el[2] - 0.02 * H + v * (lenU + 0.034 * H);
+        let r = lin(0.0178, 0.0232, smooth(0, 0.55, v)) * H * limb;
+        if (v >= 0.55) r = (0.0262 + 0.0016 * bump(v, 0.78, 0.15)) * H * limb; // sleeve, looser
+        if (v > 0.84) r *= Math.sqrt(Math.max(0, 1 - Math.pow((v - 0.84) / 0.16, 2))); // round over the shoulder
+        if (v === 0) r *= 0.5;
+        // Deltoid sits outward and slightly forward of the joint.
+        const dx = 0.002 * H * bump(v, 0.85, 0.15);
+        const dy = sd * 0.002 * H * smooth(0.6, 0.95, v);
+        return { c: [sh[0] + dx, sh[1] + dy, z], r1: r * 0.95, r2: r };
+      },
+    });
+    void sleeveEnd;
+    void cl;
+    // Forearm: elbow cap, forearm muscle near the top, slim wrist.
+    const lenF = el[2] - wr[2];
+    g.tube({
+      vs: [0, 0.06, 0.2, 0.45, 0.7, 0.86, 0.95, 1], nu: 10, bone: fa, mat: 1, col: pal.skin,
+      ring: (v) => {
+        const z = wr[2] - 0.012 * H + v * (lenF + 0.03 * H);
+        let r = lin(0.0124, 0.0186, smooth(0.0, 0.72, v)) * H * limb;
+        if (v > 0.86) r = 0.0172 * H * limb * (1 - (v - 0.86) * 4.5);
+        if (v === 0) r *= 0.6;
+        return { c: [el[0] - 0.002 * H * bump(v, 0.9, 0.1), el[1], z], r1: r * 0.92, r2: r * 1.05 };
+      },
+    });
+  }
+}
+
+// ------------------------------------------------------------------ legs and shoes
+function buildLegs(g, D, L, pal, J) {
+  const H = D.H;
+  const limb = D.build.limb;
+  const fem = D.fem;
+  const shorts = L.legwear === 'shorts';
+  for (const [sd, th, sn, ft] of [[1, B.thighL, B.shinL, B.footL], [-1, B.thighR, B.shinR, B.footR]]) {
+    const hip = J(th);
+    const knee = J(sn);
+    const ank = J(ft);
+    const lenT = hip[2] - knee[2];
+    const hemT = shorts ? 0.38 : -1; // shorts hem at this fraction of the thigh above the knee
+    const vsT = shorts ? [0, 0.06, 0.2, 0.38 - 1e-4, 0.38, 0.45, 0.62, 0.8, 0.92, 1] : [0, 0.06, 0.2, 0.4, 0.62, 0.8, 0.92, 1];
+    const thighK = (fem ? 1.05 : 1) * (0.6 + 0.4 * D.build.hip) * limb;
+    g.tube({
+      vs: vsT, nu: 12, bone: th,
+      matFn: (u, v) => (shorts && v < hemT ? 1 : 0),
+      col: (u, v) => (shorts && v < hemT ? pal.skin : shorts && v < hemT + 0.07 ? mul3(pal.legs, 0.9) : pal.legs),
+      ring: (v) => {
+        const z = knee[2] - (shorts ? 0.02 : 0.028) * H + v * (lenT + 0.05 * H);
+        let r = lin(0.03, 0.047, smooth(0.05, 0.85, v)) * H * thighK;
+        if (!shorts || v >= hemT) r += 0.006 * H; // trouser / shorts looseness
+        if (v > 0.92) r *= 0.8;
+        if (v === 0) r *= shorts ? 0.6 : 0.82;
+        // Inner thigh sits slightly inward at the top (toward the crotch).
+        return { c: [hip[0] + 0.003 * H * bump(v, 0.5, 0.3), hip[1] - sd * 0.006 * H * smooth(0.6, 1, v), z], r1: r * 0.98, r2: r };
+      },
+    });
+    // Shin and calf (trousers hang straight; bare legs show the calf).
+    const lenS = knee[2] - ank[2];
+    const vsS = shorts ? [0, 0.04, 0.1, 0.16 - 1e-4, 0.16, 0.3, 0.55, 0.72, 0.88, 0.95, 1] : [0, 0.05, 0.15, 0.35, 0.6, 0.85, 0.95, 1];
+    g.tube({
+      vs: vsS, nu: 11, bone: sn,
+      matFn: (u, v) => (shorts && v >= 0.16 ? 1 : 0),
+      col: (u, v) => (shorts ? (v < 0.16 ? pal.sock : pal.skin) : pal.legs),
+      ring: (v) => {
+        const z = ank[2] + 0.012 * H + v * (lenS + 0.0 * H);
+        let r;
+        let dx = 0;
+        if (shorts) {
+          r = (lin(0.0165, 0.029, smooth(0.15, 0.62, v)) - 0.004 * smooth(0.7, 0.95, v)) * H * limb * (fem ? 0.95 : 1);
+          if (v < 0.16) r = 0.019 * H * limb;
+          dx = -0.007 * H * bump(v, 0.62, 0.2) * limb; // calf
+        } else {
+          r = lin(0.031, 0.035, smooth(0, 0.8, v)) * H * (0.75 + 0.25 * limb);
+          if (v < 0.05) r *= 1.05; // break over the shoe
+        }
+        if (v > 0.95) r *= 0.85;
+        if (v === 1) r *= 0.7;
+        return { c: [ank[0] + dx, ank[1], z], r1: r, r2: r * 0.95 };
+      },
+    });
+    // Knee joint: covers the rigid seam where thigh and shin meet (trouser fabric or bare knee).
+    if (!shorts) {
+      const kr = 0.0305 * H * (0.75 + 0.25 * limb);
+      g.ellipsoid([knee[0], knee[1], knee[2] + 0.002 * H], [kr, kr * 0.97, kr * 1.15], { nu: 10, nv: 5, bone: sn, mat: 0, col: pal.legs });
+    }
+    if (shorts) {
+      g.ellipsoid([knee[0] + 0.004 * H, knee[1], knee[2]], [0.024 * H * limb, 0.026 * H * limb, 0.03 * H * limb], { nu: 8, nv: 4, bone: sn, mat: 1, col: pal.skin });
+    }
+    buildShoe(g, D, L, pal, ank, ft, sd);
+  }
+}
+
+function buildShoe(g, D, L, pal, ank, bone, sd) {
+  const H = D.H;
+  const f = D.foot;
+  const fem = D.fem;
+  const len = (f.toe + f.heel) * (fem ? 0.94 : 1) * 1.04;
+  const x0 = ank[0] - f.heel * 1.08;
+  const w = f.width * (fem ? 0.9 : 1);
+  const vs = linspace(0, 1, 10);
+  g.tube({
+    vs, nu: 11, bone,
+    matFn: (u, v) => 5,
+    col: (u, v) => {
+      // Sole: the lower part of the section.
+      if (Math.sin(u) < -0.72) return pal.sole;
+      // Saddle detail for two-tone looks.
+      if (v > 0.38 && v < 0.6 && Math.sin(u) > -0.5) return mix3(pal.shoe, [0.2, 0.2, 0.2], 0.08);
+      return pal.shoe;
+    },
+    // Tube along +x: frame axes (y, z, x) so the section is in y (width) and z (height).
+    frame: [0, 1, 0, 0, 0, 1, 1, 0, 0],
+    origin: [0, 0, 0],
+    ring: (v) => {
+      const x = x0 + v * len;
+      // Heel round, widest at the ball of the foot, tapering to a rounded toe.
+      const wid = w * (0.72 + 0.28 * Math.sin(Math.min(1, v * 1.25) * Math.PI * 0.75)) * (v > 0.85 ? Math.sqrt(Math.max(0, (1 - v) / 0.15)) : 1);
+      const ht = (v < 0.45 ? lin(0.052, 0.046, v / 0.45) : lin(0.046, 0.022, (v - 0.45) / 0.55)) * H * (fem ? 0.93 : 1);
+      const cap = v === 0 ? 0.35 : 1;
+      const r = Math.max(0.0005, wid * 0.5 * cap * (v === 0 ? 1 : 1));
+      // Centre the section so the sole is flat on the ground (z = 0 at rest).
+      const zc = ht * 0.5 - 0.004 * H;
+      return { c: [ank[1] + sd * 0.002 * H * v, zc, x], r1: r, r2: ht * 0.5 * cap, n: 2.6 };
+    },
+  });
+}
+
+// ------------------------------------------------------------------ hands and club
+// Hands are modelled gripping the club, in club space, and carried into their bones' bind space
+// through the fixed grip frames (golfer.js gripFrames): v_bind = handRest + Rgrip^T (v_club - wrist).
+function buildHandsAndClub(g, D, L, pal, J, spec) {
+  const grip = D.grip;
+  const hs = grip.scale;
+  const fem = D.fem;
+  const handK = (fem ? 0.9 : 1) * (0.94 + 0.06 * D.build.limb);
+  for (const [which, bone, col, gloved] of [['lead', B.handL, pal.glove, true], ['trail', B.handR, pal.skin, false]]) {
+    const fr = grip[which];
+    const R = fr.rot;
+    // Inverse grip transform: club -> hand local -> bind.
+    const rest = J(bone);
+    const Rt = [R[0], R[3], R[6], R[1], R[4], R[7], R[2], R[5], R[8]];
+    const w = fr.wrist;
+    const T = [
+      rest[0] - (Rt[0] * w[0] + Rt[3] * w[1] + Rt[6] * w[2]),
+      rest[1] - (Rt[1] * w[0] + Rt[4] * w[1] + Rt[7] * w[2]),
+      rest[2] - (Rt[2] * w[0] + Rt[5] * w[1] + Rt[8] * w[2]),
+    ];
+    g.setXform(Rt, T);
+    buildHand(g, which, fr, bone, col, gloved, pal, hs * handK);
+    g.clearXform();
+  }
+  // Club: club space -> the club bone's bind space is a translation by its rest origin.
+  const cr = J(B.club);
+  g.setXform([1, 0, 0, 0, 1, 0, 0, 0, 1], cr);
+  buildClub(g, spec);
+  g.clearXform();
+}
+
+// One gripping hand in club space (the shaft is +Z toward the butt): a fist of fingers and palm
+// wrapped round the grip, a broad back of the hand rising to the wrist, a thumb lying down the
+// shaft, and a wrist (a glove cuff on the lead hand) that meets the forearm.
+function buildHand(g, which, fr, bone, col, gloved, pal, s) {
+  const lead = which === 'lead';
+  const gz = fr.grip[2];
+  const R = fr.rot;
+  const zH = [R[6], R[7], R[8]]; // toward the elbow
+  const w = fr.wrist;
+  const mat = gloved ? 0 : 1;
+  const skinShade = gloved ? col : tint3(col, [1.0, 0.95, 0.94]);
+  // Back-of-hand direction round the shaft: the lead hand shows its knuckles to the target and
+  // a little up to the golfer; the trail hand's back faces away from the target.
+  const k = lead ? norm([0.8, 0.6, 0]) : norm([-0.78, 0.62, 0]);
+  const perp = cross([0, 0, 1], k); // round the shaft from the knuckles
+  const half = 0.044 * s;
+  // 1. Fist: fingers and palm round the grip (an off-centre rounded loft along the shaft).
+  g.tube({
+    vs: [0, 0.07, 0.2, 0.4, 0.6, 0.8, 0.93, 1], nu: 12, bone, mat,
+    frame: [...k, ...perp, 0, 0, 1],
+    col: (u, v) => {
+      // Finger creases on the wrapped side; knuckles a touch lighter.
+      const c = Math.cos(u);
+      if (!gloved && c < -0.2 && Math.abs(Math.sin(v * Math.PI * 4)) < 0.18) return mul3(col, 0.9);
+      if (gloved && c < -0.3 && Math.abs(Math.sin(v * Math.PI * 4)) < 0.12) return mul3(col, 0.9);
+      return c > 0.55 ? mul3(skinShade, 1.02) : col;
+    },
+    ring: (v) => {
+      const z = gz - half + v * 2 * half;
+      const e = Math.abs(v - 0.5) * 2;
+      const cap = Math.sqrt(Math.max(0, 1 - Math.pow(e, 3.2)));
+      const r = 0.0262 * s * (0.35 + 0.65 * cap);
+      return { c: [0.006 * s, 0.0, z], r1: r * 1.16, r1b: r * 0.98, r2: r, n: 2.3 };
+    },
+  });
+  // 2. Back of the hand and palm: from the knuckle side of the fist up to the wrist.
+  const p0 = [k[0] * 0.012 * s, k[1] * 0.012 * s, gz + 0.004 * s];
+  const L = Math.hypot(w[0] - p0[0], w[1] - p0[1], w[2] - p0[2]);
+  const ax = norm([w[0] - p0[0], w[1] - p0[1], w[2] - p0[2]]);
+  // Section axes: across the hand (along the shaft at the knuckles) and through it.
+  const acr = norm([0 - ax[0] * ax[2], 0 - ax[1] * ax[2], 1 - ax[2] * ax[2]]);
+  const thr = cross(acr, ax);
+  g.tube({
+    vs: [0, 0.25, 0.55, 0.8, 1], nu: 10, bone, mat,
+    frame: [...thr, ...acr, ...ax], origin: p0,
+    col,
+    ring: (v) => {
+      const z = v * L;
+      const wide = lin(0.04, 0.026, smooth(0.0, 1.0, v)) * s;
+      const thick = lin(0.021, 0.02, v) * s;
+      return { c: [0, 0, z], r1: thick, r2: wide, n: 2.4 };
+    },
+  });
+  // 3. Thumb: from the base of the palm, lying down the shaft round from the knuckles.
+  const ts = lead ? 1 : -1;
+  const tdir = norm([k[0] * -0.25 + perp[0] * ts * 0.97, k[1] * -0.25 + perp[1] * ts * 0.97, 0]);
+  g.sweep({
+    vs: linspace(0, 1, 5), nu: 7, bone, mat, col: skinShade, up: [0, 0, 1],
+    center: (v) => {
+      const rr = 0.0215 * s;
+      const z = gz + 0.022 * s - v * 0.06 * s;
+      const out = rr + 0.002 * s * Math.sin(v * Math.PI);
+      return [tdir[0] * out + k[0] * 0.004 * s * (1 - v), tdir[1] * out + k[1] * 0.004 * s * (1 - v), z];
+    },
+    radius: (v) => {
+      const r = 0.0105 * s * (v === 1 ? 0.25 : v === 0 ? 0.8 : 1 - 0.18 * v);
+      return [r, r * 1.05];
+    },
+  });
+  // 4. Wrist (a glove cuff on the lead hand): continues the hand into the forearm.
+  g.tube({
+    vs: [0, 0.3, 0.7, 1], nu: 10, bone, mat,
+    frame: [...thr, ...acr, ...ax], origin: w,
+    col: (u, v) => (gloved ? (v > 0.25 && v < 0.75 && Math.cos(u) > 0.3 ? mul3(col, 0.8) : col) : col),
+    ring: (v) => {
+      const z = (-0.01 + v * 0.022) * s;
+      const cap = v === 1 ? 0.7 : 1;
+      return { c: [0, 0, z], r1: 0.021 * s * cap * (gloved ? 1.07 : 1), r2: 0.026 * s * cap * (gloved ? 1.07 : 1) };
+    },
+  });
+  void zH;
+  void pal;
+}
+
+function buildClub(g, spec) {
+  const bone = B.club;
+  const butt = spec.butt;
+  const head = spec.head;
+  const gripLen = 0.26;
+  const gripCol = [0.12, 0.12, 0.13];
+  const graphite = head === 'driver' || head === 'wood' || head === 'hybrid';
+  const shaftCol = graphite ? [0.15, 0.15, 0.17] : [0.78, 0.79, 0.8];
+  // Grip with a rounded butt cap and a coloured band.
+  g.tube({
+    vs: [0, 0.03, 0.08, 0.5, 0.86, 0.9, 0.94, 1], nu: 10, bone, mat: 5,
+    col: (u, v) => (v > 0.86 && v < 0.9 ? [0.75, 0.12, 0.1] : gripCol),
+    ring: (v) => {
+      const z = butt - v * gripLen;
+      let r = lin(0.0128, 0.0098, v);
+      if (v === 0) r *= 0.2;
+      else if (v < 0.05) r *= 0.85;
+      return { c: [0, 0, z], r1: r, r2: r };
+    },
+    flip: true,
+  });
+  // Shaft: from the grip to the hosel.
+  const hoselTop = spec.hosel[2] + (head === 'putter' ? 0.03 : 0.05);
+  g.tube({
+    vs: [0, 1], nu: 8, bone, mat: graphite ? 4 : 3, col: shaftCol,
+    ring: (v) => {
+      const z = lin(butt - gripLen + 0.01, hoselTop, v);
+      const r = lin(0.0078, graphite ? 0.0058 : 0.0052, v);
+      return { c: [0, 0, z], r1: r, r2: r };
+    },
+    flip: true,
+  });
+  const hz = spec.hosel;
+  const t = spec.toe;
+  const u = spec.up;
+  const fx = [1, 0, 0];
+  if (head === 'iron' || head === 'wedge') buildBlade(g, spec, bone);
+  else if (head === 'putter') buildPutter(g, spec, bone);
+  else buildWoodHead(g, spec, bone);
+  // Hosel: a short tapered cylinder along the shaft into the heel.
+  if (head !== 'putter') {
+    g.tube({
+      vs: [0, 0.15, 1], nu: 8, bone, mat: head === 'iron' || head === 'wedge' ? 3 : 4,
+      col: head === 'iron' || head === 'wedge' ? [0.8, 0.8, 0.82] : [0.1, 0.1, 0.11],
+      ring: (v) => {
+        const z = lin(hz[2] + 0.012, hoselTop + 0.002, v);
+        const r = lin(head === 'driver' ? 0.0085 : 0.0075, 0.0062, v) * (v === 0 ? 0.6 : 1);
+        return { c: [0, 0, z], r1: r, r2: r };
+      },
+    });
+  }
+  void t;
+  void u;
+  void fx;
+}
+
+// Iron / wedge: a lofted blade slab with a thicker sole, rounded toe.
+function buildBlade(g, spec, bone) {
+  const d = spec.dims;
+  const wedge = spec.head === 'wedge';
+  const lo = spec.loft;
+  const t = spec.toe;
+  const u = spec.up;
+  // Face plane axes: a = toe direction, b = up the face (leaning back by the loft).
+  const a = t;
+  const b = [-Math.sin(lo), u[1] * Math.cos(lo), u[2] * Math.cos(lo)];
+  const L = d.length;
+  const Ht = d.height;
+  const outline = [];
+  // Counter-clockwise in (a, b): heel bottom -> sole -> toe -> top line -> back to the heel.
+  const n = 22;
+  for (let k = 0; k <= 8; k++) outline.push([0.006 + (k / 8) * (L - 0.016), 0.001 + 0.002 * Math.sin((k / 8) * Math.PI)]);
+  for (let k = 1; k <= 8; k++) {
+    const ang = -Math.PI / 2 + (k / 8) * Math.PI * 0.95;
+    const rx = 0.014;
+    const ry = Ht * 0.5;
+    outline.push([L - 0.012 + Math.cos(ang) * rx, ry + Math.sin(ang) * ry]);
+  }
+  for (let k = 1; k <= 5; k++) {
+    const f = k / 5;
+    outline.push([lin(L - 0.018, 0.012, f), lin(Ht * 0.98, Ht * (wedge ? 0.6 : 0.55), Math.pow(f, 0.9))]);
+  }
+  outline.push([0.004, Ht * 0.4], [0.001, Ht * 0.2]);
+  void n;
+  const origin = [spec.dims.prog + 0.001, spec.hosel[1], spec.hosel[2]];
+  const chrome = [0.82, 0.83, 0.85];
+  const sole = wedge ? 0.022 : 0.016;
+  g.slab({
+    outline, origin, a, b, n: spec.faceN, bone, mat: 3,
+    col: chrome, colBack: [0.7, 0.71, 0.74],
+    depth: (p) => lin(sole, 0.006, Math.min(1, p[1] / (Ht * 0.85))) * (p[0] < 0.01 ? 0.8 : 1),
+  });
+  // Grooves: a few fine dark lines on the face.
+  for (let k = 0; k < 7; k++) {
+    const yb = 0.008 + k * 0.0045;
+    if (yb > Ht * 0.75) break;
+    const x0 = 0.016;
+    const x1 = L - 0.022;
+    const q = (x, y) => [origin[0] + a[0] * x + b[0] * y + 0.0004, origin[1] + a[1] * x + b[1] * y, origin[2] + a[2] * x + b[2] * y];
+    const fn = spec.faceN;
+    const i0 = g.count;
+    for (const [x, y] of [[x0, yb], [x1, yb], [x1, yb + 0.0011], [x0, yb + 0.0011]]) g._vert(q(x, y), fn, [0.35, 0.36, 0.38], bone, 3);
+    g.I.push(i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3);
+  }
+}
+
+// Driver, fairway wood, hybrid: a rounded superellipsoid head with a flat lofted face.
+function buildWoodHead(g, spec, bone) {
+  const d = spec.dims;
+  const t = spec.toe;
+  const u = spec.up;
+  const f = [1, 0, 0];
+  const bk = [-1, 0, 0];
+  const lo = spec.loft;
+  const fn = spec.faceN;
+  const hx = spec.hosel;
+  // Head centre: half a length toward the toe, half a depth back, half a height up.
+  const cL = d.length * 0.5;
+  const cD = d.depth * 0.5 - d.prog;
+  const cH = d.height * 0.5;
+  const C = [hx[0] + t[0] * cL + bk[0] * cD + u[0] * cH, hx[1] + t[1] * cL + bk[1] * cD + u[1] * cH, hx[2] + t[2] * cL + bk[2] * cD + u[2] * cH];
+  const crown = spec.head === 'driver' ? [0.07, 0.08, 0.1] : spec.head === 'wood' ? [0.1, 0.1, 0.11] : [0.16, 0.16, 0.17];
+  const faceC = spec.head === 'driver' ? [0.55, 0.56, 0.58] : [0.5, 0.5, 0.52];
+  // Face plane point: the sweet spot.
+  const sp = spec.sweet;
+  const us = ring(18, 0);
+  const vs = linspace(-Math.PI / 2, Math.PI / 2, 9);
+  g.grid({
+    us, vs, bone, mat: 4, flip: true,
+    pos: (a, e) => {
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const ce = Math.cos(e);
+      const se = Math.sin(e);
+      const pe = (x, n) => Math.sign(x) * Math.pow(Math.abs(x), 2 / n);
+      // Plan: toe axis (sa), face axis (ca); front flatter, back rounder.
+      const ext = ca > 0 ? 3.2 : 2.3;
+      const px = pe(ca, ext) * (ca > 0 ? d.depth * 0.5 : d.depth * 0.5) * pe(ce, 2.4);
+      const py = pe(sa, 2.6) * d.length * 0.5 * pe(ce, 2.4);
+      // Lower crown at the back.
+      const hh = d.height * 0.5 * (1 - 0.25 * Math.max(0, -ca));
+      const pz = pe(se, se > 0 ? 2.2 : 3.5) * hh;
+      let p = [C[0] + f[0] * px + t[0] * py + u[0] * pz, C[1] + f[1] * px + t[1] * py + u[1] * pz, C[2] + f[2] * px + t[2] * py + u[2] * pz];
+      // Flatten onto the lofted face plane.
+      const dd = (p[0] - sp[0]) * fn[0] + (p[1] - sp[1]) * fn[1] + (p[2] - sp[2]) * fn[2];
+      if (dd > 0) p = [p[0] - fn[0] * dd, p[1] - fn[1] * dd, p[2] - fn[2] * dd];
+      return p;
+    },
+    col: (a, e, j, i, p) => {
+      const dd = (p[0] - sp[0]) * fn[0] + (p[1] - sp[1]) * fn[1] + (p[2] - sp[2]) * fn[2];
+      if (dd > -0.0015 && Math.cos(a) > 0.2) return faceC;
+      if (Math.sin(e) < -0.5) return [0.45, 0.46, 0.48]; // sole plate
+      // Alignment mark on the crown.
+      if (Math.sin(e) > 0.6 && Math.abs(Math.sin(a)) < 0.06 && Math.cos(a) > 0) return [0.8, 0.8, 0.8];
+      return crown;
+    },
+  });
+  void lo;
+}
+
+// Putter: a classic heel-toe blade with a plumber's neck.
+function buildPutter(g, spec, bone) {
+  const d = spec.dims;
+  const t = spec.toe;
+  const u = spec.up;
+  const hx = spec.hosel;
+  const C = [hx[0] - d.depth * 0.5 + 0.004, hx[1] + t[1] * d.length * 0.45 + u[1] * d.height * 0.5, hx[2] + t[2] * d.length * 0.45 + u[2] * d.height * 0.5];
+  const sat = [0.62, 0.63, 0.66];
+  g.grid({
+    us: ring(16, 0), vs: linspace(-Math.PI / 2, Math.PI / 2, 7), bone, mat: 3, flip: true,
+    pos: (a, e) => {
+      const pe = (x, n) => Math.sign(x) * Math.pow(Math.abs(x), 2 / n);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const ce = Math.cos(e);
+      const se = Math.sin(e);
+      const px = pe(ca, 6) * d.depth * 0.5 * pe(ce, 6);
+      const py = pe(sa, 6) * d.length * 0.5 * pe(ce, 6);
+      const pz = pe(se, 6) * d.height * 0.5;
+      return [C[0] + px + t[0] * 0 + 0, C[1] + t[1] * py + u[1] * pz, C[2] + t[2] * py + u[2] * pz];
+    },
+    col: (a, e) => (Math.sin(e) > 0.85 && Math.abs(Math.sin(a)) < 0.12 ? [0.95, 0.95, 0.95] : sat),
+  });
+  // Plumber's neck: a short bent tube from the shaft end into the heel.
+  const top = [0, 0, hx[2] + 0.03];
+  const heel = [C[0] + 0.004, hx[1] + t[1] * 0.012 + u[1] * d.height, hx[2] + t[2] * 0.012 + u[2] * d.height];
+  g.tube({
+    vs: [0, 0.5, 1], nu: 8, bone, mat: 3, col: sat,
+    ring: (v) => {
+      const z = lin(top[2], heel[2], v);
+      const r = 0.0055 * (v === 1 ? 0.8 : 1);
+      return { c: [lin(top[0], heel[0], smooth(0.4, 1, v)), lin(top[1], heel[1], smooth(0.3, 1, v)), z], r1: r, r2: r };
+    },
+    flip: true,
+  });
+}
+
+function norm(a) {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+}
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+return { buildGolferMesh };
 })();
 
 // ---- src/render.js ----
@@ -12750,15 +15300,18 @@ const __m_render = (() => {
 //   (and any hole with sea water) get a sea out to the horizon: the skirt falls below the sea level
 //   toward it (seaSetup in meshes.js), an annulus of sea joins the hole's water, and the sky shader
 //   draws the open sea beyond the far plane.
+// - The golfer (scene.golfer, section 9): one rigidly skinned mesh (2 draw calls with its ground
+//   shadow); buffers are rebuilt when the mesh (look, club) changes and after a context loss.
 // - Every GPU resource is rebuilt from CPU copies on webglcontextrestored.
 // - Resolution: DPR capped at 2 times an adaptive renderScale (0.6..1) driven by the frame interval.
 const { createContext, contextExtensions, createProgram, makeBuffer, makeTexture, AttribState } = __m_gl;
 const { perspective, lookAt, multiply, invert, project: projectPt, unproject } = __m_mat4;
 const { terrainChunks, skirtMesh, icosphere, MeshBuilder, pineMesh, broadleafMesh, flagMesh, waterMesh, greenReadMesh, trailRibbon, aimRibbon, skirtTrees, skirtObjects, seaSetup, palmMesh, saguaroMesh, bushMesh, rockMesh, grassMesh } = __m_meshes;
 const { bakeTerrainColor, bakeClouds, bakeNoise, bakeWaterDepth } = __m_bake;
-const { SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, PROP_VS, PROP_FS, FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, OBJ_VS, OBJ_FS } = __m_shaders;
+const { SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, PROP_VS, PROP_FS, FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, OBJ_VS, OBJ_FS, GOLFER_VS, GOLFER_FS, GOLFER_MASK_VS, GOLFER_MASK_FS, GOLFER_GROUND_VS, GOLFER_GROUND_FS, GOLFER_BONES } = __m_shaders;
 const { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R, SURF } = __m_constants;
 const { themeFor } = __m_themes;
+const { buildGolferMesh } = __m_golfer_mesh;
 
 const EXPOSURE = 1.0;
 
@@ -12827,6 +15380,9 @@ class Renderer {
     this._trailBuf = new Float32Array(400 * 12 + 24);
     this._aimBuf = new Float32Array(4096);
     this._quad = new Float32Array(24);
+    this._golferBones = new Float32Array(GOLFER_BONES * 16);
+    this._golferMesh = null; // {key, mesh} built from scene.golfer.look + club
+    this.golferGL = null;
     const ctx = createContext(canvas, { test, forceGL1: gl1 });
     this.ok = !!ctx;
     if (!ctx) return;
@@ -12866,7 +15422,14 @@ class Renderer {
       overlay: createProgram(gl, OVERLAY_VS, OVERLAY_FS),
       read: createProgram(gl, READ_VS, READ_FS),
       obj: createProgram(gl, OBJ_VS, OBJ_FS),
+      golfer: createProgram(gl, GOLFER_VS, GOLFER_FS),
+      golferMask: createProgram(gl, GOLFER_MASK_VS, GOLFER_MASK_FS),
+      golferGround: createProgram(gl, GOLFER_GROUND_VS, GOLFER_GROUND_FS),
     };
+    // Golfer buffers are rebuilt on the next draw (new context or first use); the shadow mask is
+    // a small offscreen texture.
+    this.golferGL = null;
+    this._shadowMask = this._makeMask(256);
     // Static meshes (built once on the CPU and kept for restore).
     if (!this.static) {
       this.static = {
@@ -13471,6 +16034,10 @@ class Renderer {
       gl.enable(gl.CULL_FACE);
     }
 
+    // ---- the golfer (opaque, skinned)
+    const golf = this._golferPrep(scene.golfer);
+    if (golf) this._drawGolfer(golf, frame);
+
     // ---- ball (icosphere when it covers its minimum size, else a billboard after the sky).
     // scene.ball.minPx (CSS px radius, default 2.5) keeps it readable from a raised camera.
     const ball = scene.ball;
@@ -13553,6 +16120,9 @@ class Renderer {
     gl.enable(gl.POLYGON_OFFSET_FILL);
     gl.polygonOffset(-1, -4);
     const op = this.P.overlay;
+
+    // Golfer's ground shadow (a blurred mask of the flattened figure).
+    if (golf) this._drawGolferShadow(golf, frame, sun);
 
     // Blob shadow under the ball: darker and tighter when the ball is on the ground.
     if (ball && ball.visible !== false && T) {
@@ -13650,6 +16220,177 @@ class Renderer {
     gl.disable(gl.BLEND);
     const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     st.ms += (t1 - now - st.ms) * 0.1;
+  }
+
+  // ------------------------------------------------------------------ golfer
+  // scene.golfer = {visible, mesh | {look, club}, bones: Float32Array (skin matrices, world),
+  // alpha}. Returns the draw state or null.
+  _golferPrep(gs) {
+    if (!gs || gs.visible === false || !gs.bones) return null;
+    const alpha = gs.alpha == null ? 1 : gs.alpha;
+    if (alpha <= 0.004) return null;
+    let mesh = gs.mesh;
+    if (!mesh) {
+      const key = JSON.stringify([gs.look || null, gs.club || '7i']);
+      if (!this._golferMesh || this._golferMesh.key !== key) this._golferMesh = { key, mesh: buildGolferMesh(gs.look, gs.club || '7i') };
+      mesh = this._golferMesh.mesh;
+    }
+    const G = this._golferUpload(mesh);
+    if (!G) return null;
+    // Camera-relative skin matrices; a mirrored figure (left-hander) flips the winding.
+    const src = gs.bones;
+    const b = this._golferBones;
+    const n = Math.min(src.length, b.length);
+    for (let i = 0; i < n; i++) b[i] = src[i];
+    const e = this.eye;
+    for (let o = 0; o + 15 < n; o += 16) {
+      b[o + 12] -= e.x;
+      b[o + 13] -= e.y;
+      b[o + 14] -= e.z;
+    }
+    const det = b[0] * (b[5] * b[10] - b[6] * b[9]) - b[4] * (b[1] * b[10] - b[2] * b[9]) + b[8] * (b[1] * b[6] - b[2] * b[5]);
+    // Ground under the golfer: the pelvis (mesh.center) carried by the root's skin matrix.
+    const c = mesh.center || [0, 0, 1];
+    const wx = src[0] * c[0] + src[4] * c[1] + src[8] * c[2] + src[12];
+    const wy = src[1] * c[0] + src[5] * c[1] + src[9] * c[2] + src[13];
+    return { G, alpha, mirror: det < 0, wx, wy, fadeNear: gs.fadeNear !== false };
+  }
+
+  _golferUpload(mesh) {
+    const gl = this.gl;
+    if (this.golferGL && this.golferGL.mesh === mesh) return this.golferGL;
+    if (this.golferGL) for (const k of ['pos', 'nrm', 'col', 'bm', 'idx']) gl.deleteBuffer(this.golferGL[k]);
+    const nv = mesh.pos.length / 3;
+    const bm = new Float32Array(nv * 2);
+    for (let i = 0; i < nv; i++) {
+      bm[i * 2] = mesh.bone[i];
+      bm[i * 2 + 1] = mesh.mat ? mesh.mat[i] : 0;
+    }
+    this.golferGL = {
+      mesh,
+      pos: makeBuffer(gl, mesh.pos),
+      nrm: makeBuffer(gl, mesh.nrm),
+      col: makeBuffer(gl, mesh.col),
+      bm: makeBuffer(gl, bm),
+      idx: makeBuffer(gl, mesh.idx, gl.ELEMENT_ARRAY_BUFFER),
+      count: mesh.idx.length,
+    };
+    return this.golferGL;
+  }
+
+  _drawGolfer(st, frame) {
+    const gl = this.gl;
+    const p = this.P.golfer;
+    const u = this._use(p, frame);
+    gl.uniformMatrix4fv(u.uBones, false, this._golferBones);
+    gl.uniform1f(u.uAlpha, st.alpha);
+    gl.uniform1f(u.uNear, st.fadeNear ? 1 : 0);
+    const A = this.attribs;
+    A.bind(p.a.aPos, st.G.pos, 3);
+    A.bind(p.a.aNrm, st.G.nrm, 3);
+    A.bind(p.a.aCol, st.G.col, 3);
+    A.bind(p.a.aBM, st.G.bm, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
+    gl.enable(gl.CULL_FACE);
+    if (st.mirror) gl.frontFace(gl.CW);
+    this._drawElements(st.G.count);
+    gl.frontFace(gl.CCW);
+  }
+
+  _makeMask(size) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok ? { tex, fb, size } : null;
+  }
+
+  // The golfer's sun shadow: the flattened figure rendered into the mask over a square of ground
+  // under and beyond the feet (away from the sun), then laid on the ground blurred.
+  _drawGolferShadow(st, frame, sun) {
+    const M = this._shadowMask;
+    if (!M) return;
+    const gl = this.gl;
+    const T = this.terrain;
+    const e = this.eye;
+    let gz = 0;
+    let n = { x: 0, y: 0, z: 1 };
+    if (T) {
+      gz = T.heightAt(st.wx, st.wy);
+      if (T.normalAt) n = T.normalAt(st.wx, st.wy);
+    }
+    const alpha = 0.42 * st.alpha * Math.min(1, Math.max(0, sun.z * 2.5));
+    if (alpha < 0.004) return;
+    // Shadow length of a ~2.4 m figure-with-club; the square reaches that far from the feet.
+    const sh = Math.hypot(sun.x, sun.y);
+    const len = Math.min(8, (2.4 * sh) / Math.max(0.2, sun.z));
+    const half = 1.4 + 0.5 * len;
+    const ox = sh > 1e-4 ? (-sun.x / sh) * len * 0.5 : 0;
+    const oy = sh > 1e-4 ? (-sun.y / sh) * len * 0.5 : 0;
+    const cx = st.wx + ox;
+    const cy = st.wy + oy;
+    const cz = gz - (n.x * ox + n.y * oy) / (n.z || 1) + 0.02;
+    // Quad (also defines the mask axes).
+    this._groundQuad(cx, cy, cz, n, half);
+    const q = this._quad;
+    // Axes from the quad's corners: a = (corner1 - corner0) / 2r, b = (corner2 - corner0) / 2r.
+    const ax = (q[6] - q[0]) / (2 * half);
+    const ay = (q[7] - q[1]) / (2 * half);
+    const az = (q[8] - q[2]) / (2 * half);
+    const bx = (q[12] - q[0]) / (2 * half);
+    const by = (q[13] - q[1]) / (2 * half);
+    const bz = (q[14] - q[2]) / (2 * half);
+    // ---- mask pass
+    gl.bindFramebuffer(gl.FRAMEBUFFER, M.fb);
+    gl.viewport(0, 0, M.size, M.size);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    const pm = this.P.golferMask;
+    let u = this._use(pm, frame);
+    gl.uniformMatrix4fv(u.uBones, false, this._golferBones);
+    const d = -(n.x * (st.wx - e.x) + n.y * (st.wy - e.y) + n.z * (gz - e.z));
+    gl.uniform4f(u.uPlane, n.x, n.y, n.z, d);
+    gl.uniform3f(u.uSun, sun.x, sun.y, sun.z);
+    gl.uniform3f(u.uC, cx - e.x, cy - e.y, cz - e.z);
+    gl.uniform3f(u.uE1, ax, ay, az);
+    gl.uniform3f(u.uE2, bx, by, bz);
+    gl.uniform1f(u.uInvHalf, 1 / half);
+    const A = this.attribs;
+    A.bind(pm.a.aPos, st.G.pos, 3);
+    A.bind(pm.a.aBM, st.G.bm, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
+    this._drawElements(st.G.count);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    // ---- ground quad
+    const pg = this.P.golferGround;
+    u = this._use(pg, frame);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, M.tex);
+    gl.uniform1i(u.uMask, 0);
+    gl.uniform1f(u.uAlpha, alpha);
+    gl.uniform2f(u.uTexel, 1.2 / M.size, 1.2 / M.size);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.G.quad);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._quad);
+    A.bind(pg.a.aPos, this.G.quad, 3, 24, 0);
+    A.bind(pg.a.aMisc, this.G.quad, 3, 24, 12);
+    this._drawStrip(4);
   }
 
   _bindOverlay(buffer, data) {
@@ -14182,9 +16923,12 @@ const __m_ui = (() => {
 //       builds the course picker (cards with a theme-gradient thumbnail, name, tagline, par and
 //       length, best round); selected: the highlighted id (its name and par fill the title). A
 //       card tap selects it and emits 'course' (id). resumeSub: small line under Resume round.
-//       A mixed entry (the random nine from every course: mixed true, lengthM null) is a wide card
-//       under the others with a four-theme thumbnail and "Par 36 · New holes every round".
-//   ui.selectedCourse                 id of the highlighted course card (or null)
+//       The mixed entries (random holes from every course: mixed true, lengthM null; 'mixed' with
+//       9 holes, 'mixed18' with 18) share one wide card ([data-course="mixed"]) under the others,
+//       with a four-theme thumbnail, "Par 36 · New holes every round" and a "9 holes | 18 holes"
+//       switch ([data-mix="mixed" | "mixed18"]); a tap on it selects that size and emits 'course'
+//       with its id, a tap on the card selects the size picked last. A mixed best reads "Best +3".
+//   ui.selectedCourse                 id of the highlighted course (a mixed card: 'mixed' | 'mixed18')
 //   ui.showPause({title?}) / ui.hidePause()       ui.showSettings() ui.showHowTo()
 //   ui.setLoading(on, text='Loading')             ui.showNoGL()
 //   ui.showHud(on=true)
@@ -14236,7 +16980,10 @@ const __m_ui = (() => {
 //              from (a mixed round) get a Course row: a theme-coloured chip with the course's
 //              initial per hole. current: 0-based hole to
 //       highlight. final shows Play again ([data-act="new-round"]) + Menu ([data-act="quit"])
-//       instead of Next hole ([data-act="next-hole"]).
+//       instead of Next hole ([data-act="next-hole"]). Up to nine holes: one block with an Out
+//       total. Eighteen (Mixed Eighteen): #scorecard[data-holes="18"]; in portrait and square
+//       two blocks (holes 1-9 | Out, then 10-18 | In | Tot; data-card-layout="split"), in
+//       landscape one row (1-9 | Out | 10-18 | In | Tot; "row"); re-rendered on rotation.
 //   ui.showDecision(opts) -> Promise<id>
 //       opts: ['drop', 'replay'] or {kicker?, title?, text?, options:[id | {id, label, detail?}]}.
 //       The first option is the default (primary). Resolves with the chosen id.
@@ -14318,6 +17065,12 @@ function fmtToPar(d) {
 function fmtLength(m, units) {
   const n = Math.round(units === 'm' ? m : mToYd(m));
   return `${n.toLocaleString('en-US')} ${units === 'm' ? 'm' : 'yd'}`;
+}
+
+// The menu card's best-round badge: strokes, or for a mixed round (a new draw every time) to par.
+function bestBadge(c) {
+  if (!c.best) return '';
+  return c.mixed ? `Best ${fmtToPar(c.best.toPar)}` : `Best ${c.best.strokes}`;
 }
 
 function surfKey(lieSurface, label) {
@@ -14425,10 +17178,19 @@ class UI {
       this._closeShots();
       return;
     }
+    const mix = e.target.closest('[data-mix]');
+    if (mix) {
+      this._mixSel = mix.dataset.mix;
+      this._selectCourse(mix.dataset.mix);
+      this.emit('course', mix.dataset.mix);
+      return;
+    }
     const card = e.target.closest('[data-course]');
     if (card) {
-      this._selectCourse(card.dataset.course);
-      this.emit('course', card.dataset.course);
+      // The mixed card stands for the size its switch shows.
+      const id = card.dataset.course === 'mixed' && this._mixSel ? this._mixSel : card.dataset.course;
+      this._selectCourse(id);
+      this.emit('course', id);
       return;
     }
     const seg = e.target.closest('.seg button');
@@ -14510,6 +17272,8 @@ class UI {
     const changed = body.dataset.layout !== mode;
     if (changed) body.dataset.layout = mode;
     this.setPadRect(padRectFor(w, h, readSafeInsets()));
+    // An open 18-hole scorecard switches between two blocks (portrait) and one row (landscape).
+    if (changed && this._sc && this.el.scorecard && !this.el.scorecard.hidden) this._renderScorecard();
     if (changed) this.emit('layout', mode);
   }
 
@@ -14553,26 +17317,34 @@ class UI {
   }
 
   // Course picker cards: a theme thumbnail (CSS gradient by data-theme) with the best round on it,
-  // then the name, the tagline and par / length.
+  // then the name, the tagline and par / length. The mixed entries share one card (a div: it holds
+  // the 9 | 18 switch's buttons), filled in for the selected size by _selectCourse.
   _renderCourses() {
     const box = this.el.coursePick;
     const doc = this.doc;
     const units = this._settings.units;
     box.textContent = '';
+    const mixes = this._courses.filter((c) => c.mixed);
+    let mixDone = false;
     for (const c of this._courses) {
-      const b = doc.createElement('button');
-      b.type = 'button';
+      if (c.mixed && mixDone) continue;
+      const b = doc.createElement(c.mixed ? 'div' : 'button');
+      if (c.mixed) {
+        mixDone = true;
+        b.tabIndex = 0;
+      } else b.type = 'button';
       b.className = c.mixed ? 'course-card cc-mixed' : 'course-card';
-      b.dataset.course = c.id;
+      b.dataset.course = c.mixed ? 'mixed' : c.id;
       b.dataset.theme = c.theme || 'parkland';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', 'false');
       const thumb = doc.createElement('span');
       thumb.className = 'cc-thumb';
-      if (c.best) {
+      if (c.best || c.mixed) {
         const best = doc.createElement('span');
         best.className = 'cc-best';
-        best.textContent = `Best ${c.best.strokes}`;
+        best.textContent = bestBadge(c);
+        best.hidden = !c.best;
         thumb.appendChild(best);
       }
       const body = doc.createElement('span');
@@ -14588,6 +17360,21 @@ class UI {
       meta.textContent = c.lengthM == null ? `Par ${c.par} · New holes every round` : `Par ${c.par} · ${fmtLength(c.lengthM, units)}`;
       body.append(name, tag, meta);
       b.append(thumb, body);
+      if (c.mixed && mixes.length > 1) {
+        const seg = doc.createElement('span');
+        seg.className = 'cc-holes';
+        seg.setAttribute('role', 'radiogroup');
+        seg.setAttribute('aria-label', 'Holes');
+        for (const m of mixes) {
+          const btn = doc.createElement('button');
+          btn.type = 'button';
+          btn.dataset.mix = m.id;
+          btn.textContent = `${m.holes || 9} holes`;
+          btn.setAttribute('aria-pressed', 'false');
+          seg.appendChild(btn);
+        }
+        b.appendChild(seg);
+      }
       box.appendChild(b);
     }
   }
@@ -14597,9 +17384,26 @@ class UI {
     const c = this._courses.find((k) => k.id === id) || this._courses[0];
     if (!c) return;
     this._course = c.id;
-    for (const b of this.el.coursePick.querySelectorAll('[data-course]')) b.setAttribute('aria-checked', b.dataset.course === c.id ? 'true' : 'false');
+    const cardId = c.mixed ? 'mixed' : c.id;
+    for (const b of this.el.coursePick.querySelectorAll('[data-course]')) b.setAttribute('aria-checked', b.dataset.course === cardId ? 'true' : 'false');
+    if (c.mixed) {
+      this._mixSel = c.id;
+      // The shared mixed card shows the selected size: name, tagline, par, best and the switch.
+      const card = this.el.coursePick.querySelector('[data-course="mixed"]');
+      if (card) {
+        card.querySelector('.cc-name').textContent = c.name;
+        card.querySelector('.cc-tag').textContent = c.tagline || '';
+        card.querySelector('.cc-meta').textContent = `Par ${c.par} · New holes every round`;
+        const badge = card.querySelector('.cc-best');
+        if (badge) {
+          badge.textContent = bestBadge(c);
+          badge.hidden = !c.best;
+        }
+        for (const btn of card.querySelectorAll('[data-mix]')) btn.setAttribute('aria-pressed', btn.dataset.mix === c.id ? 'true' : 'false');
+      }
+    }
     this.f.courseName.textContent = c.name;
-    const best = c.best ? ` · Best ${c.best.strokes} (${fmtToPar(c.best.toPar)})` : '';
+    const best = !c.best ? '' : c.mixed ? ` · Best ${fmtToPar(c.best.toPar)}` : ` · Best ${c.best.strokes} (${fmtToPar(c.best.toPar)})`;
     this.f.courseSub.textContent = `${c.holes || 9} holes · Par ${c.par}${best}`;
   }
 
@@ -14898,7 +17702,14 @@ class UI {
   }
 
   // ------------------------------------------------------------------ scorecard
-  showScorecard(card, { final = false, current = null, title, kicker, course } = {}) {
+  showScorecard(card, opts = {}) {
+    this._sc = { card, opts };
+    this._renderScorecard();
+  }
+
+  _renderScorecard() {
+    const { card, opts } = this._sc;
+    const { final = false, current = null, title, kicker, course } = opts;
     const holes = (Array.isArray(card) ? card : (card && card.holes) || []).map((h, i) => ({
       n: h.n ?? i + 1,
       par: h.par ?? 4,
@@ -14918,30 +17729,23 @@ class UI {
 
     const table = this.$('#scorecard table.sc');
     table.textContent = '';
-    const row = (cls, label, cells, tot) => {
-      const tr = doc.createElement('tr');
-      tr.className = cls;
-      const th = doc.createElement('th');
-      th.textContent = label;
-      tr.appendChild(th);
-      cells.forEach((c, i) => {
-        const td = doc.createElement('td');
-        if (i === current) td.classList.add('cur');
-        if (c && typeof c === 'object') td.appendChild(c);
-        else td.textContent = c ?? '';
-        tr.appendChild(td);
-      });
-      const td = doc.createElement('td');
-      td.className = 'tot';
-      td.textContent = tot ?? '';
-      tr.appendChild(td);
-      table.appendChild(tr);
-    };
     const lengthNum = (m) => (m == null ? '' : Math.round(units === 'm' ? m : mToYd(m)));
-    row('r-hole', 'Hole', holes.map((h) => h.n), 'Out');
+    // Columns: a hole {i}, a total {label, from, to} over holes [from, to), or a blank spacer.
+    const range = (a, b) => Array.from({ length: b - a }, (_, k) => ({ i: a + k }));
+    const eighteen = holes.length > 9;
+    const split = eighteen && this.layout !== 'landscape';
+    const OUT = { label: 'Out', from: 0, to: Math.min(9, holes.length) };
+    const IN = { label: 'In', from: 9, to: holes.length };
+    const TOT = { label: 'Tot', from: 0, to: holes.length };
+    const blocks = !eighteen
+      ? [[...range(0, holes.length), OUT]]
+      : split
+        ? [[...range(0, 9), OUT, { blank: true }], [...range(9, holes.length), IN, TOT]]
+        : [[...range(0, 9), OUT, ...range(9, holes.length), IN, TOT]];
+    const rows = [{ cls: 'r-hole', label: 'Hole', cell: (h) => h.n, tot: (t) => t.label }];
     if (holes.some((h) => h.from)) {
       // Mixed round: which course each hole comes from (initial on the course's theme colour).
-      row('r-from', 'Course', holes.map((h) => {
+      rows.push({ cls: 'r-from', label: 'Course', cell: (h) => {
         if (!h.from) return '';
         const chip = doc.createElement('span');
         chip.className = 'from-chip';
@@ -14949,20 +17753,55 @@ class UI {
         chip.textContent = (h.from.name || '?').charAt(0);
         chip.title = `${h.from.name} ${h.from.n}`;
         return chip;
-      }), '');
+      }, tot: () => '' });
     }
-    row('r-yds', units === 'm' ? 'M' : 'Yds', holes.map((h) => lengthNum(h.lengthM)),
-      holes.every((h) => h.lengthM != null) ? lengthNum(sum(holes, 'lengthM')) : '');
-    row('r-par', 'Par', holes.map((h) => h.par), sum(holes, 'par'));
-    row('r-score', 'Score', holes.map((h) => {
-      if (h.strokes == null) return '';
-      const d = h.strokes - h.par;
-      const mk = doc.createElement('span');
-      mk.className = `mk${d <= -2 ? ' circ2' : d === -1 ? ' circ' : d === 1 ? ' sq' : d >= 2 ? ' sq2' : ''}`;
-      mk.textContent = h.strokes;
-      return mk;
-    }), played.length ? sum(played, 'strokes') : '');
-    row('r-putts', 'Putts', holes.map((h) => (h.strokes == null ? '' : h.putts ?? '')), played.length ? sum(played, 'putts') : '');
+    rows.push(
+      { cls: 'r-yds', label: units === 'm' ? 'M' : 'Yds', cell: (h) => lengthNum(h.lengthM), tot: (t, hs) => (hs.every((h) => h.lengthM != null) ? lengthNum(sum(hs, 'lengthM')) : '') },
+      { cls: 'r-par', label: 'Par', cell: (h) => h.par, tot: (t, hs) => sum(hs, 'par') },
+      { cls: 'r-score', label: 'Score', cell: (h) => {
+        if (h.strokes == null) return '';
+        const d = h.strokes - h.par;
+        const mk = doc.createElement('span');
+        mk.className = `mk${d <= -2 ? ' circ2' : d === -1 ? ' circ' : d === 1 ? ' sq' : d >= 2 ? ' sq2' : ''}`;
+        mk.textContent = h.strokes;
+        return mk;
+      }, tot: (t, hs, pl) => (pl.length ? sum(pl, 'strokes') : '') },
+      { cls: 'r-putts', label: 'Putts', cell: (h) => (h.strokes == null ? '' : h.putts ?? ''), tot: (t, hs, pl) => (pl.length ? sum(pl, 'putts') : '') },
+    );
+    blocks.forEach((cols, bi) => {
+      // Nine holes: rows straight in the table (as before); two blocks: a tbody each.
+      const parent = split ? doc.createElement('tbody') : table;
+      if (split) {
+        parent.className = bi ? 'sc-back' : 'sc-front';
+        table.appendChild(parent);
+      }
+      for (const r of rows) {
+        const tr = doc.createElement('tr');
+        tr.className = r.cls;
+        const th = doc.createElement('th');
+        th.textContent = r.label;
+        tr.appendChild(th);
+        for (const col of cols) {
+          const td = doc.createElement('td');
+          let c = '';
+          if (col.blank) td.className = 'gap';
+          else if (col.label) {
+            td.className = 'tot';
+            const hs = holes.slice(col.from, col.to);
+            c = r.tot(col, hs, hs.filter((h) => h.strokes != null));
+          } else {
+            if (col.i === current) td.classList.add('cur');
+            c = r.cell(holes[col.i]);
+          }
+          if (c && typeof c === 'object') td.appendChild(c);
+          else td.textContent = c ?? '';
+          tr.appendChild(td);
+        }
+        parent.appendChild(tr);
+      }
+    });
+    this.el.scorecard.dataset.holes = String(holes.length);
+    this.el.scorecard.dataset.cardLayout = split ? 'split' : 'row';
 
     const last = current != null ? holes[current] : played[played.length - 1];
     // Header: the course name first, then what the card is ("Red Mesa · Round complete").
@@ -14982,6 +17821,7 @@ class UI {
 
   hideScorecard() {
     this.el.scorecard.hidden = true;
+    this._sc = null;
   }
 
   // ------------------------------------------------------------------ decision
@@ -16003,11 +18843,11 @@ const __m_main = (() => {
 // course (golf.best.v1 = {[courseId]: best}; an old single record is Hollow Pines'). Restart and
 // Play again replay the round's own course.
 //
-// Mixed rounds: the fifth card, "Mixed Nine", draws nine holes at random from all four courses
-// (courses.js mixedCourse, seeded by the round seed: two or three from each course, par 36). Each
-// hole is built with its own course (theme, conditions, wind), the intro names the course it
-// comes from, the save stores the draw, and the best mixed round is kept under 'mixed'. Restart
-// replays the same nine; Play again draws a new one.
+// Mixed rounds: the fifth card draws 9 ("Mixed Nine") or 18 ("Mixed Eighteen", its 9 | 18
+// switch) holes at random from all four courses (courses.js mixedCourse, seeded by the round
+// seed). Each hole is built with its own course (theme, conditions, wind), the intro names the
+// course it comes from, the save stores the draw, and the best rounds (by score to par) are kept
+// under 'mixed' and 'mixed18'. Restart replays the same holes; Play again draws new ones.
 //
 // Special shots (section 8.4): the shot chip beside the club picker opens the shot sheet (the
 // eligible shots with their carry/total); the selection lasts one stroke. The club readout, power
@@ -16016,6 +18856,7 @@ const __m_main = (() => {
 //
 // URL parameters
 //   ?course=ID    desert | water | links | pines | mixed: the course for new rounds (menu and autoplay)
+//   ?holes=18     with course=mixed: a Mixed Eighteen round (mixed18); fixed courses ignore it
 //   ?debug=1      fps / draw-call overlay
 //   ?autoplay=1   the bot plays every hole; globalThis.__golfDone = {total, toPar, played} at the end
 //   ?fast=N       playback speed (flight, intro, holed hold), e.g. 8
@@ -16026,8 +18867,7 @@ const __m_main = (() => {
 //   ?quality=low  low-quality renderer regardless of the setting
 // globalThis.__golf = app (debugging and tests).
 const { Game, TREE_SEED, courseFromParam, saveCourseId, mergeBest, recordBest } = __m_game;
-const { COURSE } = __m_course;
-const { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, mixedCourse, mixedSummary, courseName, isCourseId } = __m_courses;
+const { COURSES, courseById, courseSummary, DEFAULT_COURSE_ID, MIXED_ID, MIXED18_ID, mixedCourse, mixedSummary, courseName, isCourseId, isMixedId, mixedHoles } = __m_courses;
 const { shotById, shotIntent } = __m_shots;
 const { buildHole } = __m_terrain;
 const { Renderer } = __m_render;
@@ -16069,10 +18909,10 @@ const AUTOPLAY = flag('autoplay');
 const TEST = flag('test');
 const NOGL = flag('nogl');
 const FAST = clamp(parseFloat(params.get('fast')) || 1, 0.25, 50);
-const START_HOLE = clamp((parseInt(params.get('hole'), 10) || 1) - 1, 0, COURSE.holes.length - 1);
+const START_HOLE = clamp((parseInt(params.get('hole'), 10) || 1) - 1, 0, 17); // clamped per course in newRound
 const QUALITY = params.get('quality') === 'low' ? 'low' : null;
 const SEED = params.has('seed') ? parseInt(params.get('seed'), 10) >>> 0 : TEST ? 1 : null;
-const COURSE_PARAM = courseFromParam(params.get('course'));
+const COURSE_PARAM = courseFromParam(params.get('course'), params.get('holes'));
 
 // Stand-in for the WebGL renderer under ?nogl=1: same API, draws nothing, so the whole game
 // (logic, HUD, input, saves) still runs where WebGL is missing (and in logic-only e2e runs).
@@ -16681,10 +19521,10 @@ function newRound(courseId = app.courseId, picks = null) {
   app.ui.hideMenu();
   app.ui.hidePause();
   const seed = SEED ?? ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0);
-  const course = courseId === MIXED_ID ? mixedCourse(seed, picks) : courseById(courseId);
+  const course = isMixedId(courseId) ? mixedCourse(seed, picks, mixedHoles(courseId)) : courseById(courseId);
   const game = new Game({ course, seed, settings: gameSettings(), buildHole: cachedBuildHole });
   bindGame(game);
-  game.loadHole(START_HOLE);
+  game.loadHole(Math.min(START_HOLE, course.holes.length - 1));
   saveGame();
   updateInputMode();
 }
@@ -16735,7 +19575,11 @@ function showMenu() {
   app.ui.showHud(false);
   app.ui.showMenu({
     canResume: !!save,
-    courses: [...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })), { ...mixedSummary(), best: best[MIXED_ID] || null }],
+    courses: [
+      ...COURSES.map((c) => ({ ...summaryOf(c), best: best[c.id] || null })),
+      { ...mixedSummary(9), best: best[MIXED_ID] || null },
+      { ...mixedSummary(18), best: best[MIXED18_ID] || null },
+    ],
     selected: app.courseId,
     resumeSub,
   });
@@ -16752,8 +19596,8 @@ function selectCourse(id) {
 // Menu backdrop: the chosen course's first hole (built a moment after the tap has painted); for
 // the mixed round, the first hole of a fixed sample draw.
 function backdropHole(courseId) {
-  const course = courseId === MIXED_ID ? mixedCourse(1) : courseById(courseId);
-  const i = course.mixed ? 0 : START_HOLE;
+  const course = isMixedId(courseId) ? mixedCourse(1, null, mixedHoles(courseId)) : courseById(courseId);
+  const i = course.mixed ? 0 : Math.min(START_HOLE, course.holes.length - 1);
   return { def: course.holes[i], course: course.mixed ? course.holeCourses[i] : course };
 }
 
@@ -16942,12 +19786,14 @@ function onRoundOver({ card, totals }) {
   const best = recordBestRound(totals, g.course);
   clearSave();
   showFinalCard(card, totals, best, g.course);
-  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, pickUps: totals.pickUps, course: g.course.id };
+  if (AUTOPLAY) globalThis.__golfDone = { total: totals.strokes, toPar: totals.toPar, played: totals.played, holes: g.course.holes.length, pickUps: totals.pickUps, course: g.course.id };
 }
 
 // The final card: the course name heads it ("Red Mesa · New best round!").
 function showFinalCard(card, totals, { best, isNew }, course) {
-  const kicker = isNew ? 'New best round!' : best ? `Best ${best.strokes} (${fmtToPar(best.toPar)})` : 'Round complete';
+  // (A mixed round's best is its score to par: every draw is different.)
+  const bestText = best && (course.mixed ? `Best ${fmtToPar(best.toPar)}` : `Best ${best.strokes} (${fmtToPar(best.toPar)})`);
+  const kicker = isNew ? 'New best round!' : bestText || 'Round complete';
   app.ui.showScorecard(card, { final: true, kicker, course: course.name, title: `${totals.strokes} strokes · ${fmtToPar(totals.toPar)}` });
 }
 
@@ -17473,8 +20319,16 @@ function installDebugHooks() {
         holeCourseId: g.courseOf().id,
         theme: g.terrain ? g.terrain.theme : null,
         mix: g.state.mix,
+        holes: g.course.holes.length,
         shotType: g.shotType,
       };
+    },
+    // Mixed 18 tests: record the holes before i (par + toPar[k] strokes each) and load hole i.
+    skipTo(i, toPar = []) {
+      const g = app.game;
+      g.debugSkipTo(i, (k, par) => par + (toPar[k] || 0));
+      saveGame();
+      return g.state.holeIndex;
     },
   };
 }
@@ -17797,7 +20651,7 @@ return {  };
       <div class="ht"><b>Putt</b><span>Drag down to set the pace (the readout shows the flat-roll distance), then release. Changed your mind? Slide back up to the start, or off to the side, before you let go. Use <em>Read</em> to see the slope and &minus;/+ to change the putt range.</span></div>
       <div class="ht"><b>Clubs</b><span>The caddie picks a club for every lie. Use &#9664; &#9654; to change it.</span></div>
       <div class="ht"><b>Shots</b><span>Tap <em>Shot</em> beside the club for a special shot: a <em>Draw</em> or <em>Cut</em> that bends around trouble (aim away from the target and the curved line shows where it lands), a low <em>Stinger</em> or <em>Punch</em> under the wind, a high <em>Flop</em> that stops dead, or a <em>Bump &amp; run</em>. It lasts one stroke.</span></div>
-      <div class="ht"><b>Courses</b><span>Pick a course on the main menu before a new round: parkland, desert, island or links. Each keeps its own best round.</span></div>
+      <div class="ht"><b>Courses</b><span>Pick a course on the main menu before a new round: parkland, desert, island or links. <em>Mixed</em> plays 9 or 18 random holes from all four courses (tap <em>9 holes</em> or <em>18 holes</em> on its card). Each keeps its own best round.</span></div>
       <div class="ht"><b>Rules</b><span>Out of bounds: stroke and distance. Water: drop (+1) or replay (+1). Pick up at double par.</span></div>
     </div>
     <button class="btn primary" type="button" data-act="close">Got it</button>

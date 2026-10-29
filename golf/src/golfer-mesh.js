@@ -588,7 +588,7 @@ function buildTorso(g, D, L, pal, J) {
         us: Array.from({ length: N }, (_, i) => i), vs, bone: B.chest,
         pos: (i, v) => section(rows, td.chest, v, ang(i, v), amtAt(v)),
         col: (i, v) => {
-          if (v > 0.82) return underCol; // shoulders and neckline of the polo
+          if (v > 0.836) return underCol; // the polo's neckline above the knit
           if (aV(v) > 0 && (i === 0 || i === 1 || i === N - 1)) return underCol;
           return torsoCol;
         },
@@ -614,7 +614,7 @@ function buildTorso(g, D, L, pal, J) {
     const b = J(ua);
     const c = [lin(a[0], b[0], 0.55) - 0.008 * H, lin(a[1], b[1], 0.55), b[2] + 0.001 * H];
     g.ellipsoid(c, [0.027 * H * td.chest.dF, 0.042 * H * td.chest.w, 0.016 * H], {
-      nu: 8, nv: 4, bone: cl, mat: 0, col: vest ? underCol : stripes ? pal.shirt : torsoCol,
+      nu: 8, nv: 4, bone: cl, mat: 0, col: stripes ? pal.shirt : torsoCol,
     });
   }
   // Polo collar (open at the front): an outer band and its inner face.
