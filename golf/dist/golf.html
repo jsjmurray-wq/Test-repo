@@ -354,9 +354,13 @@ body[data-layout="landscape"] #hud[data-golfer="R"] .pad-readout { left: calc(50
    its target notch, full-power mark and overswing zone sit on the open side, left, clear of him. */
 #hud[data-golfer="L"] #pad .arc { transform: translate(-50%, -50%) scaleX(-1); }
 /* Portrait: the live readout sits inside the arc on the open side (right of the target line for a
-   right-hander, left for a left-hander), level with the arc's centre, below his head at the top. */
-body:not([data-layout="landscape"]) #hud[data-golfer="R"][data-putt="0"] .pad-readout { left: calc(50% + var(--arc, 260px) * 0.13); top: calc(40% - var(--arc, 260px) * 0.04); }
-body:not([data-layout="landscape"]) #hud[data-golfer="L"][data-putt="0"] .pad-readout { left: calc(50% - var(--arc, 260px) * 0.13); top: calc(40% - var(--arc, 260px) * 0.04); }
+   right-hander, left for a left-hander), level with the arc's centre (below his head at the top,
+   clear of his hands and of the notch on the band), a little smaller so it fits there. */
+body:not([data-layout="landscape"]) #hud:is([data-golfer="R"], [data-golfer="L"])[data-putt="0"] .pad-readout { top: 40%; }
+body:not([data-layout="landscape"]) #hud[data-golfer="R"][data-putt="0"] .pad-readout { left: calc(50% + var(--arc, 260px) * 0.167); }
+body:not([data-layout="landscape"]) #hud[data-golfer="L"][data-putt="0"] .pad-readout { left: calc(50% - var(--arc, 260px) * 0.167); }
+body:not([data-layout="landscape"]) #hud:is([data-golfer="R"], [data-golfer="L"])[data-putt="0"] .pad-num { font-size: 38px; }
+body:not([data-layout="landscape"]) #hud:is([data-golfer="R"], [data-golfer="L"])[data-putt="0"] .pad-pct { font-size: 10.5px; padding: 2px 7px; }
 /* Landscape: a left-hander and the ball stand left of the pad (camera.js), so the readout goes
    back to the middle of the arc, away from him. */
 body[data-layout="landscape"] #hud[data-golfer="L"] .pad-readout { left: 50%; }
@@ -18161,6 +18165,8 @@ const __m_ui = (() => {
 //       (input.js onTarget: the same width under the thumb anywhere on the arc).
 //   ui.setTarget(power | null)   the target notch on the arc (the power that reaches the pin or
 //       the aim point, from main.js); it shows dimmed while idle too. null hides it.
+//   ui.setGolferBox({x0, y0, x1, y1} | null)   the golfer's body on screen (CSS px): the arc fades
+//       where it crosses him (section 9.7); a left-hander's arc is mirrored (style.css).
 //   ui.setHint(text | null)                       pad hint (null = default for full/putt and the
 //       swing control: swipe 'Drag down, then swipe up', tap 'Tap to start · tap again to hit')
 //   ui.setControls({phase, putt, canRead, read, map, puttRange})   all optional, merge:
