@@ -76,7 +76,13 @@ swing arc and the target, landing area and flag in view.
 - **TV coverage.** After the strike the camera holds on his follow-through as the ball leaves, then
   follows it; he holds his finish until the camera has gone. Read, Map and the flyover leave him
   out of the picture.
-- Your look, height and swing style are saved on the device (`golf.golfer.v1`). `?autoplay` and the
+- **The gauge never hides him.** Where the power arc crosses him it fades, so you see his swing
+  through it; the carry readout sits on the open side of the arc. For a left-hander the arc is
+  mirrored (the target notch and the overswing zone on the open side), and in landscape he and the
+  ball stand just left of the swing pad, clear of your thumb. Swing again straight after letting go
+  and he picks the club up from where it is.
+- Your look, height and swing style are saved on the device (`golf.golfer.v1`); a new player
+  starts as the Tour Pro. `?autoplay` and the
   bot swing through him too.
 
 The character can also be viewed on its own in `tests/visual/golfer-preview.html`, on the first tee
@@ -90,14 +96,17 @@ of Hollow Pines.
 | Swing style | **Classic**; **Compact** (about a three-quarter backswing, quicker); **Big finish** (high hands, reverse C); **Smooth** (slower tempo). Looks only: the ball flies exactly the same |
 | Presets | Tour Pro, Lady Pro, Power Hitter, Classic Gent, Weekend Warrior, Rising Star, Links Veteran, Collegiate |
 
-The swing is a real golf swing: a one-piece takeaway, a full shoulder turn (about 90°, hips 45°)
-with the club parallel at the top, the hips leading the downswing, the club lagging, hands ahead and
-the club head exactly on the ball at impact, extension and a balanced finish facing the target with
-the trail heel up. The backswing follows your swipe (a half swipe is a half swing), the setup changes
+The swing is a real golf swing: a one-piece takeaway, a full shoulder turn about the spine (about 90°,
+hips 45°) with the club parallel at the top and the head steady over the ball, the hips sliding and
+leading the downswing while the head stays back and the spine tilts away from the target, the club
+lagging, hands ahead and the club head exactly on the ball at impact, both hands on the club through
+extension and a balanced finish facing the target, up on the trail toe. The backswing follows your swipe (a half swipe is a half swing), the setup changes
 with the club (wider stance and the ball off the lead heel with the driver, more bend with the
 wedges, eyes over the ball with the putter: a shoulder-rocking putting stroke), and the special
 shots look the part (a short, hands-ahead bump & run, a held-off punch, an open-faced high flop). A
-left-hander is the mirror image. The golfer casts a soft shadow on the ground.
+left-hander is the mirror image. The golfer casts a soft shadow on the ground. His knees, elbows,
+wrists, waist and hips bend smoothly (each joint blends two bones), and long hair falls behind the
+ears to the base of the neck.
 
 Preview URL options: `?look=tour` (a preset id) or any look field (`&body=female&skin=5&hair=curly`),
 `&club=D` (any club id), `&pose=address|top|impact|finish` or `&t=1.7` (seconds into a scripted swing),

@@ -1407,8 +1407,9 @@ function buildLegs(g, D, L, pal, J) {
         if (!shorts || v >= hemT) r += 0.006 * H; // trouser / shorts looseness
         if (v > 0.92) r *= 0.8;
         if (v === 0) r *= shorts ? 0.6 : 0.82;
-        // Inner thigh sits slightly inward at the top (toward the crotch).
-        return { c: [hip[0] + 0.003 * H * bump(v, 0.5, 0.3), hip[1] - sd * 0.006 * H * smooth(0.6, 1, v), z], r1: r * 0.98, r2: r };
+        // The top of the thigh sits inward (toward the crotch), inside the hips: the leg comes out
+        // of the pelvis at the buttock crease, not through the side of the hip.
+        return { c: [hip[0] + 0.003 * H * bump(v, 0.5, 0.3), hip[1] - sd * 0.014 * H * smooth(0.6, 1, v), z], r1: r * 0.98, r2: r };
       },
     });
     // Shin and calf (trousers hang straight; bare legs show the calf).
