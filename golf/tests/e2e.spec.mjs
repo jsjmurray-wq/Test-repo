@@ -32,6 +32,7 @@ const SHOTS = args.has('--shots');
 const SOAK = args.has('--soak') || args.has('--soak-only');
 // --soak plays a full autoplay round on every course (or --courses=desert,links only).
 const coursesArg = process.argv.find((a) => a.startsWith('--courses='));
+const vpArg = process.argv.find((a) => a.startsWith('--vp=')); // --customiser --vp=iphone-portrait,...
 const SOAK_COURSES = coursesArg ? coursesArg.slice(10).split(',') : ['pines', 'desert', 'water', 'links', 'mixed', 'mixed18'];
 const shotDir = join(root, 'screenshots');
 const CHROME = '/opt/pw-browsers/chromium';
@@ -327,7 +328,8 @@ async function smoke(browser, base, path, vp, gl) {
     // The gauge fills on the next rendered frame(s): poll instead of sampling once after a sleep.
     check(await waitFor(page, () => document.getElementById('pad').dataset.state === 'swing' && window.__golf.swingPower > 0.1, 2200), 'tap meter fills');
     await cdpTap(page, tx, ty, T0 + 0.6);
-    check(await waitFor(page, () => window.__golf.game.phase === 'flight', 5000), 'second tap hits: the ball is in flight');
+    // (The ball leaves at the golfer's impact frame, a few slow SwiftShader frames after the tap.)
+    check(await waitFor(page, () => window.__golf.game.phase === 'flight', 10000), 'second tap hits: the ball is in flight');
     const ls = await page.evaluate(() => window.__golf.lastSwing && window.__golf.lastSwing.sw);
     check(ls && ls.label === 'Tap swing' && ls.power > 0.42 && ls.power < 0.62 && ls.startDir === 0, `tap swing 0.6 s after the first tap (power ${ls && ls.power.toFixed(2)})`);
     await page.evaluate(() => window.__golf.ui.setSetting('swing', 'swipe'));
@@ -1162,6 +1164,14 @@ async function golferCustomiser(context, url, tag, gl) {
     const el = document.querySelector(q);
     return !!el && !el.hidden && getComputedStyle(el).display !== 'none';
   }, sel);
+  // A tab, waiting until its pane is the one shown (a lost tap is tapped again).
+  const tab = async (id) => {
+    for (let i = 0; i < 3; i++) {
+      await cz(`[data-cz-tab="${id}"]`).tap();
+      if (await waitFor(page, (t) => window.__golf.customiser.tab === t && !document.querySelector(`#customiser [data-cz-pane="${t}"]`).hidden, 3000, id)) return true;
+    }
+    return false;
+  };
 
   // ---- open from the menu: layout
   await page.locator('#menu [data-act="golfer"]').tap();
@@ -1219,7 +1229,7 @@ async function golferCustomiser(context, url, tag, gl) {
   check(!fhRow, 'golfer: no facial hair options for a female figure');
 
   // ---- Hair & Face: the camera goes to the face; a hairstyle
-  await cz('[data-cz-tab="face"]').tap();
+  await tab('face');
   await cz('[data-cz-key="hair"][data-cz-val="curly"]').tap();
   check(await waitFor(page, () => window.__golf.debug.studio().look.hair === 'curly' && window.__golf.customiser.view.zoom > 0.6, 6000), 'golfer: curly hair, and the Hair & Face tab zooms to the face');
   await page.waitForTimeout(600);
@@ -1239,7 +1249,7 @@ async function golferCustomiser(context, url, tag, gl) {
   check(await waitFor(page, () => window.__golf.customiser.view.zoom < 0.3, 6000), 'golfer: a double tap zooms back out to the full body');
 
   // ---- Clothes: hat colour, striped shirt (its stripe colour row appears)
-  await cz('[data-cz-tab="clothes"]').tap();
+  await tab('clothes');
   await cz('[data-cz-key="headwear"][data-cz-val="cap"]').tap();
   await cz('[data-cz-key="hatColor"][data-cz-val="#b51f2b"]').tap();
   await cz('[data-cz-key="shirt"][data-cz-val="striped"]').tap();
@@ -1255,7 +1265,7 @@ async function golferCustomiser(context, url, tag, gl) {
   await shot(page, tag, 'golfer-clothes');
 
   // ---- Swing: a style plays a swing at once; Try swing goes through impact and back to address
-  await cz('[data-cz-tab="swing"]').tap();
+  await tab('swing');
   const n0 = await studio();
   await cz('[data-cz-key="swing"][data-cz-val="bigfinish"]').tap();
   check(await waitFor(page, (n) => window.__golf.debug.studio().look.swing === 'bigfinish' && window.__golf.debug.studio().swings > n, 3000, n0.swings), 'golfer: picking Big finish plays a swing');
@@ -1298,7 +1308,9 @@ async function golferCustomiser(context, url, tag, gl) {
   await page.waitForTimeout(500);
   await page.locator('#pause [data-act="golfer"]').tap();
   check(await waitFor(page, () => window.__golf.debug.studio().open && document.getElementById('customiser').dataset.from === 'pause', 4000) && !(await shown('#pause')) && !(await shown('#hud')), 'golfer: the pause sheet opens it too (pause sheet and HUD hidden underneath)');
-  await cz('[data-cz-tab="clothes"]').tap();
+  const onClothes = await tab('clothes');
+  const cs = await page.evaluate(() => ({ open: window.__golf.customiser.isOpen, tab: window.__golf.customiser.tab, flag: document.body.dataset.customiser || null, phase: window.__golf.game && window.__golf.game.phase, paused: window.__golf.paused }));
+  check(onClothes, `golfer: the Clothes tab from the pause sheet (${JSON.stringify(cs)})`);
   await cz('[data-cz-key="shirtColor"][data-cz-val="#e5802e"]').tap();
   await cz('[data-cz-key="legwear"][data-cz-val="shorts"]').tap();
   check(await waitFor(page, () => window.__golf.debug.studio().look.legwear === 'shorts', 3000), 'golfer: changes show on the preview');
@@ -1374,7 +1386,7 @@ try {
   } else if (args.has('--customiser')) {
     // Only the Golfer customiser checks (a fresh context per build and viewport).
     for (const t of targets) {
-      for (const vp of VIEWPORTS) {
+      for (const vp of VIEWPORTS.filter((v) => !vpArg || vpArg.slice(5).split(',').includes(v.name))) {
         const context = await browser.newContext({ ...vp });
         const probe = await context.newPage();
         await probe.goto(`${base}/${t}?test=1`);

@@ -1932,13 +1932,15 @@ Mesa, Coral Cay and Kittiwake Links; the soak checks every bot shot was launched
 The second half of the user request, "you can select what he looks like": a full-screen **Golfer** screen,
 like a console game's character creator, with the real golfer in 3D on a tee of the selected course.
 
-- **Entry.** The main menu's "Your golfer" card (`#menu [data-act="golfer"]`, above New round: his bust, the
-  preset name or "Custom golfer", the swing style; "Customise ›") and the pause sheet's **Golfer** button
+- **Entry.** The main menu's "Your golfer" button (`#menu [data-act="golfer"]`: his bust, the preset name or
+  "Custom golfer"; in landscape a card above New round with the swing style and "Customise ›", in portrait and
+  square a profile pill in the top-right corner, just the bust under 760 px of height, so the menu is no taller
+  than before) and the pause sheet's **Golfer** button
   (`#pause [data-act="golfer"]`). ui.js emits `'golfer'`; main opens it (`from: 'menu' | 'pause'`).
 - **Screen** (`#customiser`, z 16): a see-through stage over the game canvas and a control panel. Portrait and
   square: the stage on top, the panel a bottom sheet (52% of the height); landscape: the stage on the left, the
   panel on the right (`min(480px, 56vw)`); safe areas everywhere. While it is open `body[data-customiser="1"]`
-  hides `#menu`, `#hud`, `#pause`, `#settings`, `#howto` and `#shots` without touching their `hidden`
+  hides `#menu`, `#hud`, `#pause`, `#settings`, `#howto`, `#shots`, `#scorecard` and `#decision` without touching their `hidden`
   attributes, so main's menu / paused state (and the disabled input) carry on underneath, and Escape is the
   customiser's (ui.js leaves it alone).
 - **Stage:** the kicker (swing style · height), the title (a preset's name when the look is exactly one, else
@@ -2008,4 +2010,11 @@ PREVIEW_CLUBS, TABS, SLIDER_MS
   the in-game mesh key); from the pause sheet a change then Cancel leaves the saved and in-game looks alone;
   reload keeps the look; Escape cancels; a preset is saved and named on the menu; with `setItem` failing for
   `golf.golfer.v1`, Done keeps the look in memory and nothing throws. `app.debug.studio()` →
-  `{open, look, club, meshKey, state, swing, ballOut, frame, shift}`.
+  `{open, look, club, meshKey, state, swing, swings, impacts, ballOut, frame, shift}`.
+- **Results:** customiser unit tests 4/4; `node tests/e2e.spec.mjs --customiser` 87/87 (29 checks in each of
+  the portrait, landscape and foldable viewports on `index.html`; a `dist/` built before the customiser skips
+  them); ESLint clean. Reviewed in screenshots: every tab in portrait and landscape, the menu (portrait pill,
+  landscape card, 375 × 667), the pause sheet, and four presets in a round.
+- **Known gaps:** the avatar busts are flat SVG drawings (not renders of the 3D golfer); the turntable keeps
+  the course's own scenery behind him (no separate studio backdrop); hairstyles and colours have no
+  thumbnails beyond their names and swatches.

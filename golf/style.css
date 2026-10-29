@@ -920,7 +920,8 @@ body[data-layout="square"] #readcard { top: calc(var(--sat) + 166px); }
    underneath (their own hidden state is left alone). Portrait / square: the preview on top, the
    controls in a bottom sheet; landscape: the preview on the left, the controls on the right. */
 body[data-customiser="1"] #menu, body[data-customiser="1"] #hud, body[data-customiser="1"] #pause,
-body[data-customiser="1"] #settings, body[data-customiser="1"] #howto, body[data-customiser="1"] #shots { display: none !important; }
+body[data-customiser="1"] #settings, body[data-customiser="1"] #howto, body[data-customiser="1"] #shots,
+body[data-customiser="1"] #scorecard, body[data-customiser="1"] #decision { display: none !important; }
 
 /* Main menu: the "Your golfer" card above New round. */
 .golfer-btn {
@@ -946,6 +947,23 @@ body[data-customiser="1"] #settings, body[data-customiser="1"] #howto, body[data
 .gb-t { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gb-go { flex: none; display: flex; align-items: center; gap: 1px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
 .gb-go svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+/* Portrait and square: a profile pill in the menu's top-right corner (the menu has no height to
+   spare there); on short screens just the bust. Landscape keeps the card in the button column. */
+body:not([data-layout="landscape"]) .golfer-btn {
+  position: absolute; z-index: 1;
+  top: calc(var(--sat) + 8px); right: calc(var(--sar) + 10px);
+  width: auto; max-width: min(200px, 50vw); min-height: 0; gap: 8px;
+  padding: 3px 14px 3px 3px; border-radius: 22px;
+}
+body:not([data-layout="landscape"]) .golfer-btn .golfer-av { width: 34px; height: 34px; box-shadow: 0 0 0 2px var(--gold), 0 2px 8px rgba(0, 0, 0, 0.3); }
+body:not([data-layout="landscape"]) .golfer-btn .gb-body { gap: 1px; }
+body:not([data-layout="landscape"]) .golfer-btn .gb-k { font-size: 8.5px; letter-spacing: 0.12em; }
+body:not([data-layout="landscape"]) .golfer-btn .gb-t { font-size: 13.5px; }
+body:not([data-layout="landscape"]) .golfer-btn .gb-go, body:not([data-layout="landscape"]) .golfer-btn .gb-sub { display: none; }
+@media (max-height: 760px) {
+  body:not([data-layout="landscape"]) .golfer-btn { padding: 3px; }
+  body:not([data-layout="landscape"]) .golfer-btn .gb-body { display: none; }
+}
 /* Pause sheet: "Golfer" with the little bust. */
 .btn.golfer-pause { gap: 10px; }
 .btn.golfer-pause .golfer-av { width: 30px; height: 30px; margin-left: -18px; }
@@ -982,11 +1000,11 @@ body[data-customiser="1"] #settings, body[data-customiser="1"] #howto, body[data
 }
 .cz-stage-foot { margin-top: auto; }
 .cz-hint {
-  position: absolute; left: 50%; bottom: 70px; transform: translateX(-50%);
+  position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%);
   padding: 6px 12px; border-radius: 999px; white-space: nowrap; pointer-events: none;
-  font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.9);
-  background: rgba(6, 14, 22, 0.5);
-  animation: cz-hint 5s ease forwards;
+  font-size: 11.5px; font-weight: 700; color: rgba(255, 255, 255, 0.9);
+  background: rgba(6, 14, 22, 0.45);
+  animation: cz-hint 3.6s ease forwards;
   transition: opacity 0.3s;
 }
 .cz-hint[data-done="1"] { opacity: 0; }
@@ -1164,7 +1182,7 @@ body[data-layout="landscape"] .cz-shade {
     linear-gradient(180deg, rgba(4, 10, 16, 0.55) 0, rgba(4, 10, 16, 0) 90px, rgba(4, 10, 16, 0) 75%, rgba(4, 10, 16, 0.5) 100%);
 }
 body[data-layout="landscape"] .cz-t { font-size: 21px; }
-body[data-layout="landscape"] .cz-hint { bottom: 64px; }
+body[data-layout="landscape"] .cz-hint { bottom: calc(var(--sab) + 60px); }
 body[data-layout="landscape"] .cz-frame { top: calc(var(--sat) + 36px); bottom: calc(var(--sab) + 60px); left: calc(var(--sal) + 8px); right: 8px; }
 body[data-layout="landscape"] .cz-round { width: 40px; height: 40px; }
 body[data-layout="landscape"] .cz-try { height: 42px; }
@@ -1192,6 +1210,4 @@ body[data-layout="landscape"] .gb-go { display: none; }
 body[data-layout="square"] .cz-panel { height: 46%; }
 body[data-layout="square"] .cz-panes, body[data-layout="square"] .cz-presets { padding-left: max(14px, calc(50% - 300px)); padding-right: max(14px, calc(50% - 300px)); }
 body[data-layout="square"] .cz-tabs, body[data-layout="square"] .cz-foot { width: min(620px, calc(100% - 28px)); margin-left: auto; margin-right: auto; }
-@media (max-height: 700px) {
-  body:not([data-layout="landscape"]) .golfer-btn { min-height: 54px; }
-}
+/* ---------------- end of golfer customiser ---------------- */

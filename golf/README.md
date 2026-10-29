@@ -106,7 +106,8 @@ loop).
 
 ### The Golfer screen
 
-Tap **Your golfer** on the main menu (or **Golfer** on the pause sheet) to choose what he looks like,
+Tap **Your golfer** on the main menu (the badge with his picture: top right in portrait, above New
+round in landscape) or **Golfer** on the pause sheet to choose what he looks like,
 like a console game's character creator: he stands on a tee of the course you picked, in 3D, and every
 change shows on him at once.
 
