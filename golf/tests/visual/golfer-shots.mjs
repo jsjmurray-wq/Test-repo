@@ -2,7 +2,7 @@
 // Usage: node tests/visual/golfer-shots.mjs [outDir] (default golf/screenshots/golfer, gitignored)
 // For each case (club x look x hand) it renders the swing positions (address, half-way back, top,
 // downswing, impact, follow-through, finish) down the line (the in-game TV view) and face on, on
-// an iPhone landscape viewport, and tiles each case into one sheet (<case>.png).
+// an iPhone landscape viewport, and tiles each case into one sheet (<case>.png, 4 x 4).
 
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -58,7 +58,7 @@ for (const c of CASES) {
   const tiles = [];
   for (const cam of ['behind', 'face']) {
     for (const pose of POSES) {
-      await page.evaluate((q) => window.__golfer.set(q), { ...c.q, pose, cam, turn: '0', dist: cam === 'face' ? '3.6' : '3.6' });
+      await page.evaluate((q) => window.__golfer.set(q), { ...c.q, pose, cam, turn: '0', dist: cam === 'face' ? '4.2' : '4.4', fov: '24' });
       tiles.push(await page.screenshot({ type: 'png' }));
     }
   }
@@ -69,14 +69,16 @@ for (const c of CASES) {
       im.onload = () => ok(im);
       im.src = `data:image/png;base64,${b64}`;
     })));
-    const w = 300;
-    const h = Math.round((w * imgs[0].height) / imgs[0].width);
+    // 4 x 4 tiles: down the line (two rows), then face on; each tile the middle half of the frame.
+    const w = 520;
+    const sw = imgs[0].width * 0.5;
+    const sx = imgs[0].width * 0.25;
+    const h = Math.round((w * imgs[0].height) / sw);
     const cv = document.createElement('canvas');
-    cv.width = w * 8;
-    // 8 x 2 tiles: down the line on top, face on below.
-    cv.height = h * 2;
+    cv.width = w * 4;
+    cv.height = h * 4;
     const g = cv.getContext('2d');
-    imgs.forEach((im, i) => g.drawImage(im, (i % 8) * w, Math.floor(i / 8) * h, w, h));
+    imgs.forEach((im, i) => g.drawImage(im, sx, 0, sw, im.height, (i % 4) * w, Math.floor(i / 4) * h, w, h));
     return cv.toDataURL('image/png').split(',')[1];
   }, tiles.map((b) => b.toString('base64')));
   await writeFile(join(outDir, `${c.name}.png`), Buffer.from(sheet, 'base64'));

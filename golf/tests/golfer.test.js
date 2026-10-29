@@ -303,6 +303,13 @@ test('strike: onImpact once, at the returned time; timing by style; live and aut
   const t = OPTIONS.swing.map((s) => swingTiming(s, 1).down);
   assert.ok(t[OPTIONS.swing.indexOf('compact')] < t[OPTIONS.swing.indexOf('smooth')]);
   // Putts.
+  // A second strike from the finish starts again from address and still fires once.
+  const again = new SwingAnimator({}, { club: '7i', ball: { x: 0, y: 0, z: BALL_R }, aimYaw: 0 });
+  strikeToImpact(again, 1);
+  assert.equal(again.state, 'finish');
+  const r2 = strikeToImpact(again, 0.6);
+  assert.equal(r2.calls, 1);
+  assert.ok(dist3(r2.head, { x: 0, y: 0, z: BALL_R }) < 0.02);
   const p = new SwingAnimator({}, { club: 'P', ball: { x: 0, y: 0, z: BALL_R }, aimYaw: 0 });
   const r = strikeToImpact(p, 0.4);
   assert.equal(r.calls, 1);

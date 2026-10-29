@@ -1527,6 +1527,8 @@ export class SwingAnimator {
 
   strike({ power = 1, kind, shot, style, onImpact } = {}) {
     if (shot && shot !== this.shot) this.setShot(shot);
+    // A new swing always starts from address (after a finish, a cancel, or mid-swing).
+    if (this.state !== 'address' && this.state !== 'backswing') this.reset();
     if (style) this.style = style;
     if (kind) this.kind = kind === 'putt' || this.rig.keys.putt ? 'putt' : 'full';
     const p = clamp(+power || 0, 0, 1.1);

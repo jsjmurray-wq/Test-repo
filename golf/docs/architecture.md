@@ -1639,8 +1639,9 @@ anim.setClub(club); anim.setShot(id); anim.setLook(look)                // re-pl
 anim.setBackswing(power)          // live, 0..1.1; the club follows smoothly (rate 14/s); 0 returns to address
 anim.strike({power = 1, kind, shot, style, onImpact}) -> seconds to impact
                                   // from a live backswing (>= 60% of the target length) the downswing starts
-                                  // at once; otherwise an automatic backswing first. onImpact fires exactly
-                                  // once, on the frame that shows the exact impact pose
+                                  // at once; otherwise an automatic backswing first (from a finish or a cancel
+                                  // it restarts at address). onImpact fires exactly once, on the frame that
+                                  // shows the exact impact pose
 anim.cancel()                     // ease back to address over 0.45 s (no onImpact)
 anim.reset()                      // snap to address
 anim.update(dt) -> Float32Array   // skin matrices, BONE_COUNT column-major mat4 (world x inverse bind); the
