@@ -8,6 +8,7 @@ import {
 import { buildGolferMesh } from '../src/golfer-mesh.js';
 import { SwingAnimator, placeGolfer, swingTiming, NP } from '../src/swing-anim.js';
 import { CLUBS } from '../src/clubs.js';
+import { SHOTS, isEligible } from '../src/shots.js';
 import { BALL_R } from '../src/constants.js';
 import { mulberry32 } from '../src/rng.js';
 
@@ -193,6 +194,111 @@ test('impact: the club head is on the ball (2 cm) for every club, height, hand, 
   assert.ok(dist3(a.clubHeadWorld(), { x: 1, y: 2, z: 3 }) < 1e-6);
 });
 
+// Every club with every shot it may play (shots.js), every swing style, three heights: a live
+// backswing (1, 0.6 or 0.35 power), the strike and the whole follow-through at 60 fps.
+function* everySwing() {
+  let n = 0;
+  for (const c of CLUBS) {
+    for (const s of SHOTS) {
+      if (!isEligible(s.id, c, null)) continue;
+      for (const style of OPTIONS.swing) {
+        for (const height of HEIGHTS) {
+          const look = { height, body: n % 2 ? 'female' : 'male', build: OPTIONS.build[n % 4], swing: style };
+          const power = c.id === 'P' ? 0.5 : [1, 0.6, 0.35][n % 3];
+          n++;
+          yield { look, club: c.id, shot: s.id, style, power, tag: `${c.id} ${s.id} ${style} ${height} cm` };
+        }
+      }
+    }
+  }
+}
+function playSwing(anim, { power, shot, style }, onFrame) {
+  let t = 0;
+  let struck = false;
+  let impact = false;
+  while (t < 3.3) {
+    if (!struck) {
+      const x = Math.min(1, Math.max(0, (t - 0.1) / 0.8));
+      if (x > 0) anim.setBackswing(power * x * x * (3 - 2 * x));
+      if (t >= 1.0) {
+        anim.strike({ power, shot, style, onImpact: () => (impact = true) });
+        struck = true;
+      }
+    }
+    anim.update(1 / 60);
+    t += 1 / 60;
+    onFrame(impact);
+    impact = false;
+  }
+}
+
+test('trail hand: on its forearm and on the grip in every frame of every swing; the club never gives at impact', () => {
+  const ball = { x: 0, y: 0, z: BALL_R };
+  const worst = { gap: 0, slide: 0, give: 0 };
+  let swings = 0;
+  for (const c of everySwing()) {
+    const anim = new SwingAnimator(c.look, { club: c.club, shot: c.shot, ball, aimYaw: Math.PI / 2 });
+    const D = anim.rig.dims;
+    const X = anim.rig.s.X;
+    const R = anim.rig.s.R;
+    let impacts = 0;
+    playSwing(anim, c, (impact) => {
+      // |forearm end - hand bone|: the forearm runs from the elbow along its -Z for the forearm length.
+      const fa = B.forearmR * 3;
+      const fr = B.forearmR * 9;
+      const hb = B.handR * 3;
+      const gap = Math.hypot(X[fa] - R[fr + 6] * D.forearm - X[hb], X[fa + 1] - R[fr + 7] * D.forearm - X[hb + 1], X[fa + 2] - R[fr + 8] * D.forearm - X[hb + 2]);
+      const r = anim.reach;
+      worst.gap = Math.max(worst.gap, gap);
+      worst.slide = Math.max(worst.slide, r.slide);
+      worst.give = Math.max(worst.give, r.give);
+      if (gap > 0.01 || r.slide > 0.01) assert.fail(`${c.tag} ${anim.state}: forearm-hand ${(gap * 100).toFixed(1)} cm, off the grip ${(r.slide * 100).toFixed(1)} cm`);
+      if (impact) {
+        impacts++;
+        assert.ok(r.give < 1e-4, `${c.tag}: the club gave ${(r.give * 100).toFixed(1)} cm at impact`);
+        assert.ok(dist3(anim.clubHeadWorld(), ball) < 0.02, `${c.tag}: club head on the ball`);
+      }
+    });
+    assert.equal(impacts, 1, c.tag);
+    swings++;
+  }
+  assert.ok(swings > 700, `${swings} swings`);
+  // The club gives way toward the trail shoulder only a little (the bump's dead wrists).
+  assert.ok(worst.give < 0.05, `give ${(worst.give * 100).toFixed(1)} cm`);
+});
+
+test('head: steady through the swing (no sway at the top, no lunge or dip at impact, no bob)', () => {
+  const ball = { x: 0, y: 0, z: BALL_R };
+  for (const c of everySwing()) {
+    if (c.club === 'P') continue;
+    // aimYaw pi/2: the target is +y in the world.
+    const anim = new SwingAnimator(c.look, { club: c.club, shot: c.shot, ball, aimYaw: Math.PI / 2, style: c.style });
+    anim.style = c.style;
+    anim.showPose('address');
+    const h1 = anim.jointWorld(B.head);
+    anim.showPose('top');
+    const h4 = anim.jointWorld(B.head);
+    anim.showPose('impact');
+    const h7 = anim.jointWorld(B.head);
+    assert.ok(h7.y <= h1.y + 0.03, `${c.tag}: head ${((h7.y - h1.y) * 100).toFixed(1)} cm ahead of address at impact`);
+    assert.ok(h4.y >= h1.y - 0.08, `${c.tag}: head ${((h1.y - h4.y) * 100).toFixed(1)} cm behind address at the top`);
+    const special = c.shot === 'punch' || c.shot === 'stinger' || c.shot === 'bump';
+    assert.ok(Math.abs(h7.z - h1.z) <= (special ? 0.06 : 0.04), `${c.tag}: head ${((h1.z - h7.z) * 100).toFixed(1)} cm lower at impact`);
+    // The spine (pelvis -> neck) leans away from the target at impact (face on).
+    const nk = anim.jointWorld(B.neck);
+    const pel = anim.jointWorld(B.pelvis);
+    assert.ok(nk.y < pel.y, `${c.tag}: spine tilted away from the target at impact`);
+    // No bob: the head moves less than 3 cm a frame at 60 fps, the strike included.
+    anim.reset();
+    let prev = anim.jointWorld(B.head);
+    playSwing(anim, c, () => {
+      const h = anim.jointWorld(B.head);
+      if (dist3(h, prev) > 0.03) assert.fail(`${c.tag} ${anim.state}: head moved ${(dist3(h, prev) * 100).toFixed(1)} cm in a frame`);
+      prev = h;
+    });
+  }
+});
+
 test('placement: right-hander on the left of the ball looking down the line, left-hander mirrored; facing the ball', () => {
   for (const aimYaw of [0, 1.1, -2.5]) {
     const d = { x: Math.cos(aimYaw), y: Math.sin(aimYaw) };
@@ -232,6 +338,15 @@ test('feet stay on the ground: flat and 10% slopes (up, down, side), address, to
               const dz = p.z - ground(p.x, p.y);
               assert.ok(Math.abs(dz) < 0.05, `slope ${sx},${sy} ${handed} ${club} ${pose} pt ${k}: ${dz.toFixed(3)}`);
             }
+          }
+          // The finish: up on the trail toe (its tip on the ground, not in it), the heel high.
+          if (club !== 'P') {
+            anim.showPose('finish');
+            const pts = anim.footPoints();
+            const toe = pts[3].z - ground(pts[3].x, pts[3].y);
+            const heel = pts[2].z - ground(pts[2].x, pts[2].y);
+            assert.ok(toe > -0.015 && toe < 0.03, `slope ${sx},${sy} ${handed} ${club} finish trail toe ${toe.toFixed(3)}`);
+            assert.ok(heel > 0.12, `finish trail heel up ${heel.toFixed(3)}`);
           }
         }
       }

@@ -58,7 +58,8 @@ for (const c of CASES) {
   const tiles = [];
   for (const cam of ['behind', 'face']) {
     for (const pose of POSES) {
-      await page.evaluate((q) => window.__golfer.set(q), { ...c.q, pose, cam, turn: '0', dist: cam === 'face' ? '5' : '5.2', fov: '34' });
+      // replace: each case starts from the defaults (no power, shot or hand left by the case before).
+      await page.evaluate((q) => window.__golfer.set(q, { replace: true }), { ...c.q, pose, cam, turn: '0', dist: cam === 'face' ? '5' : '5.2', fov: '34' });
       tiles.push(await page.screenshot({ type: 'png' }));
     }
   }

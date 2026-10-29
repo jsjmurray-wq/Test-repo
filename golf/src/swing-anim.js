@@ -41,8 +41,10 @@ export const P = Object.freeze({
   clav: 26, rock: 27,
 });
 export const NP = 28;
-const HIP_PARAMS = [P.hipTurn, P.shiftY, P.shiftX, P.drop, P.bank, P.heel, P.pivot, P.kneeIn];
-const CHEST_PARAMS = [P.chest, P.flex, P.bend, P.tilt];
+// Downswing timing groups: the hips lead (with the side bend that keeps the head behind the ball
+// as they slide), the chest follows, the arms and club come last.
+const HIP_PARAMS = [P.hipTurn, P.shiftY, P.shiftX, P.drop, P.bank, P.heel, P.pivot, P.kneeIn, P.bend];
+const CHEST_PARAMS = [P.chest, P.flex, P.tilt];
 
 // ------------------------------------------------------------------ small math (allocation-free)
 const T9 = new Float64Array(9);
@@ -210,6 +212,7 @@ function makeScratch() {
     a: new Float64Array(8), // angles handed to the rotation helpers
     k: new Float64Array(16), // ik inputs
     rk: new Float64Array(9), // putting rock rotation
+    o: new Float64Array(4), // outputs: the trail hand's slide off the grip (m), the club's give (m), the trail clavicle's turn
   };
 }
 
@@ -262,7 +265,7 @@ function keyDesign(spec, shot) {
   // Spine angle from vertical at address (hinge + upper-back flex), by club.
   const posture = (driver ? 33 : wood ? 35 : head === 'hybrid' ? 36 : putt ? 44 : wedge ? 40 : 38) * D;
   return {
-    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.17 : wood ? 0.13 : putt ? 0.05 : 0.1, angMin: (putt ? -2 : 6) * D, angMax: (putt ? 26 : driver ? 30 : 29) * D, posture, reach: putt ? 0.84 : 0.965, flex: putt ? 0.14 : 0.06, drop: putt ? 0.022 : 0.036, shiftX: putt ? -0.014 : -0.022 },
+    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.22 : wood ? 0.18 : putt ? 0.05 : 0.15, open: putt ? 0 : -0.09, angMin: (putt ? -2 : 6) * D, angMax: (putt ? 26 : driver ? 30 : 29) * D, posture, reach: putt ? 0.84 : 0.965, flex: putt ? 0.14 : 0.06, drop: putt ? 0.022 : 0.036, shiftX: putt ? -0.014 : -0.022 },
     imp: { lie: putt ? 0 : -0.5 * D, lean: leanImp, face, reach: putt ? 0.84 : 0.995 },
   };
 }
@@ -270,25 +273,28 @@ function keyDesign(spec, shot) {
 // Designed checkpoints for a right-hander, 1.8 m reference golfer, G frame. grip: position of the
 // lead hand's grip point (m, scaled by H/1.8 and pulled toward the solved address/impact grip by
 // `w`); shaft: grip -> head direction; face: the square face's outward normal hint; tel/lel:
-// trail/lead elbow pole directions (where the elbow points).
+// trail/lead elbow pole directions (where the elbow points); hy: the head's place along the target
+// line relative to address (m, + toward the target; the side bend is solved for it, so the head
+// stays steady through the swing whatever the hips do); tiltD: hinge change from address (or
+// tilt: absolute).
 const DESIGN = {
-  P2: { hipTurn: 0.22, shiftY: -0.012, chest: 0.72, flex: 0.12, bend: 0.06, tiltD: 0.0, grip: [0.3, -0.36, 0.9], w: 0.75, shaft: [0.06, -1, 0.02], face: [0.85, 0, -0.5], tel: [-0.6, -0.2, -0.8], lel: [-0.5, 0.5, -0.7], look: 0 },
-  P3: { hipTurn: 0.47, shiftY: -0.018, chest: 1.25, flex: 0.1, bend: -0.04, tiltD: 0.0, grip: [0.18, -0.52, 1.1], w: 0.45, shaft: [-0.52, -0.06, 0.85], face: [0.7, -0.35, 0.3], tel: [-0.3, 0.1, -0.95], lel: [-0.2, 0.6, -0.75], clav: 0.06, look: 0 },
-  P4: { hipTurn: 0.76, shiftY: -0.02, chest: 1.62, flex: 0.08, bend: -0.14, tiltD: -0.02, grip: [0.08, -0.47, 1.47], w: 0.15, shaft: [0.08, 1, -0.06], face: [0.55, 0, 0.83], tel: [0.25, 0.05, -1], lel: [0.2, 0.5, -0.8], clav: 0.1, look: 0 },
-  P4X: { hipTurn: 0.86, shiftY: -0.022, chest: 1.78, flex: 0.07, bend: -0.2, tiltD: -0.03, grip: [0.04, -0.5, 1.52], w: 0.1, shaft: [0.14, 0.82, -0.56], face: [0.5, 0.3, 0.8], tel: [0.25, 0.05, -1], lel: [0.2, 0.5, -0.8], clav: 0.12, look: 0 },
-  P5: { hipTurn: 0.12, shiftY: 0.055, chest: 1.12, flex: 0.1, bend: 0.06, tiltD: 0.01, drop: 0.012, kneeIn: 0.25, grip: [0.2, -0.45, 1.1], w: 0.4, shaft: [-0.42, -0.55, 0.72], face: [0.75, -0.55, 0.1], tel: [0.1, -0.1, -1], lel: [-0.1, 0.6, -0.8], clav: 0.06, look: 0 },
-  P6: { hipTurn: -0.33, shiftY: 0.075, chest: 0.42, flex: 0.11, bend: 0.2, tiltD: 0.01, drop: 0.012, heel: 0.12, kneeIn: 0.4, grip: [0.29, -0.17, 0.9], w: 0.8, shaft: [0.12, -0.99, -0.05], face: [0.88, 0, -0.45], tel: [-0.4, -0.35, -0.85], lel: [-0.4, 0.5, -0.75], look: 0 },
-  P8: { hipTurn: -1.0, shiftY: 0.095, chest: -0.95, flex: 0.1, bend: 0.28, tiltD: -0.03, drop: 0.006, heel: 0.55, pivot: 0.1, kneeIn: 0.6, grip: [0.31, 0.45, 0.94], w: 0.75, shaft: [0.1, 1, 0.08], face: [-0.88, 0, -0.45], tel: [-0.4, -0.5, -0.75], lel: [-0.3, 0.2, -0.95], look: 0.12, k: 0.97, kMin: 0.93 },
-  P9: { hipTurn: -1.32, shiftY: 0.11, chest: -1.42, flex: 0.06, bend: 0.2, tiltD: -0.2, drop: 0.0, heel: 0.95, pivot: 0.3, kneeIn: 0.85, grip: [0.2, 0.47, 1.36], w: 0.35, shaft: [-0.45, 0.15, 0.88], face: [-0.6, -0.65, -0.2], tel: [-0.3, -0.4, -0.9], lel: [-0.2, 0.3, -0.95], look: 0.5, k: 0.86, kMin: 0.7 },
-  P10: { hipTurn: -1.55, shiftY: 0.12, chest: -1.88, flex: -0.04, bend: -0.04, tiltD: -0.5, drop: -0.005, heel: 1.3, pivot: 0.55, kneeIn: 1.05, grip: [-0.3, 0.02, 1.58], w: 0.0, shaft: [0.55, -0.5, -0.62], face: [0.3, 0.75, -0.3], tel: [0.4, 0.3, -0.85], lel: [-0.2, 0.5, -0.85], look: 1, k: 0.62, kMin: 0.45 },
+  P2: { hipTurn: 0.22, shiftY: -0.012, chest: 0.72, flex: 0.07, hy: 0.0, tiltD: 0.0, grip: [0.3, -0.36, 0.9], w: 0.75, shaft: [0.06, -1, 0.02], face: [0.85, 0, -0.5], tel: [-0.6, -0.2, -0.8], lel: [-0.5, 0.5, -0.7], look: 0 },
+  P3: { hipTurn: 0.47, shiftY: -0.018, chest: 1.25, flex: 0.1, hy: -0.015, tiltD: 0.0, grip: [0.18, -0.52, 1.1], w: 0.45, shaft: [-0.52, -0.06, 0.85], face: [0.7, -0.35, 0.3], tel: [-0.3, 0.1, -0.95], lel: [-0.2, 0.6, -0.75], clav: 0.06, look: 0 },
+  P4: { hipTurn: 0.76, shiftY: -0.02, chest: 1.62, flex: 0.08, hy: -0.03, tiltD: -0.02, grip: [0.08, -0.47, 1.47], w: 0.15, shaft: [0.08, 1, -0.06], face: [0.55, 0, 0.83], tel: [0.25, 0.05, -1], lel: [0.2, 0.5, -0.8], clav: 0.1, look: 0 },
+  P4X: { hipTurn: 0.86, shiftY: -0.022, chest: 1.78, flex: 0.07, hy: -0.04, tiltD: -0.03, grip: [0.04, -0.5, 1.52], w: 0.1, shaft: [0.14, 0.82, -0.56], face: [0.5, 0.3, 0.8], tel: [0.25, 0.05, -1], lel: [0.2, 0.5, -0.8], clav: 0.12, look: 0 },
+  P5: { hipTurn: 0.12, shiftY: 0.04, chest: 1.12, flex: 0.1, hy: -0.02, hz: 0.03, tiltD: 0.01, drop: 0.006, kneeIn: 0.25, grip: [0.2, -0.45, 1.1], w: 0.4, shaft: [-0.42, -0.55, 0.72], face: [0.75, -0.55, 0.1], tel: [0.1, -0.1, -1], lel: [-0.1, 0.6, -0.8], clav: 0.06, look: 0 },
+  P6: { hipTurn: -0.33, shiftY: 0.05, chest: 0.42, flex: 0.11, hy: -0.012, hz: 0.03, tiltD: 0.01, drop: 0.004, heel: 0.12, kneeIn: 0.4, grip: [0.29, -0.17, 0.9], w: 0.8, shaft: [0.12, -0.99, -0.05], face: [0.88, 0, -0.45], tel: [-0.4, -0.35, -0.85], lel: [-0.4, 0.5, -0.75], look: 0 },
+  P8: { hipTurn: -1.0, shiftY: 0.08, chest: -0.95, flex: 0.1, hy: 0.04, hz: 0.03, tiltD: -0.03, drop: 0.0, heel: 0.55, pivot: 0.1, kneeIn: 0.6, grip: [0.31, 0.45, 0.94], w: 0.75, shaft: [0.1, 1, 0.08], face: [-0.88, 0, -0.45], tel: [-0.4, -0.5, -0.75], lel: [-0.3, 0.2, -0.95], look: 0.12, k: 0.97, kMin: 0.93 },
+  P9: { hipTurn: -1.32, shiftY: 0.105, chest: -1.42, flex: 0.06, hy: 0.12, tiltD: -0.2, drop: -0.004, heel: 0.95, pivot: 0.3, kneeIn: 0.85, grip: [0.2, 0.47, 1.36], w: 0.35, shaft: [-0.45, 0.15, 0.88], face: [-0.6, -0.65, -0.2], tel: [-0.3, -0.4, -0.9], lel: [-0.2, 0.3, -0.95], look: 0.5, k: 0.86, kMin: 0.7 },
+  P10: { hipTurn: -1.55, shiftY: 0.12, chest: -1.88, flex: -0.04, hy: 0.22, tilt: 0.04, drop: -0.008, heel: 1.12, pivot: 0.55, kneeIn: 1.05, grip: [-0.3, 0.02, 1.58], w: 0.0, shaft: [0.55, -0.5, -0.62], face: [0.3, 0.75, -0.3], tel: [0.4, 0.3, -0.85], lel: [-0.2, 0.5, -0.85], look: 1, k: 0.62, kMin: 0.45 },
 };
 // Shot and style variants of the follow-through (held-off low finish, high open flop, rolled
-// draw, held cut, reverse-C big finish).
+// draw, held cut, reverse-C big finish: the hips through and the upper body back).
 const VARIANTS = {
   low: {
     P8: { grip: [0.33, 0.42, 1.0], shaft: [0.18, 0.92, 0.36], face: [-0.2, -0.3, 0.93], heel: 0.4, k: 0.98 },
-    P9: { hipTurn: -1.12, chest: -1.15, grip: [0.3, 0.5, 1.15], shaft: [0.05, 0.75, 0.66], face: [-0.3, -0.62, 0.72], heel: 0.65, tiltD: -0.08, look: 0.4, k: 0.93 },
-    P10: { hipTurn: -1.2, chest: -1.25, grip: [0.28, 0.5, 1.2], shaft: [0.0, 0.72, 0.7], face: [-0.35, -0.65, 0.68], heel: 0.75, pivot: 0.2, kneeIn: 0.7, tiltD: -0.12, bend: 0.2, flex: 0.06, look: 0.6, k: 0.93 },
+    P9: { hipTurn: -1.12, chest: -1.15, grip: [0.3, 0.5, 1.15], shaft: [0.05, 0.75, 0.66], face: [-0.3, -0.62, 0.72], heel: 0.65, tiltD: -0.08, hy: 0.08, look: 0.4, k: 0.93 },
+    P10: { hipTurn: -1.2, chest: -1.25, grip: [0.28, 0.5, 1.2], shaft: [0.0, 0.72, 0.7], face: [-0.35, -0.65, 0.68], heel: 0.75, pivot: 0.2, kneeIn: 0.7, tilt: null, tiltD: -0.12, hy: 0.12, flex: 0.06, look: 0.6, k: 0.93 },
   },
   flop: {
     P8: { shaft: [0.1, 0.98, 0.18], face: [-0.25, -0.15, 0.95] },
@@ -304,9 +310,11 @@ const VARIANTS = {
     P10: { grip: [-0.26, 0.05, 1.6], face: [0.1, 0.9, -0.3] },
   },
   bigfinish: {
-    P10: { bend: -0.3, flex: -0.12, tiltD: -0.62, grip: [-0.24, -0.04, 1.72], shaft: [0.5, -0.6, -0.62], hipTurn: -1.5, chest: -1.95 },
+    P10: { shiftY: 0.14, hy: 0.12, flex: -0.12, tilt: -0.05, grip: [-0.24, -0.04, 1.72], shaft: [0.5, -0.6, -0.62], hipTurn: -1.5, chest: -1.95 },
   },
 };
+// The head a little further behind the ball with the long clubs (P5 .. P8).
+const HEAD_BACK = { driver: 0.02, wood: 0.01, hybrid: 0.006 };
 
 // Swing timing (seconds) by style, power and kind: downswing (transition + downswing to impact),
 // follow-through to the finish, and an automatic backswing when strike() comes without one.
@@ -514,33 +522,40 @@ function torsoFK(rig, prm) {
   const X = S.X;
   const m = S.m;
   const H = D.H;
-  // Pelvis: R = Rz(-turn) Rx(bank) Ry(tilt)
-  m3axisA(m, 0, 0, 1, 0, prm, P.tilt, 1);
-  m3axisA(m, 9, 1, 0, 0, prm, P.bank, 1);
+  // Pelvis: R = Rx(bank) Ry(tilt) Rz(-turn). The hip hinge stays toward the ball and the hips
+  // turn about the hinged axis (the lead hip rises and clears through impact), so turning does not
+  // swing the upper body along the target line (a sway at the top, a lunge at impact).
+  m3axisA(m, 0, 0, 0, 1, prm, P.hipTurn, -1);
+  m3axisA(m, 9, 0, 1, 0, prm, P.tilt, 1);
   m3mul(m, 0, m, 9, m, 0);
-  m3axisA(m, 9, 0, 0, 1, prm, P.hipTurn, -1);
+  m3axisA(m, 9, 1, 0, 0, prm, P.bank, 1);
   m3mul(R, BR(B.pelvis), m, 9, m, 0);
   X[0] = prm[P.shiftX] * H;
   X[1] = prm[P.shiftY] * H;
   X[2] = J[2] - (prm[P.drop] * H + rig.autoDrop);
-  // Spine and chest share flex, bend and twist (40/60).
+  // Spine (40%) and chest (all): Rx(bank) Ry(tilt) Rx(bend) Ry(flex) Rz(-turn). Side bend and
+  // upper-back flex act in the hinged frame (bend tilts the spine along the target line, flex adds
+  // to the hinge) and the shoulders turn about the inclined spine, so the head stays steady.
   const A = S.a;
-  A[0] = prm[P.chest] - prm[P.hipTurn];
   for (let i = 0; i < 2; i++) {
     const b = i === 0 ? B.spine : B.chest;
     const par = i === 0 ? B.pelvis : B.spine;
-    const k = i === 0 ? 0.4 : 0.6;
+    const k = i === 0 ? 0.4 : 1;
     const v = S.v;
     m3v(v, 0, R, BR(par), J[b * 3] - J[par * 3], J[b * 3 + 1] - J[par * 3 + 1], J[b * 3 + 2] - J[par * 3 + 2]);
     X[BX(b)] = X[BX(par)] + v[0];
     X[BX(b) + 1] = X[BX(par) + 1] + v[1];
     X[BX(b) + 2] = X[BX(par) + 2] + v[2];
-    m3axisA(m, 0, 0, 1, 0, prm, P.flex, k);
+    A[0] = prm[P.hipTurn] + (prm[P.chest] - prm[P.hipTurn]) * k;
+    m3axisA(m, 0, 0, 0, 1, A, 0, -1);
+    m3axisA(m, 9, 0, 1, 0, prm, P.flex, k);
+    m3mul(m, 0, m, 9, m, 0);
     m3axisA(m, 9, 1, 0, 0, prm, P.bend, k);
-    m3mul(m, 0, m, 0, m, 9);
-    m3axisA(m, 9, 0, 0, 1, A, 0, -k);
-    m3mul(m, 0, m, 0, m, 9);
-    m3mul(R, BR(b), R, BR(par), m, 0);
+    m3mul(m, 0, m, 9, m, 0);
+    m3axisA(m, 9, 0, 1, 0, prm, P.tilt, 1);
+    m3mul(m, 0, m, 9, m, 0);
+    m3axisA(m, 9, 1, 0, 0, prm, P.bank, 1);
+    m3mul(R, BR(b), m, 9, m, 0);
   }
   // Putting rock: an extra rotation of the chest about the rig's rock axis.
   if (prm[P.rock] !== 0 && rig.rockAxis) {
@@ -697,6 +712,88 @@ function ik(rig, b1, b2, armLike) {
   frameFrom(R, BR(b2), K);
 }
 
+// The trail arm's reach to its hand on the club (the hands already placed on the club): first the
+// trail shoulder girdle protracts and drops (the clavicle turns toward the hand, by at most
+// CLAV_MAX), then the club and both hands give way toward the trail shoulder as far as the lead
+// arm still reaches. Anything left is taken by the hand sliding on the grip (evalPose).
+const CLAV_MAX = 0.42;
+function trailReach(rig, armLen) {
+  const S = rig.s;
+  const R = S.R;
+  const X = S.X;
+  const v = S.v;
+  const A = S.a;
+  const L = armLen * 0.995;
+  S.o[1] = 0;
+  S.o[2] = 0;
+  const c = BX(B.clavR);
+  const s = BX(B.upperArmR);
+  const h = BX(B.handR);
+  let dx = X[h] - X[s];
+  let dy = X[h + 1] - X[s + 1];
+  let dz = X[h + 2] - X[s + 2];
+  let d = len3(dx, dy, dz);
+  if (d <= L) return;
+  // Clavicle: turn u = shoulder - clavicle toward w = hand - clavicle until the hand is in reach.
+  const ux = X[s] - X[c];
+  const uy = X[s + 1] - X[c + 1];
+  const uz = X[s + 2] - X[c + 2];
+  const wx = X[h] - X[c];
+  const wy = X[h + 1] - X[c + 1];
+  const wz = X[h + 2] - X[c + 2];
+  const r = len3(ux, uy, uz);
+  const q = len3(wx, wy, wz);
+  const ax = uy * wz - uz * wy;
+  const ay = uz * wx - ux * wz;
+  const az = ux * wy - uy * wx;
+  const al = len3(ax, ay, az);
+  if (r > 1e-6 && q > 1e-6 && al > 1e-9) {
+    const beta = Math.acos(clamp((ux * wx + uy * wy + uz * wz) / (r * q), -1, 1));
+    const cn = (r * r + q * q - L * L) / (2 * r * q);
+    const phi = clamp(cn >= 1 ? beta : beta - Math.acos(Math.max(-1, cn)), 0, Math.min(beta, CLAV_MAX));
+    if (phi > 1e-6) {
+      v[0] = ax / al;
+      v[1] = ay / al;
+      v[2] = az / al;
+      A[6] = phi;
+      S.o[2] = phi;
+      m3axisV(S.m, 63, v, 0, A, 6);
+      m3mul(R, BR(B.clavR), S.m, 63, R, BR(B.clavR));
+      m3v(v, 3, S.m, 63, ux, uy, uz);
+      X[s] = X[c] + v[3];
+      X[s + 1] = X[c + 1] + v[4];
+      X[s + 2] = X[c + 2] + v[5];
+      dx = X[h] - X[s];
+      dy = X[h + 1] - X[s + 1];
+      dz = X[h + 2] - X[s + 2];
+      d = len3(dx, dy, dz);
+      if (d <= L) return;
+    }
+  }
+  // The club and both hands toward the trail shoulder, within the lead arm's reach.
+  const ex = -dx / d;
+  const ey = -dy / d;
+  const ez = -dz / d;
+  const hl = BX(B.handL);
+  const sl = BX(B.upperArmL);
+  const bx = X[hl] - X[sl];
+  const by = X[hl + 1] - X[sl + 1];
+  const bz = X[hl + 2] - X[sl + 2];
+  const Lm = armLen * 0.9995;
+  const b = bx * ex + by * ey + bz * ez;
+  const disc = b * b - (bx * bx + by * by + bz * bz) + Lm * Lm;
+  if (disc <= 0) return;
+  const t = clamp(-b + Math.sqrt(disc), 0, d - L);
+  if (t <= 0) return;
+  S.o[1] = t;
+  for (let i = 0; i < 3; i++) {
+    const o = BX(i === 0 ? B.club : i === 1 ? B.handL : B.handR);
+    X[o] += ex * t;
+    X[o + 1] += ey * t;
+    X[o + 2] += ez * t;
+  }
+}
+
 // Rotation with +Z = z and +X as close as possible to hint (orthonormalised).
 function frameFrom(R, o, K) {
   const zx = K[0];
@@ -759,21 +856,7 @@ export function evalPose(rig, prm) {
   // ---- arms (IK to the wrists)
   const la = D.upperArm;
   const lf = D.forearm;
-  // Trail shoulder reach: the clavicle gives up to 3% of the height when the trail arm is short.
-  {
-    const s0 = BX(B.upperArmR);
-    const tx = X[BX(B.handR)] - X[s0];
-    const ty = X[BX(B.handR) + 1] - X[s0 + 1];
-    const tz = X[BX(B.handR) + 2] - X[s0 + 2];
-    const dist = len3(tx, ty, tz);
-    const over = dist - (la + lf) * 0.995;
-    if (over > 0) {
-      const k = Math.min(over, 0.03 * H) / dist;
-      X[s0] += tx * k;
-      X[s0 + 1] += ty * k;
-      X[s0 + 2] += tz * k;
-    }
-  }
+  trailReach(rig, la + lf);
   for (let i = 0; i < 2; i++) {
     const ua = i === 0 ? B.upperArmL : B.upperArmR;
     const fa = i === 0 ? B.forearmL : B.forearmR;
@@ -796,6 +879,22 @@ export function evalPose(rig, prm) {
     K[12] = R[BR(hb) + 1];
     K[13] = R[BR(hb) + 2];
     ik(rig, ua, fa, true);
+  }
+  // Whatever the shoulders and the club could not make up: the trail hand stays on its wrist (it
+  // slides down the grip) rather than leaving the forearm; rig.trailOff measures the slide.
+  {
+    const fa = BX(B.forearmR);
+    const ex = X[fa] - R[BR(B.forearmR) + 6] * lf;
+    const ey = X[fa + 1] - R[BR(B.forearmR) + 7] * lf;
+    const ez = X[fa + 2] - R[BR(B.forearmR) + 8] * lf;
+    const hb = BX(B.handR);
+    const off = len3(ex - X[hb], ey - X[hb + 1], ez - X[hb + 2]);
+    S.o[0] = off;
+    if (off > 1e-5) {
+      X[hb] = ex;
+      X[hb + 1] = ey;
+      X[hb + 2] = ez;
+    }
   }
   // ---- head: look at the ball (or down the target line)
   {
@@ -909,11 +1008,20 @@ export function evalPose(rig, prm) {
     m3axisA(m, 9, 0, 1, 0, A, 1, 1);
     m3mul(m, 0, m, 0, m, 9);
     m3mul(R, BR(fb), ft.Rg, 0, m, 0);
-    // Ankle = ball contact + R * (ankle - ball contact) in foot space.
+    // Ankle = ball contact + R * (ankle - ball contact) in foot space. Up on the toe (a heel lift
+    // past the ball of the foot's range) the shoe rolls onto its tip: the ankle rises so the toe
+    // tip stays on the ground instead of sinking into it.
     m3v(v, 0, R, BR(fb), -f.ball, 0, D.ankleZ);
-    const ax = ft.ball[0] + v[0];
-    const ay = ft.ball[1] + v[1];
-    const az = ft.ball[2] + v[2];
+    let ax = ft.ball[0] + v[0];
+    let ay = ft.ball[1] + v[1];
+    let az = ft.ball[2] + v[2];
+    if (!lead && A[1] > 0) {
+      const th = A[1];
+      const lift = (f.toe - f.ball) * Math.sin(th) * smooth(0.15, 0.6, th);
+      ax += ft.Rg[6] * lift;
+      ay += ft.Rg[7] * lift;
+      az += ft.Rg[8] * lift;
+    }
     // Hip joint.
     m3v(v, 0, R, BR(B.pelvis), J[th * 3] - J[B.pelvis * 3], J[th * 3 + 1] - J[B.pelvis * 3 + 1], J[th * 3 + 2] - J[B.pelvis * 3 + 2]);
     const hx = X[0] + v[0];
@@ -1101,6 +1209,38 @@ function baseParams(rig) {
   return prm;
 }
 
+// The head's centre (G) after torsoFK: above the neck along the chest's up axis (solves only).
+function headPoint(rig, out) {
+  const S = rig.s;
+  const R = S.R;
+  const X = S.X;
+  const J = rig.dims.joints;
+  const c = B.chest;
+  const n = B.neck;
+  m3v(out, 0, R, BR(c), J[n * 3] - J[c * 3], J[n * 3 + 1] - J[c * 3 + 1], J[n * 3 + 2] - J[c * 3 + 2]);
+  const k = 0.075 * rig.dims.H;
+  out[0] += X[BX(c)] + R[BR(c) + 6] * k;
+  out[1] += X[BX(c) + 1] + R[BR(c) + 7] * k;
+  out[2] += X[BX(c) + 2] + R[BR(c) + 8] * k;
+}
+
+// Bisection for the side bend that puts the head (headPoint) at yWant along the target line (more
+// bend, trail shoulder lower, moves the head away from the target).
+const HP = new Float64Array(3);
+function solveBendForHead(rig, prm, yWant) {
+  let lo = -0.5;
+  let hi = 1.0;
+  for (let i = 0; i < 32; i++) {
+    const mid = (lo + hi) / 2;
+    prm[P.bend] = mid;
+    torsoFK(rig, prm);
+    headPoint(rig, HP);
+    if (HP[1] > yWant) lo = mid;
+    else hi = mid;
+  }
+  prm[P.bend] = (lo + hi) / 2;
+}
+
 // Bisection for the hip hinge so the lead wrist is `reach` of the arm's length from the shoulder.
 function solveTilt(rig, prm, g, m, reach) {
   const L = (rig.dims.upperArm + rig.dims.forearm) * reach;
@@ -1136,6 +1276,9 @@ function solveAddress(rig, bx0, by) {
   prm[P.drop] = kd.drop;
   prm[P.flex] = kd.flex;
   prm[P.bend] = kd.bend;
+  // Shoulders a touch open (the trail hand is lower on the grip, so the trail shoulder sits lower
+  // and nearer the ball).
+  prm[P.chest] = kd.open;
   const m = new Float64Array(9);
   const g = new Float64Array(3);
   const bz = rig.ballG[2];
@@ -1215,11 +1358,12 @@ function solveImpact(rig, addr) {
   const prm = new Float64Array(addr);
   if (!putt) {
     prm[P.hipTurn] = -0.68;
-    prm[P.shiftY] = 0.075;
+    // The pelvis about 9-10 cm toward the target of its address spot (less with the woods).
+    prm[P.shiftY] = rig.spec.head === 'driver' ? 0.035 : rig.spec.head === 'wood' || rig.spec.head === 'hybrid' ? 0.045 : 0.05;
     prm[P.shiftX] = addr[P.shiftX] + 0.006;
-    prm[P.drop] = addr[P.drop] + 0.004;
+    prm[P.drop] = addr[P.drop];
     prm[P.bank] = 0.05;
-    prm[P.chest] = -0.32;
+    prm[P.chest] = -0.22;
     prm[P.flex] = addr[P.flex] - 0.02;
     prm[P.bend] = addr[P.bend] + 0.13 + (rig.spec.head === 'driver' ? 0.04 : 0);
     prm[P.heel] = 0.28;
@@ -1233,12 +1377,37 @@ function solveImpact(rig, addr) {
   const bg = rig.ballG;
   clubBasis(rig, rig.spec.lie + kd.lie, kd.lean, kd.face, m, 0);
   gripForImpact(rig, m, 0, bg[0], bg[1], bg[2], g);
-  // Trail arm reach: more side bend (trail shoulder lower) until the trail hand reaches.
-  for (let i = 0; i < 8; i++) {
+  if (putt) {
     solveTilt(rig, prm, g, m, kd.reach);
-    const L = (rig.dims.upperArm + rig.dims.forearm) * 0.99;
-    if (trailWristDist(rig, g, m, 0) <= L || putt) break;
-    prm[P.bend] += 0.035;
+  } else {
+    // The hips slide toward the target but the head stays at its address spot along the line (a
+    // touch behind it with the woods): the side bend (trail shoulder lower, the spine tilted away
+    // from the target) is solved for that, the hinge for the lead arm's reach. The trail hand must
+    // reach its place on the grip with at most a moderate turn of the trail shoulder girdle and
+    // never by moving the club off the ball (trailReach): if it cannot, the shoulders open more
+    // (hands well ahead: punch, stinger) and then the trail side bends lower.
+    const hp = new Float64Array(3);
+    torsoFK(rig, addr);
+    headPoint(rig, hp);
+    const yWant = hp[1] - (0.004 + (HEAD_BACK[rig.spec.head] || 0)) * (H / 1.8);
+    const chest0 = prm[P.chest];
+    let open = 0;
+    let extra = 0;
+    for (let i = 0; i < 24; i++) {
+      prm[P.chest] = chest0 - open;
+      for (let it = 0; it < 3; it++) {
+        solveTilt(rig, prm, g, m, kd.reach);
+        solveBendForHead(rig, prm, yWant);
+        prm[P.bend] += extra;
+      }
+      solveTilt(rig, prm, g, m, kd.reach);
+      quatFromM3(prm, P.qx, m, 0);
+      setArmToGrip(rig, prm, g[0], g[1], g[2]);
+      evalPose(rig, prm);
+      if (rig.s.o[1] < 1e-5 && rig.s.o[2] <= CLAV_MAX * 0.6) break;
+      if (open < 0.3) open += 0.05;
+      else extra += 0.03;
+    }
   }
   quatFromM3(prm, P.qx, m, 0);
   setArmToGrip(rig, prm, g[0], g[1], g[2]);
@@ -1258,11 +1427,24 @@ function designKey(rig, base, des, anchorGrip, mirrorVariant) {
   prm[P.shiftY] = des.shiftY ?? a[P.shiftY];
   prm[P.shiftX] = a[P.shiftX] + (des.shiftXD || 0);
   prm[P.drop] = a[P.drop] + (des.drop || 0);
-  prm[P.tilt] = a[P.tilt] + (des.tiltD || 0);
+  prm[P.tilt] = des.tilt != null ? des.tilt : a[P.tilt] + (des.tiltD || 0);
   prm[P.bank] = des.bank || 0;
   prm[P.chest] = des.chest ?? 0;
   prm[P.flex] = des.flex ?? a[P.flex];
   prm[P.bend] = des.bend ?? a[P.bend];
+  if (des.hy != null) {
+    const yWant = rig.headAddr[1] + (des.hy - (des.back ? HEAD_BACK[rig.spec.head] || 0 : 0)) * sc;
+    solveBendForHead(rig, prm, yWant);
+    // The side bend lowers the head: the legs straighten a little to keep it within `hz` of its
+    // address height (no bobbing through the downswing).
+    if (des.hz != null) {
+      const low = rig.headAddr[2] - des.hz * sc - HP[2];
+      if (low > 0) {
+        prm[P.drop] -= Math.min(low, 0.02 * H) / H;
+        solveBendForHead(rig, prm, yWant);
+      }
+    }
+  }
   prm[P.heel] = des.heel || 0;
   prm[P.pivot] = des.pivot || 0;
   prm[P.kneeIn] = des.kneeIn || 0;
@@ -1299,7 +1481,7 @@ function designKey(rig, base, des, anchorGrip, mirrorVariant) {
 const REF_GRIP = [0.3, 0.035, 0.78];
 
 function mergeDesign(base, over) {
-  return over ? { ...base, ...over } : base;
+  return { ...base, ...over };
 }
 
 // Build every key for the rig (address, impact, designed positions, putting setup).
@@ -1336,8 +1518,13 @@ function buildKeys(rig, addrPrm) {
   if (putt) return keys;
   const anchorA = gripOf(rig, P1);
   const anchorI = gripOf(rig, P7);
+  // The address head (the designed keys place the head relative to it).
+  rig.headAddr = new Float64Array(3);
+  torsoFK(rig, P1);
+  headPoint(rig, rig.headAddr);
   const k = (name, variant) => {
     const des = mergeDesign(DESIGN[name], variant && VARIANTS[variant] ? VARIANTS[variant][name] : null);
+    des.back = name === 'P5' || name === 'P6' || name === 'P8';
     const anchor = name === 'P2' || name === 'P3' || name === 'P4' || name === 'P4X' ? anchorA : anchorI;
     return designKey(rig, P1, des, anchor);
   };
@@ -1346,9 +1533,44 @@ function buildKeys(rig, addrPrm) {
   keys.make = k;
   // Every follow-through variant up front (fixed shapes; no work at the strike).
   keys.follow = {};
-  for (const v of FOLLOW_VARIANTS) keys.follow[v] = [P7, k('P8', v), k('P9', v), k('P10', v)];
+  // A key half way from P9 to P10 keeps the hands on the straight path up to the finish (not swept
+  // round the lead arm's angles, away from the trail shoulder), so both hands stay on the club.
+  for (const v of FOLLOW_VARIANTS) {
+    const p9 = k('P9', v);
+    const p10 = k('P10', v);
+    alignQuats([p9, p10]);
+    keys.follow[v] = [P7, k('P8', v), p9, midKey(rig, p9, p10), p10];
+  }
   for (const qs of [keys.back, keys.down, ...Object.values(keys.follow)]) alignQuats(qs);
   return keys;
+}
+
+// The pose half way between keys a and b with the lead hand half way along the straight line
+// between theirs, moved toward the trail shoulder until the trail hand reaches its place on the
+// grip with little help from the shoulder girdle and none from moving the club (trailReach).
+function midKey(rig, a, b) {
+  const prm = new Float64Array(NP);
+  mixParams(prm, a, b, 0.5);
+  const ga = gripOf(rig, a);
+  const gb = gripOf(rig, b);
+  const g = [(ga[0] + gb[0]) / 2, (ga[1] + gb[1]) / 2, (ga[2] + gb[2]) / 2];
+  const S = rig.s;
+  const X = S.X;
+  for (let i = 0; i < 12; i++) {
+    setArmToGrip(rig, prm, g[0], g[1], g[2]);
+    prm[P.k] = clamp(prm[P.k], 0.45, 0.995);
+    evalPose(rig, prm);
+    if (S.o[1] < 0.002 && S.o[2] < CLAV_MAX * 0.6) break;
+    const dx = X[BX(B.upperArmR)] - X[BX(B.handR)];
+    const dy = X[BX(B.upperArmR) + 1] - X[BX(B.handR) + 1];
+    const dz = X[BX(B.upperArmR) + 2] - X[BX(B.handR) + 2];
+    const d = len3(dx, dy, dz) || 1;
+    const step = S.o[1] + 0.02;
+    g[0] += (dx / d) * step;
+    g[1] += (dy / d) * step;
+    g[2] += (dz / d) * step;
+  }
+  return prm;
 }
 const FOLLOW_VARIANTS = ['normal', 'low', 'flop', 'draw', 'cut', 'bigfinish'];
 
@@ -1485,6 +1707,8 @@ export class SwingAnimator {
     const o = this._placeOpts;
     this.rig = placeGolfer({ ball: o.ball, aimYaw: o.aimYaw, terrain: o.terrain, ground: o.ground, handed: this.handed, look: this.look, club: this.club, shot: this.shot });
     this.kind = this.rig.keys.putt ? 'putt' : 'full';
+    // Bump & run keeps the wrists 70% "dead", the live backswing included (no snap at the strike).
+    this._hinge = this.shot === 'bump' ? 0.3 : 1;
     this.reset();
     return this;
   }
@@ -1620,6 +1844,14 @@ export class SwingAnimator {
     return out;
   }
 
+  // How the trail arm reached the club in the last pose (tests; allocates): slide = the trail
+  // hand's slide off its place on the grip (m), give = how far the club and hands gave way toward
+  // the trail shoulder (m; never at the impact frame), clav = the trail clavicle's turn (rad).
+  get reach() {
+    const o = this.rig.s.o;
+    return { slide: o[0], give: o[1], clav: o[2] };
+  }
+
   jointWorld(bone, out = { x: 0, y: 0, z: 0 }) {
     const X = this.rig.s.X;
     const v = this._v;
@@ -1681,7 +1913,10 @@ export class SwingAnimator {
     else if (name === 'P6') out.set(k.down[1]);
     else if (name === 'P8') out.set(followKeys(this.rig, this._followVariant())[1]);
     else if (name === 'P9') out.set(followKeys(this.rig, this._followVariant())[2]);
-    else if (name === 'finish' || name === 'P10') out.set(followKeys(this.rig, this._followVariant())[3]);
+    else if (name === 'finish' || name === 'P10') {
+      const f = followKeys(this.rig, this._followVariant());
+      out.set(f[f.length - 1]);
+    }
     this._apply();
     return this.bones;
   }
@@ -1784,7 +2019,7 @@ export class SwingAnimator {
       return;
     }
     splineKeys(k.back, u, out);
-    if (this._hinge < 1 && this.state !== 'backswing') this._deadWrist(out, 1 - this._hinge);
+    if (this._hinge < 1) this._deadWrist(out, 1 - this._hinge);
   }
 
   // Downswing from the reached top: arms and club along the downswing keys, the hips ahead of
@@ -1832,10 +2067,12 @@ export class SwingAnimator {
       out[P.look] = 0.0;
       return;
     }
-    // Fast out of impact, decelerating into the finish.
+    // Fast out of impact, decelerating into the finish. The follow length counts P7 .. P10 as
+    // 0 .. 3; the key half way from P9 to P10 makes the last stretch two spline segments.
     const e = 1 - Math.pow(1 - x, 2.4);
     const keys = this._follow || followKeys(this.rig, 'normal');
-    splineKeys(keys, this._fMax * e, out);
+    const u = this._fMax * e;
+    splineKeys(keys, u <= 2 ? u : 2 + (u - 2) * (keys.length - 3), out);
     if (this._hinge < 1) this._deadWrist(out, 1 - this._hinge);
   }
 

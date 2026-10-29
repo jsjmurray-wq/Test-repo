@@ -11,7 +11,9 @@
 //        turn=deg (turntable round the golfer), spin=1 (auto-rotating turntable), dist=m, fov=deg,
 //        anim=1 (play the swing live, looping), gl1=1 (force WebGL1)
 //   course=pines|desert|water|links, hole=1..9, slope=x,y (a synthetic tilted ground instead)
-// window.__golfer.set({...same keys}) re-poses without a reload (screenshot scripts).
+// window.__golfer.set({...same keys}) re-poses without a reload (screenshot scripts); it merges into
+// the options set so far, and set({...}, {replace: true}) starts from the URL's options instead (so
+// a power, shot or hand from an earlier case does not carry over).
 
 import { Renderer } from '../../src/render.js';
 import { courseById } from '../../src/courses.js';
@@ -58,8 +60,8 @@ function main() {
     return normalizeLook(L);
   }
 
-  function set(o) {
-    const opts = { ...state.opts, ...o };
+  function set(o, { replace = false } = {}) {
+    const opts = { ...(replace ? state.urlOpts : state.opts), ...o };
     state.opts = opts;
     const look = lookFrom(opts);
     const club = opts.club || '7i';
@@ -203,6 +205,7 @@ function main() {
 
   const o = {};
   for (const [k, v] of qs.entries()) o[k] = v;
+  state.urlOpts = { ...o };
   set(o);
   window.__golfer = { set, renderer, state, presets: PRESETS.map((p) => p.id) };
   document.body.dataset.ready = '1';
