@@ -1385,7 +1385,13 @@ async function golferCustomiser(context, url, tag, gl) {
   check(await waitFor(page, () => !window.__golf.debug.studio().open, 3000) && (await shown('#menu')) && !(await page.evaluate(() => window.__golf.paused)), 'golfer: Escape cancels back to the menu');
   await page.locator('#menu [data-act="golfer"]').tap();
   await waitFor(page, () => window.__golf.debug.studio().open, 4000);
-  await cz('[data-cz-preset="power"]').tap();
+  // (The presets row may still be scrolling the pill into view under a slow SwiftShader frame: a
+  // tap that lands while it moves is tried once more.)
+  const isPower = () => page.evaluate(() => document.querySelector('#customiser [data-cz-f="title"]').textContent === 'Power Hitter');
+  for (let i = 0; i < 2 && !(await isPower()); i++) {
+    await cz('[data-cz-preset="power"]').tap();
+    await waitFor(page, () => document.querySelector('#customiser [data-cz-f="title"]').textContent === 'Power Hitter', 2000);
+  }
   const title = await page.evaluate(() => document.querySelector('#customiser [data-cz-f="title"]').textContent);
   await cz('[data-cz="done"]').tap();
   await page.waitForTimeout(300);
