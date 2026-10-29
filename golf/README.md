@@ -104,6 +104,29 @@ Preview URL options: `?look=tour` (a preset id) or any look field (`&body=female
 `&cam=behind|face|side|close`, `&turn=45` (turntable), `&handed=L`, `&shot=flop`, `&anim=1` (swing on a
 loop).
 
+### The Golfer screen
+
+Tap **Your golfer** on the main menu (or **Golfer** on the pause sheet) to choose what he looks like,
+like a console game's character creator: he stands on a tee of the course you picked, in 3D, and every
+change shows on him at once.
+
+- **Turn and zoom:** drag him round (flick to spin), pinch or double-tap to go from the full body to
+  his face and back, or use the turn and zoom buttons. Each tab moves the camera for you: **Hair &
+  Face** goes in close, and he looks up at you.
+- **Tabs:** **Body** (figure, skin tone, a height slider in cm and feet, a build slider), **Hair &
+  Face** (hairstyle, hair colour, facial hair, sunglasses), **Clothes** (headwear and its colour,
+  shirt style and colours, trousers or shorts, shoes, glove) and **Swing** (the four swing styles,
+  each with a picture of its arc; the club he swings in the preview).
+- **Presets and Random:** the row above the tabs starts you from one of the eight golfers, or a random
+  one.
+- **Try swing** plays a full swing in the chosen style (with the swish and the strike); picking a swing
+  style plays it straight away.
+- **Done** saves your golfer and he walks out with you at once (in a round in progress too); **Cancel**
+  (or Escape) leaves him as he was. If the browser cannot store it (private mode), he is kept until the
+  page is closed.
+
+The screen fits portrait (preview on top, controls below) and landscape (preview on the left).
+
 ## Rules
 
 Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out of bounds is stroke

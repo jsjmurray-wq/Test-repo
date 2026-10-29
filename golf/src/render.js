@@ -637,6 +637,7 @@ export class Renderer {
     // Lens shift (NDC x): the view's centre moves sideways without turning the camera (landscape
     // address puts the ball under the swing arc on the right). project/pick use the same matrix.
     proj[8] = -(cam.shiftX || 0);
+    proj[9] = -(cam.shiftY || 0); // (NDC y, + up: the Golfer customiser's preview window, section 9)
     const fwd = { x: cam.target.x - e.x, y: cam.target.y - e.y, z: cam.target.z - e.z };
     const view = lookAt(ZERO, fwd, cam.up || { x: 0, y: 0, z: 1 });
     multiply(proj, view, this.vp);

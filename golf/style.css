@@ -907,3 +907,285 @@ body[data-layout="landscape"] #hud[data-putt="1"][data-readcard="1"][data-phase=
 body[data-layout="landscape"] #read-cams { bottom: calc(var(--sab) + 12px); }
 body[data-layout="landscape"] #hud[data-read="1"] #read-hint { bottom: calc(var(--sab) + 14px); }
 body[data-layout="square"] #readcard { top: calc(var(--sat) + 166px); }
+
+/* ================================================================ golfer customiser (section 9, Customiser) */
+/* customiser.js builds the controls; main.js draws the live 3D golfer on the game canvas behind the
+   see-through stage. While it is open, body[data-customiser="1"] hides the menu, HUD and sheets
+   underneath (their own hidden state is left alone). Portrait / square: the preview on top, the
+   controls in a bottom sheet; landscape: the preview on the left, the controls on the right. */
+body[data-customiser="1"] #menu, body[data-customiser="1"] #hud, body[data-customiser="1"] #pause,
+body[data-customiser="1"] #settings, body[data-customiser="1"] #howto, body[data-customiser="1"] #shots { display: none !important; }
+
+/* Main menu: the "Your golfer" card above New round. */
+.golfer-btn {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 58px; padding: 7px 12px 7px 8px;
+  border-radius: 16px; text-align: left;
+  background: rgba(8, 17, 28, 0.66);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  transition: transform 0.08s, border-color 0.15s;
+}
+.golfer-btn:active { transform: scale(0.98); border-color: rgba(255, 210, 90, 0.7); }
+.golfer-av {
+  flex: none; display: block; width: 44px; height: 44px; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 50% 30%, #4f87a8, #1a3a55 75%);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.22), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.golfer-av svg, .cz-av svg { display: block; width: 100%; height: 100%; }
+.gb-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gb-k { font-size: 9.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
+.gb-k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gb-t { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gb-go { flex: none; display: flex; align-items: center; gap: 1px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.gb-go svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+/* Pause sheet: "Golfer" with the little bust. */
+.btn.golfer-pause { gap: 10px; }
+.btn.golfer-pause .golfer-av { width: 30px; height: 30px; margin-left: -18px; }
+
+/* ---------------- the screen ---------------- */
+#customiser {
+  position: fixed; inset: 0; z-index: 16;
+  display: flex; flex-direction: column;
+  animation: fade-in 0.22s ease;
+}
+.cz-stage {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  padding: calc(var(--sat) + 10px) calc(var(--sar) + 14px) 12px calc(var(--sal) + 14px);
+  touch-action: none; outline: none; cursor: grab;
+}
+.cz-stage:focus-visible { box-shadow: inset 0 0 0 2px var(--gold); }
+/* A soft studio vignette over the course: darker edges, a lighter centre behind the golfer. */
+.cz-shade {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(85% 75% at 50% 52%, rgba(255, 255, 255, 0.06) 0%, transparent 46%, rgba(4, 10, 16, 0.5) 100%),
+    linear-gradient(180deg, rgba(4, 10, 16, 0.6) 0, rgba(4, 10, 16, 0) calc(var(--sat) + 96px), rgba(4, 10, 16, 0) 72%, rgba(4, 10, 16, 0.55) 100%);
+}
+.cz-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex: none; }
+.cz-titles { min-width: 0; }
+.cz-k { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-t { margin: 3px 0 0; font-size: 27px; font-weight: 900; letter-spacing: -0.025em; line-height: 1.05; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); white-space: nowrap; }
+/* The golfer is framed from just under the kicker line to above the buttons (the big title sits
+   over the sky beside his head). */
+.cz-frame {
+  position: absolute; pointer-events: none;
+  top: calc(var(--sat) + 40px); bottom: 66px; left: calc(var(--sal) + 10px); right: calc(var(--sar) + 10px);
+}
+.cz-stage-foot { margin-top: auto; }
+.cz-hint {
+  position: absolute; left: 50%; bottom: 70px; transform: translateX(-50%);
+  padding: 6px 12px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+  font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.9);
+  background: rgba(6, 14, 22, 0.5);
+  animation: cz-hint 5s ease forwards;
+  transition: opacity 0.3s;
+}
+.cz-hint[data-done="1"] { opacity: 0; }
+@keyframes cz-hint { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+.cz-stage-foot { position: relative; flex: none; display: flex; align-items: center; justify-content: center; gap: 16px; }
+.cz-round {
+  flex: none; width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(8, 17, 28, 0.55);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.cz-round:active { transform: scale(0.94); background: rgba(255, 255, 255, 0.16); }
+.cz-round svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cz-round[aria-pressed="true"] { background: rgba(255, 210, 90, 0.92); border-color: transparent; }
+.cz-round[aria-pressed="true"] svg { stroke: #1b1606; }
+.cz-round[aria-pressed="true"] .zi, .cz-round:not([aria-pressed="true"]) .zo { display: none; }
+.cz-try {
+  display: flex; align-items: center; gap: 8px;
+  height: 46px; padding: 0 20px 0 15px; border-radius: 23px;
+  background: linear-gradient(180deg, #ffffff, #e6ecf0); color: #0b1a24;
+  font-size: 15px; font-weight: 800; letter-spacing: 0.01em;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  transition: transform 0.08s, opacity 0.2s;
+}
+.cz-try:active { transform: scale(0.97); }
+.cz-try svg, .cz-try-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.cz-try[data-busy="1"], .cz-try-btn[data-busy="1"] { opacity: 0.5; pointer-events: none; }
+
+/* ---------------- the control panel ---------------- */
+.cz-panel {
+  position: relative; flex: none;
+  height: 52%; max-height: 560px;
+  display: flex; flex-direction: column;
+  padding-top: 12px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4); backdrop-filter: blur(22px) saturate(1.4);
+  border-top: 1px solid var(--line);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.4);
+  animation: sheet-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.cz-presets {
+  flex: none; display: flex; gap: 6px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  padding: 0 calc(var(--sar) + 12px) 9px calc(var(--sal) + 12px);
+}
+.cz-presets::-webkit-scrollbar, .cz-swatches::-webkit-scrollbar { display: none; }
+.cz-preset {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  height: 40px; padding: 3px 13px 3px 3px; border-radius: 20px;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12.5px; font-weight: 700; white-space: nowrap;
+  color: rgba(255, 255, 255, 0.82);
+}
+.cz-preset[aria-pressed="true"] { background: rgba(255, 210, 90, 0.14); border-color: rgba(255, 210, 90, 0.6); }
+.cz-av {
+  flex: none; display: block; width: 32px; height: 32px; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 50% 30%, #4f87a8, #1a3a55 75%);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16);
+  transition: box-shadow 0.15s, transform 0.08s;
+}
+.cz-preset:active .cz-av { transform: scale(0.94); }
+.cz-preset[aria-pressed="true"] { color: var(--gold); }
+.cz-preset[aria-pressed="true"] .cz-av { box-shadow: 0 0 0 2px var(--gold); }
+.cz-av.cz-dice { display: grid; place-items: center; background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.2); }
+.cz-dice svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 1.7; }
+.cz-dice svg circle { fill: #fff; stroke: none; }
+.cz-tabs {
+  flex: none; display: flex; gap: 2px;
+  margin: 0 calc(var(--sar) + 12px) 0 calc(var(--sal) + 12px); padding: 3px;
+  background: rgba(255, 255, 255, 0.08); border-radius: 12px;
+}
+.cz-tab { flex: 1 1 0; min-width: 0; height: 40px; border-radius: 9px; font-size: 13.5px; font-weight: 700; color: rgba(255, 255, 255, 0.72); white-space: nowrap; }
+.cz-tab[aria-selected="true"] { background: #fff; color: #0b1a24; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
+.cz-panes {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: 2px calc(var(--sar) + 14px) 10px calc(var(--sal) + 14px);
+}
+.cz-pane { outline: none; }
+.cz-row { padding: 11px 0 9px; border-bottom: 1px solid var(--line); }
+.cz-row:last-child { border-bottom: 0; }
+.cz-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.cz-label { font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.cz-value { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; }
+.cz-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cz-chip {
+  min-height: 42px; padding: 0 14px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 14px; font-weight: 700; color: rgba(255, 255, 255, 0.86); white-space: nowrap;
+  transition: transform 0.08s, background 0.15s;
+}
+.cz-chip:active { transform: scale(0.96); }
+.cz-chip[aria-checked="true"] { background: rgba(255, 210, 90, 0.16); border-color: var(--gold); color: #fff; box-shadow: inset 0 0 0 1px var(--gold); }
+.cz-seg { flex-wrap: nowrap; }
+.cz-seg .cz-chip { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+/* Swatch rows scroll sideways; the right edge fades to show there are more. */
+.cz-swatches {
+  display: flex; gap: 7px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  margin: -6px -6px -4px; padding: 6px 30px 6px 6px;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 30px), transparent);
+}
+/* Skin tones: all eight fit on a phone, so that row does not scroll. */
+.cz-swatches.cz-fit { justify-content: space-between; gap: 4px; padding-right: 6px; -webkit-mask-image: none; mask-image: none; }
+.cz-sw {
+  position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
+  background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: transform 0.08s;
+}
+.cz-sw:active { transform: scale(0.92); }
+.cz-sw[aria-checked="true"] { box-shadow: 0 0 0 2.5px #0b141d, 0 0 0 4.5px var(--gold); }
+.cz-sw[aria-checked="true"]::after {
+  content: ''; position: absolute; inset: 0;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3l2.3 2.2 4.7-5' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 18px no-repeat;
+}
+.cz-sw[data-light="1"][aria-checked="true"]::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3l2.3 2.2 4.7-5' fill='none' stroke='%230b1a24' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+/* Sliders (height, build): a gold fill up to the thumb. */
+.cz-range { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 36px; margin: 0; background: transparent; touch-action: pan-y; --fill: 50%; }
+.cz-range:focus { outline: none; }
+.cz-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--gold) var(--fill), rgba(255, 255, 255, 0.16) var(--fill)); }
+.cz-range::-moz-range-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--gold) var(--fill), rgba(255, 255, 255, 0.16) var(--fill)); }
+.cz-range::-webkit-slider-thumb { -webkit-appearance: none; width: 30px; height: 30px; margin-top: -12px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); }
+.cz-range::-moz-range-thumb { width: 30px; height: 30px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); }
+.cz-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--gold); }
+.cz-range-ends { display: flex; justify-content: space-between; margin-top: -2px; font-size: 11px; font-weight: 600; color: var(--faint); }
+/* Build: four labelled stops under the stepped slider (a tap on one picks it). */
+.cz-stops { position: relative; height: 30px; margin-top: -4px; }
+.cz-stop { position: absolute; top: 0; height: 30px; padding: 0 4px; transform: translateX(-50%); font-size: 12.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.cz-stop:nth-child(1) { left: 0; transform: none; padding-left: 0; }
+.cz-stop:nth-child(2) { left: calc(15px + (100% - 30px) / 3); }
+.cz-stop:nth-child(3) { left: calc(15px + (100% - 30px) * 2 / 3); }
+.cz-stop:nth-child(4) { left: auto; right: 0; transform: none; padding-right: 0; }
+.cz-stop[aria-pressed="true"] { color: #fff; }
+/* Swing styles: four cards with the hands' path. */
+.cz-styles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cz-style {
+  display: grid; grid-template-columns: 50px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 9px; align-items: center;
+  min-height: 66px; padding: 9px 10px; border-radius: 14px; text-align: left;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: transform 0.08s;
+}
+.cz-style:active { transform: scale(0.97); }
+.cz-style svg { grid-row: 1 / span 2; width: 50px; height: 32px; overflow: visible; }
+.cz-style svg path { fill: none; stroke: rgba(255, 255, 255, 0.6); stroke-width: 2.6; stroke-linecap: round; }
+.cz-style svg path.s { stroke-dasharray: 0.1 6.2; stroke-width: 3.4; }
+.cz-style svg circle { fill: #fff; }
+.cz-style b { font-size: 14.5px; font-weight: 800; align-self: end; }
+.cz-style small { font-size: 11.5px; line-height: 1.25; font-weight: 600; color: var(--muted); align-self: start; }
+.cz-style[aria-checked="true"] { background: rgba(255, 210, 90, 0.13); border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.cz-style[aria-checked="true"] svg path { stroke: var(--gold); }
+.cz-style[aria-checked="true"] svg circle { fill: var(--gold); }
+.cz-try-row { border-bottom: 0; }
+.cz-try-btn { gap: 8px; }
+.cz-note { margin: 9px 2px 0; font-size: 12px; line-height: 1.4; color: var(--faint); font-weight: 600; }
+.cz-foot {
+  flex: none; display: flex; gap: 10px;
+  padding: 10px calc(var(--sar) + 14px) calc(var(--sab) + 12px) calc(var(--sal) + 14px);
+  border-top: 1px solid var(--line);
+}
+.cz-foot .btn { flex: 1; min-height: 48px; }
+
+/* Landscape: the preview on the left, the controls in a panel on the right. */
+body[data-layout="landscape"] #customiser { flex-direction: row; }
+body[data-layout="landscape"] .cz-stage { padding: calc(var(--sat) + 10px) 12px calc(var(--sab) + 10px) calc(var(--sal) + 16px); }
+body[data-layout="landscape"] .cz-shade {
+  background:
+    radial-gradient(80% 85% at 50% 52%, rgba(255, 255, 255, 0.05) 0%, transparent 46%, rgba(4, 10, 16, 0.5) 100%),
+    linear-gradient(180deg, rgba(4, 10, 16, 0.55) 0, rgba(4, 10, 16, 0) 90px, rgba(4, 10, 16, 0) 75%, rgba(4, 10, 16, 0.5) 100%);
+}
+body[data-layout="landscape"] .cz-t { font-size: 21px; }
+body[data-layout="landscape"] .cz-hint { bottom: 64px; }
+body[data-layout="landscape"] .cz-frame { top: calc(var(--sat) + 36px); bottom: calc(var(--sab) + 60px); left: calc(var(--sal) + 8px); right: 8px; }
+body[data-layout="landscape"] .cz-round { width: 40px; height: 40px; }
+body[data-layout="landscape"] .cz-try { height: 42px; }
+body[data-layout="landscape"] .cz-panel {
+  height: auto; max-height: none; width: min(480px, 56vw);
+  padding-top: calc(var(--sat) + 8px);
+  border-top: 0; border-left: 1px solid var(--line);
+  border-radius: 22px 0 0 22px;
+  box-shadow: -14px 0 40px rgba(0, 0, 0, 0.4);
+}
+body[data-layout="landscape"] .cz-presets { padding: 0 calc(var(--sar) + 12px) 8px 12px; }
+body[data-layout="landscape"] .cz-tabs { margin: 0 calc(var(--sar) + 12px) 0 12px; }
+body[data-layout="landscape"] .cz-tab { height: 36px; }
+body[data-layout="landscape"] .cz-panes { padding: 0 calc(var(--sar) + 14px) 8px 14px; }
+body[data-layout="landscape"] .cz-row { padding: 8px 0 7px; }
+body[data-layout="landscape"] .cz-row-head { margin-bottom: 6px; }
+body[data-layout="landscape"] .cz-chip { min-height: 38px; }
+body[data-layout="landscape"] .cz-style { min-height: 58px; padding: 7px 10px; }
+body[data-layout="landscape"] .cz-foot { padding: 8px calc(var(--sar) + 14px) calc(var(--sab) + 8px) 14px; }
+body[data-layout="landscape"] .cz-foot .btn { min-height: 42px; }
+body[data-layout="landscape"] .golfer-btn { min-height: 54px; padding: 6px 10px 6px 7px; }
+body[data-layout="landscape"] .golfer-btn .golfer-av { width: 40px; height: 40px; }
+body[data-layout="landscape"] .gb-go { display: none; }
+/* Square (unfolded foldables, iPad): a centred panel under a taller preview. */
+body[data-layout="square"] .cz-panel { height: 46%; }
+body[data-layout="square"] .cz-panes, body[data-layout="square"] .cz-presets { padding-left: max(14px, calc(50% - 300px)); padding-right: max(14px, calc(50% - 300px)); }
+body[data-layout="square"] .cz-tabs, body[data-layout="square"] .cz-foot { width: min(620px, calc(100% - 28px)); margin-left: auto; margin-right: auto; }
+@media (max-height: 700px) {
+  body:not([data-layout="landscape"]) .golfer-btn { min-height: 54px; }
+}

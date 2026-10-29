@@ -163,6 +163,12 @@
     <!-- Course picker: one card per course (ui.showMenu builds them). -->
     <div class="course-pick" role="radiogroup" aria-label="Course"></div>
     <div class="menu-actions">
+      <!-- Golfer customiser (section 9, Customiser): the bust and name come from customiser.js renderAvatars. -->
+      <button class="golfer-btn" type="button" data-act="golfer" aria-label="Golfer: customise your golfer">
+        <span class="golfer-av" data-golfer-avatar aria-hidden="true"></span>
+        <span class="gb-body"><span class="gb-k">Your golfer · <span data-golfer-sub>Classic swing</span></span><b class="gb-t" data-golfer-name>Custom golfer</b></span>
+        <span class="gb-go" aria-hidden="true">Customise<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></span>
+      </button>
       <button class="btn primary" type="button" data-act="new-round">New round</button>
       <button class="btn resume" type="button" data-act="resume">Resume round<small data-f="resumeSub"></small></button>
       <div class="btn-row">
@@ -193,10 +199,45 @@
     <div class="sheet-t" data-f="pauseTitle">Hole 1 · Par 4</div>
     <button class="btn primary" type="button" data-act="unpause">Resume</button>
     <button class="btn" type="button" data-act="settings">Settings</button>
+    <button class="btn golfer-pause" type="button" data-act="golfer"><span class="golfer-av" data-golfer-avatar aria-hidden="true"></span>Golfer</button>
     <button class="btn" type="button" data-act="howto">How to play</button>
     <div class="btn-row">
       <button class="btn ghost" type="button" data-act="restart">Restart round</button>
       <button class="btn ghost danger" type="button" data-act="quit">Quit to menu</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== GOLFER (customiser, section 9) ============================== -->
+<!-- customiser.js builds the presets, tabs and controls. The stage is see-through: main.js draws
+     the live 3D golfer on the game canvas behind it (preview top in portrait, left in landscape). -->
+<section id="customiser" role="dialog" aria-modal="true" aria-labelledby="cz-title" hidden>
+  <div class="cz-stage" tabindex="0" aria-label="Golfer preview: drag to turn, pinch or double-tap to zoom, arrow keys turn">
+    <div class="cz-shade" aria-hidden="true"></div>
+    <header class="cz-head">
+      <div class="cz-titles">
+        <div class="cz-k">Golfer · <span data-cz-f="kicker">Classic swing</span></div>
+        <h2 class="cz-t" id="cz-title" data-cz-f="title">Custom golfer</h2>
+      </div>
+      <button class="cz-round" type="button" data-cz="zoom" aria-pressed="false" aria-label="Zoom to face">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path class="zi" d="M10.5 7.5v6M7.5 10.5h6"/><path class="zo" d="M7.5 10.5h6"/></svg>
+      </button>
+    </header>
+    <div class="cz-frame" aria-hidden="true"></div>
+    <div class="cz-hint" aria-hidden="true">Drag to turn · pinch to zoom</div>
+    <div class="cz-stage-foot">
+      <button class="cz-round" type="button" data-cz="turn-l" aria-label="Turn left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 1 0 2.2-5.1"/><path d="M4 4.5v4.6h4.6"/></svg></button>
+      <button class="cz-try" type="button" data-cz="try"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><span>Try swing</span></button>
+      <button class="cz-round" type="button" data-cz="turn-r" aria-label="Turn right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12a7 7 0 1 1-2.2-5.1"/><path d="M20 4.5v4.6h-4.6"/></svg></button>
+    </div>
+  </div>
+  <div class="cz-panel">
+    <div class="cz-presets" aria-label="Presets"></div>
+    <div class="cz-tabs" role="tablist" aria-label="Customise"></div>
+    <div class="cz-panes"></div>
+    <div class="cz-foot">
+      <button class="btn ghost" type="button" data-cz="cancel">Cancel</button>
+      <button class="btn primary" type="button" data-cz="done">Done</button>
     </div>
   </div>
 </section>

@@ -8,6 +8,8 @@
 //       'putt-range+' 'putt-range-' 'pause' 'unpause' 'restart' 'quit' 'shots' 'shots-closed'
 //       'settings-changed' (settings, key)    'decision' (id)    'layout' (mode)
 //       'course' (id: a course card was picked)   'shot' (id: a shot was picked in the sheet)
+//       'golfer' (the Golfer button on the menu or the pause sheet: main opens customiser.js;
+//                 while it is open body[data-customiser="1"] and Escape is the customiser's)
 //     The UI hides its own overlay before emitting: new-round/resume hide #menu (and #scorecard,
 //     #pause), next-hole hides #scorecard, unpause/restart/quit hide #pause, pause shows #pause.
 //     quit also shows #menu with the last canResume; main may call showMenu() again to correct it.
@@ -235,6 +237,7 @@ export class UI {
     root.addEventListener('click', (e) => this._onClick(e));
     this.doc.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
+      if (this.doc.body.dataset.customiser === '1') return; // the Golfer customiser closes itself
       if (!this.el.pause.hidden) this._act('unpause');
       else if (!this.el.hud.hidden && this.el.menu.hidden) this._act('pause');
     });
