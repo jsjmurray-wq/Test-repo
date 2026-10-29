@@ -372,7 +372,12 @@ async function smoke(browser, base, path, vp, gl) {
   // shot sheet, and resume that course. Builds without the course picker (a stale dist/) skip it.
   if (await page.evaluate(() => !!document.querySelector('#menu [data-course]'))) await coursesAndShots(page, tag, vpw, vph);
   // Golfer customiser (section 9, Customiser): its own page in this context (builds without it skip).
-  if (await page.evaluate(() => !!document.getElementById('customiser'))) await golferCustomiser(context, `${base}/${path}${query}`, tag, gl);
+  // (The game page would keep rendering a round underneath, which under SwiftShader can hold the
+  // customiser's later page loads past their timeout on the big foldable canvas: it is blanked first.)
+  if (await page.evaluate(() => !!document.getElementById('customiser'))) {
+    await page.goto('about:blank');
+    await golferCustomiser(context, `${base}/${path}${query}`, tag, gl);
+  }
 
   check(errors.length === 0, `no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await context.close();
