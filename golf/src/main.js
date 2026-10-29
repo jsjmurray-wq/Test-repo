@@ -81,7 +81,7 @@ import { PUTT_RANGES } from './swing.js';
 import { prepareBotShot, botDecide } from './bot.js';
 import { SwingAnimator } from './swing-anim.js';
 import { buildGolferMesh } from './golfer-mesh.js';
-import { loadLook, normalizeLook, lookKey } from './golfer.js';
+import { loadLook, normalizeLook, lookKey, B as GB } from './golfer.js';
 import { CLUBS, clubById } from './clubs.js';
 import { SURF, fmtDist, mToFt } from './constants.js';
 import { clamp, DEG, normalizeAngle } from './vec3.js';
@@ -1349,6 +1349,42 @@ function golferScene(g) {
   return s;
 }
 
+// The power arc fades where it crosses him (ui.setGolferBox): his body's box on screen, head (the
+// crown) to feet, elbows and hands (the club is thin enough to leave out), while he stands at
+// address with the pad up.
+const ARC_BONES = [GB.neck, GB.upperArmL, GB.upperArmR, GB.forearmL, GB.forearmR, GB.handL, GB.handR, GB.pelvis, GB.footL, GB.footR];
+const CROWN = [0, 0, 0];
+function golferArcBox(g, scene) {
+  const A = golfer.anim;
+  const on = !!(A && scene.golfer && g && g.phase === 'address' && app.view === 'play' && !golfer.pending);
+  if (!on) {
+    if (golfer.arcBox) app.ui.setGolferBox(null);
+    golfer.arcBox = false;
+    return;
+  }
+  const r = app.renderer;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const add = (p) => {
+    const q = r.project(p.x, p.y, p.z);
+    if (!(q.z > 0)) return;
+    if (q.sx < x0) x0 = q.sx;
+    if (q.sx > x1) x1 = q.sx;
+    if (q.sy < y0) y0 = q.sy;
+    if (q.sy > y1) y1 = q.sy;
+  };
+  for (const b of ARC_BONES) add(A.jointWorld(b));
+  CROWN[0] = A.rig.dims.joints[GB.head * 3];
+  CROWN[2] = A.rig.dims.H + 0.03;
+  add(A.restPointWorld(GB.head, CROWN));
+  if (!(x1 > x0)) return;
+  golfer.box = { x0, y0, x1, y1 };
+  app.ui.setGolferBox(golfer.box);
+  golfer.arcBox = true;
+}
+
 // A live backswing (gauge or meter) let go: he eases back to address. Never a struck swing.
 function golferCancel() {
   const A = golfer.anim;
@@ -1888,6 +1924,7 @@ function render(time, dt) {
   applyGolferReadRule(scene);
   app.renderer.draw(scene);
   app.lastScene = scene;
+  golferArcBox(g, scene);
   if (g && g.phase) updateLiveHud(g, cam, dt);
 }
 
@@ -2152,6 +2189,10 @@ function installDebugHooks() {
         mirror: A.rig.mirror,
         framing: app.rig.framing,
       };
+    },
+    // His body's box on screen at address (CSS px {x0, y0, x1, y1}; the arc fades inside it), or null.
+    golferBox() {
+      return golfer.arcBox ? golfer.box : null;
     },
     // The club head's impact point (world and screen) and the ball.
     clubHead() {

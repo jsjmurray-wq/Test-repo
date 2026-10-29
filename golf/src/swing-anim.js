@@ -1669,6 +1669,7 @@ export class SwingAnimator {
     this._tFollow = 0.5;
     this._fMax = 0.5;
     this._uFrom = 0.5;
+    this._uCancel = 0;
     this.rig = null;
     this.state = 'address';
     this.t = 0.5;
@@ -1697,11 +1698,23 @@ export class SwingAnimator {
     if (opts.look) this.look = normalizeLook(opts.look);
     this._placeOpts = { ...this._placeOpts, ...opts };
     const o = this._placeOpts;
+    // A live backswing carries on through a re-placement (the aim dragged while the tap meter
+    // runs): same length, same target, no drop back to address.
+    const live = this.state === 'backswing' && this.rig ? this.rig.keys.putt : null;
+    const u = this.u;
+    const uTarget = this.uTarget;
     this.rig = placeGolfer({ ball: o.ball, aimYaw: o.aimYaw, terrain: o.terrain, ground: o.ground, handed: this.handed, look: this.look, club: this.club, shot: this.shot });
     this.kind = this.rig.keys.putt ? 'putt' : 'full';
     // Bump & run keeps the wrists 70% "dead", the live backswing included (no snap at the strike).
     this._hinge = this.shot === 'bump' ? 0.3 : 1;
     this.reset();
+    if (live === this.rig.keys.putt) {
+      this.state = 'backswing';
+      this.u = u;
+      this.uTarget = uTarget;
+      this._backAt(u, this.prm);
+      this._apply();
+    }
     return this;
   }
   setClub(club) {
@@ -1729,10 +1742,17 @@ export class SwingAnimator {
     this._apply();
   }
 
-  // Live backswing from the swing gesture: power 0..1.1.
+  // Live backswing from the swing gesture: power 0..1.1. A new swing while a cancelled one is still
+  // easing back to address takes over from where the club is (no wait, no automatic backswing).
   setBackswing(power) {
-    if (this.state !== 'address' && this.state !== 'backswing') return;
     const p = clamp(+power || 0, 0, 1.1);
+    if (this.state === 'cancel' && this._uCancel > 0 && p > 0.001) {
+      const x = clamp(this._tState / 0.45, 0, 1);
+      this.u = this._uCancel * (1 - x * x * (3 - 2 * x));
+      this.state = 'backswing';
+      this._idleT = -1;
+    }
+    if (this.state !== 'address' && this.state !== 'backswing') return;
     this.power = p;
     this.uTarget = this.kind === 'putt' ? puttRock(p) : backU(p, this.style);
     if (p > 0.001 && this.state === 'address') {
@@ -1780,6 +1800,9 @@ export class SwingAnimator {
 
   cancel() {
     if (this.state === 'address') return;
+    // From a live backswing the eased pose stays on the backswing's path (setBackswing may take
+    // over from it); from anything else it is a plain blend.
+    this._uCancel = this.state === 'backswing' ? this.u : 0;
     this._snap.set(this.prm);
     this.state = 'cancel';
     this._tState = 0;
@@ -1984,7 +2007,8 @@ export class SwingAnimator {
       case 'cancel': {
         const x = clamp(this._tState / 0.45, 0, 1);
         const e = x * x * (3 - 2 * x);
-        mixParams(out, this._snap, k.P1, e);
+        if (this._uCancel > 0) this._backAt(this._uCancel * (1 - e), out);
+        else mixParams(out, this._snap, k.P1, e);
         if (x >= 1) {
           this.state = 'address';
           this._tState = 0;

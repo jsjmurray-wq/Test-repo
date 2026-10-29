@@ -102,10 +102,13 @@ test('address with the golfer: TV framing behind him on the target line, whole f
         assert.ok(Math.abs(cam.eye.x - S.ball.x) < 1e-6 && cam.eye.y < S.ball.y - 2, `eye ${JSON.stringify(cam.eye)}`);
         const ball = ndc(cam, aspect, S.ball);
         const tag = `${aspect < 1 ? 'portrait' : 'landscape'} ${handed} ${club}`;
-        // The ball low in the swing arc (portrait: centre third; landscape: on the pad at 0.6).
+        // The ball low in the swing arc (portrait: centre third; landscape: on the pad at 0.6; a
+        // landscape left-hander, who stands right of the ball, stands with it left of the pad).
+        const lefty = aspect > 1 && handed === 'L';
         assert.ok(ball.y < -0.4 && ball.y > -0.7, `${tag}: ball y ${ball.y.toFixed(2)}`);
         if (aspect < 1) assert.ok(Math.abs(ball.x) <= 0.33, `${tag}: ball x ${ball.x.toFixed(2)}`);
-        else assert.ok(Math.abs(ball.x - 0.6) < 1e-6, `${tag}: ball x ${ball.x.toFixed(2)}`);
+        else if (!lefty) assert.ok(Math.abs(ball.x - 0.6) < 1e-6, `${tag}: ball x ${ball.x.toFixed(2)}`);
+        else assert.ok(ball.x < 0.1 && ball.x > -0.6, `${tag}: ball x ${ball.x.toFixed(2)} (left of the pad)`);
         // The target (or cup) above the ball, on screen.
         const tgt = ndc(cam, aspect, putt ? { x: 0.4, y: 6, z: 0 } : { x: 0, y: 150, z: 0 });
         assert.ok(tgt.y > ball.y + 0.1 && tgt.y < 0.6 && Math.abs(tgt.x) < 1, `${tag}: target ${tgt.x.toFixed(2)},${tgt.y.toFixed(2)}`);
@@ -118,6 +121,8 @@ test('address with the golfer: TV framing behind him on the target line, whole f
             assert.ok(q.z > 2, `${tag} ${pose}: camera ${q.z.toFixed(2)} m from ${p.b} (never inside him)`);
             // Whole figure on screen (top 12% left for the top bar).
             assert.ok(Math.abs(q.x) < 1 && q.y < 0.88 && q.y > -1, `${tag} ${pose}: ${p.b} at ${q.x.toFixed(2)},${q.y.toFixed(2)}`);
+            // A landscape left-hander's body stays off the swing pad (its left edge at NDC 0.2).
+            if (lefty && typeof p.b === 'number' && p.b !== B.club) assert.ok(q.x < 0.2, `${tag} ${pose}: ${p.b} at ${q.x.toFixed(2)} on the pad`);
           }
           // His body (pelvis, chest, neck, head) stays on his side of the target line (a putter's
           // eyes are over the ball, so his head comes close to it).

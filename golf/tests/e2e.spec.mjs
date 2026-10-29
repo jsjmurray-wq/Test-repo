@@ -886,6 +886,35 @@ async function swingWithHold(page, x, y, depth, up, onHold) {
 
 const golfer = (page) => page.evaluate(() => window.__golf.debug.golferState());
 
+// Mid-backswing HUD vs the golfer (review 4): his body's box on screen (debug.golferBox) clear of
+// the live readout and of the target notch (a notch for a long shot: a short one's notch sits
+// low on the power arc, over the golfer's side, a known gap); the arc mirrored for a left-hander
+// (its notch and overswing on the open side); a landscape left-hander stands left of the pad.
+async function golferHudClear(page, what) {
+  const r = await page.evaluate(() => {
+    const rect = (sel) => {
+      const e = document.querySelector(sel);
+      if (!e || getComputedStyle(e).display === 'none') return null;
+      const b = e.getBoundingClientRect();
+      return b.width > 0 ? { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom } : null;
+    };
+    return {
+      box: window.__golf.debug.golferBox(),
+      readout: rect('#pad .pad-readout'),
+      notch: window.__golf.ui._target >= 0.75 ? rect('#pad .arc-target') : null,
+      tf: getComputedStyle(document.querySelector('#pad svg.arc')).transform,
+      handed: window.__golf.debug.golferState().handed,
+      land: document.body.dataset.layout === 'landscape',
+      pad: window.__golf.debug.padRect(),
+    };
+  });
+  const hit = (a, b) => !!(a && b && a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1);
+  const fmt = (b) => (b ? `${Math.round(b.x0)}-${Math.round(b.x1)} x ${Math.round(b.y0)}-${Math.round(b.y1)}` : 'none');
+  check(r.box && !hit(r.box, r.readout) && !hit(r.box, r.notch), `golfer: ${what}: the readout (${fmt(r.readout)}) and notch (${fmt(r.notch)}) clear of him (${fmt(r.box)})`);
+  check((r.handed === 'L') === /matrix\(-1/.test(r.tf), `golfer: ${what}: the arc ${r.handed === 'L' ? 'mirrored' : 'as drawn'} (${r.tf})`);
+  if (r.land && r.handed === 'L' && r.box) check(r.box.x1 < r.pad.x, `golfer: ${what}: a landscape left-hander stands left of the pad (${Math.round(r.box.x1)} < ${Math.round(r.pad.x)} px)`);
+}
+
 // After a shot: back at address (a water drop taken), the golfer placed at the new spot.
 async function golferResolve(page, what) {
   const ok = await waitFor(page, () => ['address', 'decision', 'holed', 'scorecard'].includes(window.__golf.game.phase), 45000);
@@ -967,6 +996,7 @@ async function golferPlay(page, tag, gl) {
     await page.waitForTimeout(300);
     top = await page.evaluate(() => ({ g: window.__golf.debug.golferState(), power: window.__golf.swingPower, phase: window.__golf.game.phase }));
     await shot(page, tag, 'golfer-top');
+    if (gl && !isNull) await golferHudClear(page, 'top of the backswing');
   });
   check(top && top.g.state === 'backswing' && top.phase === 'address' && Math.abs(top.g.power - top.power) < 1e-6 && top.g.u > 1.2, `golfer: the backswing follows the live power (${top && top.g.state}, power ${top && top.power && top.power.toFixed(2)}, u ${top && top.g.u.toFixed(2)})`);
   check(await waitFor(page, () => window.__golf.game.phase === 'flight', 5000), 'golfer: the swipe strikes');
@@ -1044,6 +1074,19 @@ async function golferPlay(page, tag, gl) {
     check(s.mirror === -1 && s.chest.sx > ball.sx + 20, `golfer: a left-hander stands right of the ball, mirrored (chest ${Math.round(s.chest.sx)} px, ball ${Math.round(ball.sx)} px)`);
   } else check(s.mirror === -1, 'golfer: a left-hander is mirrored');
   await shot(page, tag, 'golfer-lefty');
+  if (gl && !isNull && !(await state(page)).putt) {
+    // A left-hander's backswing (held, then let go at the bottom: a cancel, no stroke).
+    const lp = await page.evaluate(() => window.__golf.debug.padRect());
+    const ly = lp.y + lp.h * 0.2;
+    const ld = Math.min(await page.evaluate((y) => window.__golf.debug.depthForPower(0.85, 'full', y), ly), lp.h * 0.7);
+    await swingWithHold(page, lp.x + lp.w * 0.5, ly, ld, 'lift', async () => {
+      await waitFor(page, () => window.__golf.debug.golferState().u > 1.2, 4000);
+      await page.waitForTimeout(300);
+      await shot(page, tag, 'golfer-lefty-top');
+      await golferHudClear(page, 'a left-hander at the top');
+    });
+    await waitFor(page, () => window.__golf.debug.golferState().state === 'address', 3000);
+  }
   await page.evaluate(() => window.__golf.ui.setSetting('handed', 'R'));
   await waitFor(page, () => window.__golf.debug.golferState().handed === 'R', 3000);
 

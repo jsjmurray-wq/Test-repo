@@ -34,7 +34,9 @@ test('lookSummary names presets exactly and anything else "Custom golfer"', () =
   const custom = lookSummary({ ...PRESETS[0].look, shirtColor: '#e5802e' });
   assert.equal(custom.title, 'Custom golfer');
   assert.equal(custom.preset, null);
-  assert.match(lookSummary(DEFAULT_LOOK).sub, /^Classic swing · 180 cm$/);
+  assert.match(lookSummary(DEFAULT_LOOK).sub, /^Classic swing · 183 cm$/);
+  // A new player's untouched golfer has a name: the default look is the Tour Pro preset.
+  assert.equal(lookSummary(null).title, 'Tour Pro');
 });
 
 test('preview clubs and tabs', () => {

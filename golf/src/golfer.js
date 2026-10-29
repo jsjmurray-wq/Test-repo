@@ -113,11 +113,12 @@ export const OPTION_NAMES = Object.freeze({
   swing: { classic: 'Classic', compact: 'Compact', bigfinish: 'Big finish', smooth: 'Smooth' },
 });
 
+// The default golfer is exactly the Tour Pro preset (so a new player's golfer has a name).
 export const DEFAULT_LOOK = Object.freeze({
   body: 'male',
   skin: 2,
-  height: 180,
-  build: 'regular',
+  height: 183,
+  build: 'athletic',
   hair: 'short',
   hairColor: '#3a281d',
   facialHair: 'none',
@@ -128,7 +129,7 @@ export const DEFAULT_LOOK = Object.freeze({
   shirtColor: '#1f2d52',
   shirtColor2: '#f2f2ee',
   legwear: 'trousers',
-  legColor: '#3c3f45',
+  legColor: '#898c90',
   shoeColor: '#f2f2ee',
   gloveColor: '#f2f2ee',
   swing: 'classic',

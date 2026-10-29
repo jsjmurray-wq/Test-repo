@@ -139,6 +139,9 @@ test('mesh: budgets, valid indices, bone ids and unit normals for every option',
     for (let k = 0; k < nv; k++) {
       const b = m.bone[k];
       if (!(Number.isInteger(b) && b >= 0 && b < BONE_COUNT)) assert.fail(`bone ${b}`);
+      // Joints blend a second bone (weight <= 0.5; the first bone is the dominant one).
+      const b2 = m.bone2[k];
+      if (!(Number.isInteger(b2) && b2 >= 0 && b2 < BONE_COUNT) || !(m.weight[k] >= 0 && m.weight[k] <= 0.5)) assert.fail(`bone2 ${b2} weight ${m.weight[k]}`);
       const l = Math.hypot(m.nrm[k * 3], m.nrm[k * 3 + 1], m.nrm[k * 3 + 2]);
       if (Math.abs(l - 1) > 1e-3) assert.fail(`normal length ${l}`);
     }
@@ -464,6 +467,44 @@ test('cancel eases back to address; reset snaps', () => {
   anim.cancel();
   for (let i = 0; i < 120; i++) anim.update(1 / 60);
   assert.equal(called, 0);
+});
+
+test('a live backswing survives a re-placement (aim dragged) and takes over from a cancel', () => {
+  const ball = { x: 0, y: 0, z: BALL_R };
+  // Re-placed every frame while the backswing runs: the club keeps climbing, no drop to address,
+  // and the strike comes straight down from it.
+  const a = new SwingAnimator({}, { club: '7i', ball, aimYaw: 1 });
+  let prevU = 0;
+  for (let i = 0; i < 60; i++) {
+    a.place({ ball, aimYaw: 1 + i * 0.004 });
+    a.setBackswing(0.9);
+    a.update(1 / 60);
+    assert.equal(a.state, 'backswing');
+    assert.ok(a.u >= prevU - 1e-9, `u ${a.u} after ${prevU}`);
+    prevU = a.u;
+  }
+  assert.ok(a.u > 2.4, `u ${a.u}`);
+  const T = a.strike({ power: 0.9 });
+  assert.ok(T >= 0.22 && T <= 0.32, `downswing from the live top: ${T}`);
+  // A swing cancelled and retried at once: the new backswing starts from where the club is.
+  const b = new SwingAnimator({}, { club: '7i', ball, aimYaw: 1 });
+  for (let i = 0; i < 60; i++) {
+    b.setBackswing(0.9);
+    b.update(1 / 60);
+  }
+  b.cancel();
+  for (let i = 0; i < 6; i++) b.update(1 / 60);
+  const head = b.clubHeadWorld();
+  b.setBackswing(0.9);
+  b.update(0);
+  assert.equal(b.state, 'backswing');
+  assert.ok(dist3(b.clubHeadWorld(), head) < 0.02, `no jump at the takeover (${dist3(b.clubHeadWorld(), head).toFixed(3)} m)`);
+  for (let i = 0; i < 40; i++) {
+    b.setBackswing(0.9);
+    b.update(1 / 60);
+  }
+  const T2 = b.strike({ power: 0.9 });
+  assert.ok(T2 >= 0.22 && T2 <= 0.32, `the retry swings down at once: ${T2}`);
 });
 
 test('pose: local quaternions and root; bones are proper rigid transforms (mirrored for left-handers)', () => {

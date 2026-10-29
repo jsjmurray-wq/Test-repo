@@ -333,6 +333,16 @@ body:not([data-layout="landscape"]) #hud[data-putt="1"] .pad-hint { top: 57%; }
    readout moves further left, clear of him. */
 body:not([data-layout="landscape"]) #hud:is([data-golfer="R"], [data-golfer="L"])[data-putt="0"] .pad-hint { top: auto; bottom: 78px; transform: translateX(-50%); }
 body[data-layout="landscape"] #hud[data-golfer="R"] .pad-readout { left: calc(50% - var(--arc, 260px) * 0.5 - 112px); }
+/* A left-hander stands right of the ball: the arc is mirrored so it fills from the lower right and
+   its target notch, full-power mark and overswing zone sit on the open side, left, clear of him. */
+#hud[data-golfer="L"] #pad .arc { transform: translate(-50%, -50%) scaleX(-1); }
+/* Portrait: the live readout sits inside the arc on the open side (right of the target line for a
+   right-hander, left for a left-hander), level with the arc's centre, below his head at the top. */
+body:not([data-layout="landscape"]) #hud[data-golfer="R"][data-putt="0"] .pad-readout { left: calc(50% + var(--arc, 260px) * 0.13); top: calc(40% - var(--arc, 260px) * 0.04); }
+body:not([data-layout="landscape"]) #hud[data-golfer="L"][data-putt="0"] .pad-readout { left: calc(50% - var(--arc, 260px) * 0.13); top: calc(40% - var(--arc, 260px) * 0.04); }
+/* Landscape: a left-hander and the ball stand left of the pad (camera.js), so the readout goes
+   back to the middle of the arc, away from him. */
+body[data-layout="landscape"] #hud[data-golfer="L"] .pad-readout { left: 50%; }
 /* Left-aligned under the info card and clear of the tool buttons on the right (Read / Map /
    Flyover reach down past it), so a long "LW · 15/22 yd · Straight → push fade" wraps instead. */
 body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {

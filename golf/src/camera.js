@@ -504,6 +504,17 @@ export class CameraRig {
     const ty = ball.y + dir.y * D;
     const tz = putt ? groundZ(T, cup.x, cup.y) : T && T.heightAt ? groundZ(T, tx, ty) : ball.z;
     const f = golferFraming(c.aspect || 1, { dist, dz: tz - (ball.z - 0.02), lat: gf.lat, along: gf.along, H: gf.H, putt });
+    // Landscape, a left-hander: he stands right of the ball, which with the ball on the swing pad
+    // (on the right of the screen) would put him inside the arc and under the thumb. The lens shift
+    // moves ball and golfer instead so that he stands just left of the pad (padShift - 1 is the
+    // pad's left edge when it reaches the right edge of the screen; hw ~ his half width at the top).
+    if ((c.aspect || 1) >= 1.25 && gf.lat < 0 && c.padShift > 0) {
+      const sep = Math.abs(f.golferX - f.shift);
+      const hw = (sep * 0.42) / Math.max(0.3, Math.abs(gf.lat));
+      f.shift = c.padShift - 1 - 0.04 - sep - hw;
+      f.golferX = f.shift + sep;
+      f.clearPad = true;
+    }
     const ex = ball.x - dir.x * f.back;
     const ey = ball.y - dir.y * f.back;
     let h = Math.max(f.h, groundZ(T, ex, ey) + (putt ? 0.3 : 1) - ball.z);

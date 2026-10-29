@@ -449,10 +449,12 @@ function jointBlend(m, D, J) {
     { th: B.thighL, sn: B.shinL, ua: B.upperArmL, fa: B.forearmL, hd: B.handL },
     { th: B.thighR, sn: B.shinR, ua: B.upperArmR, fa: B.forearmR, hd: B.handR },
   ];
+  // bone stays the dominant one (weight <= 0.5 on bone2).
   const set = (k, b1, b2, w) => {
-    bone[k] = b1;
-    bone2[k] = b2;
-    weight[k] = w;
+    const swap = w > 0.5;
+    bone[k] = swap ? b2 : b1;
+    bone2[k] = swap ? b1 : b2;
+    weight[k] = swap ? 1 - w : w;
   };
   for (let k = 0; k < n; k++) {
     const b = bone[k];

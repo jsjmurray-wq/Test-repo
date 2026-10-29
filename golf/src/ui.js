@@ -405,6 +405,48 @@ export class UI {
     const land = this.doc.body.dataset.layout === 'landscape';
     const arc = Math.round(Math.min(r.w * 0.82, r.h * (land ? 0.7 : 0.78), 300));
     s.setProperty('--arc', `${arc}px`);
+    this._arcRect = null; // re-measured for setGolferBox
+  }
+
+  // The golfer's body on screen at address (CSS px {x0, y0, x1, y1}, or null): the power arc fades
+  // where it crosses him (an SVG mask over the track, fill and ticks; the target notch stays), so
+  // the gauge never hides his swing. Cheap per frame: the DOM changes only when the box moves.
+  setGolferBox(b) {
+    const hole = this._arcHole;
+    if (!hole) return;
+    if (!b) {
+      if (this._arcHoleKey) {
+        hole.setAttribute('width', '0');
+        hole.setAttribute('height', '0');
+        this._arcHoleKey = '';
+      }
+      return;
+    }
+    let r = this._arcRect;
+    if (!r) {
+      const bb = this._arcSvg.getBoundingClientRect();
+      if (!(bb.width > 0)) return;
+      r = this._arcRect = { x: bb.left, y: bb.top, k: 240 / bb.width };
+    }
+    // (A left-hander's arc is mirrored: style.css scaleX(-1).)
+    const mirror = this.el.hud.dataset.golfer === 'L';
+    let u0 = (b.x0 - r.x) * r.k;
+    let u1 = (b.x1 - r.x) * r.k;
+    if (mirror) [u0, u1] = [240 - u1, 240 - u0];
+    const v0 = (b.y0 - r.y) * r.k;
+    const v1 = (b.y1 - r.y) * r.k;
+    const pad = 5;
+    const x = Math.round(u0 - pad);
+    const y = Math.round(v0 - pad);
+    const w = Math.max(0, Math.round(u1 - u0 + 2 * pad));
+    const h = Math.max(0, Math.round(v1 - v0 + 2 * pad));
+    const key = `${x},${y},${w},${h}`;
+    if (key === this._arcHoleKey) return;
+    this._arcHoleKey = key;
+    hole.setAttribute('x', String(x));
+    hole.setAttribute('y', String(y));
+    hole.setAttribute('width', String(w));
+    hole.setAttribute('height', String(h));
   }
 
   // ------------------------------------------------------------------ screens
@@ -1087,6 +1129,26 @@ export class UI {
     }
     this._arcFill = svg.querySelector('.arc-fill');
     this._arcOver = svg.querySelector('.arc-over');
+    // The golfer's mask (setGolferBox): the track, zone, ticks, fill and overswing fade to ~35%
+    // inside a rounded box round his body.
+    {
+      const mask = this.doc.createElementNS(NS, 'mask');
+      mask.setAttribute('id', 'arc-golfer-mask');
+      mask.setAttribute('maskUnits', 'userSpaceOnUse');
+      for (const [k, v] of [['x', -40], ['y', -40], ['width', 320], ['height', 320]]) mask.setAttribute(k, String(v));
+      const all = this.doc.createElementNS(NS, 'rect');
+      for (const [k, v] of [['x', -40], ['y', -40], ['width', 320], ['height', 320], ['fill', '#fff']]) all.setAttribute(k, String(v));
+      const hole = this.doc.createElementNS(NS, 'rect');
+      for (const [k, v] of [['x', 0], ['y', 0], ['width', 0], ['height', 0], ['rx', 14], ['fill', '#000'], ['fill-opacity', 0.62]]) hole.setAttribute(k, String(v));
+      mask.append(all, hole);
+      const grp = this.doc.createElementNS(NS, 'g');
+      grp.setAttribute('mask', 'url(#arc-golfer-mask)');
+      for (const el of svg.querySelectorAll('.arc-track, .arc-zone, .arc-ticks, .arc-fill, .arc-over')) grp.appendChild(el);
+      svg.append(mask, grp);
+      this._arcSvg = svg;
+      this._arcHole = hole;
+      this._arcHoleKey = '';
+    }
     // Target notch, drawn at angle 0 (pointing along +x from the centre) and rotated into place
     // by setTarget: a bar across the track and a small pointer just outside it.
     const tg = this.doc.createElementNS(NS, 'g');

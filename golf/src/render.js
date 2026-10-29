@@ -655,7 +655,14 @@ export class Renderer {
     const aerialK = this.U.highClear ? thin : 1;
     const frame = { sun, fogK, aerialK, time: scene.time || 0, wind: scene.wind || { x: 0, y: 0 } };
 
+    // ---- the golfer's shadow mask first (its own small render target): switching targets once the
+    // frame has started would make a tile-based GPU (iPhone) store and reload the multisampled
+    // colour and depth in the middle of every frame.
+    const golf = this._golferPrep(scene.golfer);
+    if (golf) this._golferShadowMask(golf, frame, sun);
+
     gl.viewport(0, 0, W, Hh);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.clearColor(0.75, 0.82, 0.88, 1);
     gl.clearDepth(1);
     gl.depthMask(true);
@@ -782,7 +789,6 @@ export class Renderer {
     }
 
     // ---- the golfer (opaque, skinned)
-    const golf = this._golferPrep(scene.golfer);
     if (golf) this._drawGolfer(golf, frame);
 
     // ---- ball (icosphere when it covers its minimum size, else a billboard after the sky).
@@ -868,8 +874,8 @@ export class Renderer {
     gl.polygonOffset(-1, -4);
     const op = this.P.overlay;
 
-    // Golfer's ground shadow (a blurred mask of the flattened figure).
-    if (golf) this._drawGolferShadow(golf, frame, sun);
+    // Golfer's ground shadow (the blurred mask of the flattened figure, rendered first).
+    if (golf && golf.shadow) this._golferShadowGround(golf, frame);
 
     // Blob shadow under the ball: darker and tighter when the ball is on the ground.
     if (ball && ball.visible !== false && T) {
@@ -1107,8 +1113,10 @@ export class Renderer {
   }
 
   // The golfer's sun shadow: the flattened figure rendered into the mask over a square of ground
-  // under and beyond the feet (away from the sun), then laid on the ground blurred.
-  _drawGolferShadow(st, frame, sun) {
+  // under and beyond the feet (away from the sun) at the start of the frame (_golferShadowMask),
+  // then laid on the ground blurred with the overlays (_golferShadowGround).
+  _golferShadowMask(st, frame, sun) {
+    st.shadow = false;
     const M = this._shadowMask;
     if (!M) return;
     const gl = this.gl;
@@ -1151,7 +1159,7 @@ export class Renderer {
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.POLYGON_OFFSET_FILL);
     const pm = this.P.golferMask;
-    let u = this._use(pm, frame);
+    const u = this._use(pm, frame);
     gl.uniformMatrix4fv(u.uBones, false, this._golferBones);
     const d = -(n.x * (st.wx - e.x) + n.y * (st.wy - e.y) + n.z * (gz - e.z));
     gl.uniform4f(u.uPlane, n.x, n.y, n.z, d);
@@ -1168,18 +1176,27 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.BLEND);
-    gl.enable(gl.POLYGON_OFFSET_FILL);
-    // ---- ground quad
+    // The ground quad for the overlay pass (the shared _quad is reused by the ball's shadow).
+    if (!this._golferQuad) this._golferQuad = new Float32Array(this._quad.length);
+    this._golferQuad.set(this._quad);
+    st.shadowAlpha = alpha;
+    st.shadow = true;
+  }
+
+  _golferShadowGround(st, frame) {
+    const M = this._shadowMask;
+    if (!M) return;
+    const gl = this.gl;
     const pg = this.P.golferGround;
-    u = this._use(pg, frame);
+    const u = this._use(pg, frame);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, M.tex);
     gl.uniform1i(u.uMask, 0);
-    gl.uniform1f(u.uAlpha, alpha);
+    gl.uniform1f(u.uAlpha, st.shadowAlpha);
     gl.uniform2f(u.uTexel, 1.2 / M.size, 1.2 / M.size);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.G.quad);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._quad);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._golferQuad);
+    const A = this.attribs;
     A.bind(pg.a.aPos, this.G.quad, 3, 24, 0);
     A.bind(pg.a.aMisc, this.G.quad, 3, 24, 12);
     this._drawStrip(4);
