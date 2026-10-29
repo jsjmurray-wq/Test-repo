@@ -37,6 +37,7 @@ import { yawDir, damp, clamp, lerp } from './vec3.js';
 const DEG = Math.PI / 180;
 export const HFOV = 55 * DEG;
 export const FLYOVER_T = 5;
+export const FLIGHT_HOLD = 0.6; // s the flight camera holds on the golfer's follow-through (ctx.golfer)
 const RELIEF_SHIFT = 0.48; // landscape relief view: points on the right, the sheet on the left
 
 export function fovForAspect(aspect) {
@@ -85,6 +86,59 @@ export function addressFraming(aspect, { dist = 0, dz = 0, h = null } = {}) {
   }
   const back = 0.5 * (lo + hi);
   return { back, h: hh, pitch: Math.atan(hh / back) - below, yBall, yTarget, dist: D };
+}
+
+// TV framing with the golfer (section 9.7): the camera stands on the target line behind the ball,
+// as close as lets the golfer's whole figure (club at the top included) stay within hWant of the
+// screen height and the golfer and ball fit side by side: the golfer up to xWant (NDC) from the
+// centre on his side (left third for a right-hander, right third for a left-hander) and the ball
+// up to ballMax the other way (portrait: a lens shift moves both, `shift` = the ball's NDC x, so
+// the ball stays in the swing arc; landscape centres the view on the pad instead, ctx.padShift).
+// Then the eye height is solved so the ball projects at yBall (in the arc) and the shot's target
+// (`dist` m down the line, `dz` m above the ball's ground) at yTarget, within [hMin, hMax].
+// Putts: the eye height follows the putt length instead (the cup is near; a short putt is seen
+// from lower so ball and cup separate). lat: the golfer's stance centre across the line (m, + =
+// left of it), along: its offset along the line from the ball (m, + toward the target), H: his
+// height (m).
+// Returns {back, h, pitch, yBall, yTarget, dist, F, golferX, shift, below} (golferX: the golfer's
+// NDC x).
+export const GOLFER_FRAME = {
+  portrait: { xWant: 0.48, ballMax: 0.32, hWant: 0.74, hMin: 1.45, hMax: 3.6, yBall: -0.6, yTarget: 0.15, puttBall: -0.55 },
+  landscape: { xWant: 0.3, ballMax: 0, hWant: 0.84, hMin: 1.25, hMax: 3.2, yBall: -0.45, yTarget: 0.3, puttBall: -0.45 },
+};
+export function golferFraming(aspect, { dist = 150, dz = 0, lat = 0.75, along = 0, H = 1.8, putt = false } = {}) {
+  const T = Math.tan(fovForAspect(aspect) / 2);
+  const wide = aspect >= 1;
+  const K = wide ? GOLFER_FRAME.landscape : GOLFER_FRAME.portrait;
+  const yBall = putt ? K.puttBall : K.yBall;
+  const L = Math.max(0.3, Math.abs(lat));
+  const side = lat < 0 ? -1 : 1;
+  // Eye-to-golfer distance: golfer and ball fit side by side, and he is no taller than hWant.
+  const F = Math.max(L / ((K.xWant + K.ballMax) * T * aspect), (H + 0.4) / (K.hWant * T), 2.6);
+  const sep = L / F / (T * aspect);
+  const shift = sep > K.xWant ? side * (sep - K.xWant) : 0;
+  const back = Math.max(2.2, F - along);
+  const below = Math.atan(-yBall * T);
+  const D = Math.max(dist, putt ? 0.3 : 8);
+  let h;
+  if (putt) {
+    h = clamp(1.35 + 0.05 * D, 1.35, 2.6);
+  } else {
+    const yAt = (hh) => Math.tan(Math.atan(hh / back) - below - Math.atan((hh - dz) / (back + D))) / T;
+    let lo = K.hMin;
+    let hi = K.hMax;
+    if (yAt(hi) <= K.yTarget) h = hi;
+    else if (yAt(lo) >= K.yTarget) h = lo;
+    else {
+      for (let i = 0; i < 32; i++) {
+        const mid = 0.5 * (lo + hi);
+        if (yAt(mid) < K.yTarget) lo = mid;
+        else hi = mid;
+      }
+      h = 0.5 * (lo + hi);
+    }
+  }
+  return { back, h, pitch: Math.atan(h / back) - below, yBall, yTarget: K.yTarget, dist: D, F, golferX: shift - side * sep, shift, below };
 }
 
 // Framing for a low view down a line (the read cameras): from the near point (projected at NDC
@@ -214,7 +268,10 @@ export class CameraRig {
     const ball = c.ball || { x: 0, y: 0, z: 0 };
     const dir = yawDir(c.aimYaw || 0);
     const start = { x: ball.x, y: ball.y, z: ball.z };
-    const f = { info, start, dir, phase: 'tv', landCam: null, cutT: Infinity };
+    const f = { info, start, dir, phase: 'tv', landCam: null, cutT: Infinity, hold: null, holding: false };
+    // With the golfer in view (ctx.golfer) the TV shot first holds the address framing for
+    // FLIGHT_HOLD s of the shot clock (the follow-through and the ball leaving), then pans with it.
+    if (c.golfer) f.hold = { eye: { ...this.eye }, target: { ...this.target }, T: FLIGHT_HOLD };
     if (info && info.landing) {
       const L = info.landing;
       const dx = L.x - start.x;
@@ -251,6 +308,12 @@ export class CameraRig {
     let clear = 1;
     switch (this.mode) {
       case 'putt': {
+        if (c.golfer) {
+          ({ eye, target } = this._golferGoal(ball, dir, cup, true));
+          clear = 0.3;
+          lambda = 6;
+          break;
+        }
         // Low behind the ball; further back and higher for longer putts so the cup stays on
         // screen. Pitched so the ball sits low (inside the swing arc) on any aspect.
         const d = Math.hypot(cup.x - ball.x, cup.y - ball.y);
@@ -350,6 +413,11 @@ export class CameraRig {
       case 'flight':
         return this._flightGoal(dt);
       default: {
+        if (c.golfer) {
+          ({ eye, target } = this._golferGoal(ball, dir, cup, false));
+          lambda = 6;
+          break;
+        }
         // address: behind the ball, framed for the aspect and the shot (see addressFraming): the
         // target is the club's carry down the aim line (not past the cup). If a ridge hides it
         // (a raised tee over a convex bank), the eye climbs until the landing area is in sight.
@@ -419,6 +487,33 @@ export class CameraRig {
     return { eye: g.eye, target: g.target, up: { x: 0, y: 0, z: 1 } };
   }
 
+  // Address and putt with the golfer in view (golferFraming): on the target line behind the ball.
+  // The eye keeps 1 m (putts 0.3 m) over the ground behind the ball, the pitch is re-solved for the
+  // height it ends up at (the ball stays in the arc), and a ridge hiding the target lifts it.
+  _golferGoal(ball, dir, cup, putt) {
+    const c = this.ctx;
+    const T = c.terrain;
+    const gf = c.golfer;
+    const dCup = Math.hypot(cup.x - ball.x, cup.y - ball.y);
+    const dist = putt ? dCup : clamp(Math.min(c.carry ?? dCup, dCup + 10), 0, 280);
+    const D = Math.max(dist, putt ? 0.3 : 8);
+    const tx = ball.x + dir.x * D;
+    const ty = ball.y + dir.y * D;
+    const tz = putt ? groundZ(T, cup.x, cup.y) : T && T.heightAt ? groundZ(T, tx, ty) : ball.z;
+    const f = golferFraming(c.aspect || 1, { dist, dz: tz - (ball.z - 0.02), lat: gf.lat, along: gf.along, H: gf.H, putt });
+    const ex = ball.x - dir.x * f.back;
+    const ey = ball.y - dir.y * f.back;
+    let h = Math.max(f.h, groundZ(T, ex, ey) + (putt ? 0.3 : 1) - ball.z);
+    let g = behindBall(ball, dir, f.back, h, Math.atan(h / f.back) - f.below);
+    const aim = { x: tx, y: ty, z: tz + 0.5 };
+    for (let k = 0; k < 6 && !putt && !sightClear(T, g.eye, aim); k++) {
+      h += 0.75;
+      g = behindBall(ball, dir, f.back, h, Math.atan(h / f.back) - f.below);
+    }
+    this.framing = { ...f, h, pitch: Math.atan(h / f.back) - f.below, golfer: true };
+    return g;
+  }
+
   _flightGoal() {
     const c = this.ctx;
     const T = c.terrain;
@@ -449,7 +544,15 @@ export class CameraRig {
       }
       return { eye, target: { x: ball.x, y: ball.y, z: ball.z }, lambda: 9, up, clear: 1 };
     }
-    if (f.phase === 'tv' && (pt > 1.6 || travelled > 70)) f.phase = 'chase';
+    const hold = f.hold;
+    f.holding = !!hold && f.phase === 'tv' && pt < hold.T;
+    if (f.phase === 'tv' && (hold ? pt > 1.6 + hold.T || travelled > 85 : pt > 1.6 || travelled > 70)) f.phase = 'chase';
+    if (f.phase === 'tv' && hold) {
+      // Hold on the golfer's follow-through, then pan up with the ball from the same spot, rising.
+      if (f.holding) return { eye: { ...hold.eye }, target: { ...hold.target }, lambda: 12, up, clear: 1 };
+      const e = hold.eye;
+      return { eye: { x: e.x, y: e.y, z: e.z + (pt - hold.T) * 0.7 }, target: { x: ball.x, y: ball.y, z: ball.z }, lambda: 5, up, clear: 1 };
+    }
     if (f.phase === 'tv') {
       // Behind the golfer, rising a little; target tracks the ball so the camera tilts up with it.
       const eye = { x: f.start.x - f.dir.x * 4.5, y: f.start.y - f.dir.y * 4.5, z: f.start.z + 1.8 + pt * 0.8 };
@@ -511,7 +614,10 @@ export class CameraRig {
     this.fovY = fovForAspect(c.aspect || 1);
     // Lens shift: at address and putting the view's centre moves to the swing pad (landscape puts
     // the pad on the right), so the ball sits in the arc while the aim line stays vertical.
-    let shiftGoal = this.mode === 'address' || this.mode === 'putt' ? c.padShift || 0 : 0;
+    const held = this.mode === 'flight' && this.flight && this.flight.holding;
+    // (With the golfer, portrait shifts the view too: golfer on his side, the ball in the arc.)
+    const gShift = c.golfer && this.framing && this.framing.golfer ? this.framing.shift || 0 : 0;
+    let shiftGoal = this.mode === 'address' || this.mode === 'putt' || held ? (c.padShift || 0) + gShift : 0;
     if (this.mode === 'relief' && (c.aspect || 1) >= 1.25) shiftGoal = RELIEF_SHIFT;
     this.shiftX = this.snap0 ? shiftGoal : damp(this.shiftX, shiftGoal, 6, dt);
     const near = this.mode === 'putt' ? 0.08 : this.mode === 'address' ? 0.15 : 0.3;

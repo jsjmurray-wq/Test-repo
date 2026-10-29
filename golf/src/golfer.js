@@ -19,6 +19,8 @@
 //   SKIN_TONES, HAIR_COLORS, CLOTH_COLORS (palettes: {id, name, hex}), OPTIONS (every look option),
 //   OPTION_NAMES (display names)
 //   DEFAULT_LOOK, normalizeLook(any), PRESETS, presetById(id), randomLook(rng), lookKey(look)
+//   LOOK_KEY, loadLook(storage?) -> look, saveLook(look, storage?) -> look (the player's look in
+//                     localStorage 'golf.golfer.v1', with an in-memory fallback)
 //   hexToRgb(hex) -> [r,g,b] 0..1 (sRGB)
 //   CLUB_SPECS, clubSpec(club | id | kind, heightM) -> {id, kind, head, len, lie, loft, ...}
 //   bodyDims(look) -> proportions, rest joints (Float64Array BONE_COUNT*3), segment lengths and
@@ -282,6 +284,52 @@ export function randomLook(rng = Math.random) {
     gloveColor: pick(rng, ['white', 'white', 'white', 'black', 'navy']),
     swing: pick(rng, OPTIONS.swing),
   });
+}
+
+// ------------------------------------------------------------------ the player's saved look
+// localStorage['golf.golfer.v1'] holds the look as JSON. Storage can be missing or throw (private
+// browsing, sandboxed frames, node), so the latest look saved in this session is also kept in
+// memory and wins over the stored copy. `storage` defaults to globalThis.localStorage (tests pass
+// their own {getItem, setItem, removeItem}, or null for memory only).
+export const LOOK_KEY = 'golf.golfer.v1';
+let memLook = null;
+
+function lookStorage() {
+  try {
+    return globalThis.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+// The saved look, normalised (DEFAULT_LOOK when nothing valid is saved).
+export function loadLook(storage = lookStorage()) {
+  if (memLook) return { ...memLook };
+  let v = null;
+  try {
+    const raw = storage ? storage.getItem(LOOK_KEY) : null;
+    v = raw ? JSON.parse(raw) : null;
+  } catch {
+    v = null;
+  }
+  return normalizeLook(v || DEFAULT_LOOK);
+}
+
+// Saves a look (normalised first) and returns it. A failed write keeps the in-memory copy and
+// removes the stored (now stale) one.
+export function saveLook(look, storage = lookStorage()) {
+  const L = normalizeLook(look);
+  memLook = { ...L };
+  try {
+    if (storage) storage.setItem(LOOK_KEY, JSON.stringify(L));
+  } catch {
+    try {
+      storage.removeItem(LOOK_KEY);
+    } catch {
+      /* memory only */
+    }
+  }
+  return L;
 }
 
 export function hexToRgb(hex) {

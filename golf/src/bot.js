@@ -3,6 +3,8 @@
 //
 //   planShot(game, {rng}) -> {clubId, yaw, swing, puttRange?, target, expected, shot}
 //   playBotShot(game, opts) -> game.swing() result plus {plan} (sets club, aim, shot, putt range)
+//   prepareBotShot(game, opts) -> plan (sets club, aim, shot, putt range; no swing: the caller
+//                                swings game.swing(plan.swing), main.js at the golfer's impact)
 //   botDecide(game) -> 'drop' | 'replay' (applies it with game.decide)
 // The rng defaults to one derived from the game state, so a plan is reproducible.
 //
@@ -426,12 +428,19 @@ export function botDecide(game) {
 }
 
 export function playBotShot(game, opts = {}) {
+  const plan = prepareBotShot(game, opts);
+  const r = game.swing(plan.swing);
+  return { ...r, plan };
+}
+
+// Plans the shot and sets it up (club, aim, shot, putt range) without swinging: the caller swings
+// game.swing(plan.swing) later (main.js: when the animated golfer's club reaches the ball).
+export function prepareBotShot(game, opts = {}) {
   const plan = planShot(game, opts);
   game.setClub(plan.clubId);
   game.setAim(plan.yaw);
   game.setShot(plan.shot || 'normal');
   if (plan.puttRange) game.setPuttRange(plan.puttRange);
-  const r = game.swing(plan.swing);
-  return { ...r, plan };
+  return plan;
 }
 
