@@ -97,14 +97,16 @@ export function addressFraming(aspect, { dist = 0, dz = 0, h = null } = {}) {
 // Then the eye height is solved so the ball projects at yBall (in the arc) and the shot's target
 // (`dist` m down the line, `dz` m above the ball's ground) at yTarget, within [hMin, hMax].
 // Putts: the eye height follows the putt length instead (the cup is near; a short putt is seen
-// from lower so ball and cup separate). lat: the golfer's stance centre across the line (m, + =
+// from lower so ball and cup separate), and landscape lets the golfer stand taller (puttHWant: a
+// putter never goes above his waist) so the eye comes in close enough that the putt line is more
+// than a few dozen pixels on the short screen. lat: the golfer's stance centre across the line (m, + =
 // left of it), along: its offset along the line from the ball (m, + toward the target), H: his
 // height (m).
 // Returns {back, h, pitch, yBall, yTarget, dist, F, golferX, shift, below} (golferX: the golfer's
 // NDC x).
 export const GOLFER_FRAME = {
   portrait: { xWant: 0.48, ballMax: 0.32, hWant: 0.74, hMin: 1.45, hMax: 3.6, yBall: -0.6, yTarget: 0.15, puttBall: -0.55 },
-  landscape: { xWant: 0.3, ballMax: 0, hWant: 0.84, hMin: 1.25, hMax: 3.2, yBall: -0.45, yTarget: 0.3, puttBall: -0.45 },
+  landscape: { xWant: 0.3, ballMax: 0, hWant: 0.84, hMin: 1.25, hMax: 3.2, yBall: -0.45, yTarget: 0.3, puttBall: -0.45, puttHWant: 1.3 },
 };
 export function golferFraming(aspect, { dist = 150, dz = 0, lat = 0.75, along = 0, H = 1.8, putt = false } = {}) {
   const T = Math.tan(fovForAspect(aspect) / 2);
@@ -114,7 +116,8 @@ export function golferFraming(aspect, { dist = 150, dz = 0, lat = 0.75, along = 
   const L = Math.max(0.3, Math.abs(lat));
   const side = lat < 0 ? -1 : 1;
   // Eye-to-golfer distance: golfer and ball fit side by side, and he is no taller than hWant.
-  const F = Math.max(L / ((K.xWant + K.ballMax) * T * aspect), (H + 0.4) / (K.hWant * T), 2.6);
+  const hWant = (putt && K.puttHWant) || K.hWant;
+  const F = Math.max(L / ((K.xWant + K.ballMax) * T * aspect), (H + 0.4) / (hWant * T), 2.6);
   const sep = L / F / (T * aspect);
   const shift = sep > K.xWant ? side * (sep - K.xWant) : 0;
   const back = Math.max(2.2, F - along);

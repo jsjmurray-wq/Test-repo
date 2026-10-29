@@ -1768,8 +1768,15 @@ function onOrbit(dyaw) {
 }
 
 // Slope tags (putting): the cup's while lining up, the ball's and the cup's in Read; each a little
-// off its point so the hole itself stays clear, with an arrow pointing downhill on screen.
+// off its point so the hole itself stays clear, with an arrow pointing downhill on screen. Each
+// tag takes the first of its spots that keeps clear of the preview's stop ring, the ball, the cup
+// and the Read camera bar; with none clear it is left out rather than drawn over them.
 const _tagSlope = { pct: 0, downYaw: 0 };
+const TAG_HW = 34; // half a tag's box (CSS px, a little over its 62 x 21)
+const TAG_HH = 12;
+const CUP_TAG_SPOTS = [[58, -12], [-58, -12], [0, -36], [58, 20], [-58, 20]];
+const BALL_TAG_SPOTS = [[0, 30], [0, -32], [62, 0], [-62, 0]];
+const _tagBar = { at: -1e9, top: Infinity };
 function updateSlopeTags(g) {
   const ui = app.ui;
   if (g.phase !== 'address' || !g.isPutt || (app.view !== 'read' && app.view !== 'play')) {
@@ -1779,21 +1786,54 @@ function updateSlopeTags(g) {
   const t = g.terrain;
   const r = app.renderer;
   const list = [];
-  const add = (x, y, dx, dy) => {
+  // Boxes a tag must not cover: [sx, sy, half width, half height] (px, a tag's own half size added).
+  const avoid = [];
+  const keep = (x, y, z, pad) => {
+    const p = r.project(x, y, z);
+    if (p.visible) avoid.push([p.sx, p.sy, pad, pad]);
+  };
+  const b = g.state.hole.ball;
+  const c = t.cup;
+  keep(b.x, b.y, b.z, 8);
+  keep(c.x, c.y, t.heightAt(c.x, c.y), 6);
+  if (aid.pv && aid.pv.kind === 'putt' && aid.pvCount > 1) {
+    const f = aid.pv.final;
+    keep(f.x, f.y, t.heightAt(f.x, f.y), 14);
+    const k = (aid.pvCount - 1) * 3; // the ring sits on the shown line's end (partial lines)
+    keep(aid.pvBuf[k], aid.pvBuf[k + 1], aid.pvBuf[k + 2], 14);
+  }
+  // The Read camera bar's top edge (re-measured twice a second; Infinity when hidden).
+  let barTop = Infinity;
+  if (app.view === 'read' && ui.el.readCams) {
+    const now = performance.now();
+    if (now - _tagBar.at > 500) {
+      const q = ui.el.readCams.getBoundingClientRect();
+      _tagBar.top = q.height > 0 ? q.top : Infinity;
+      _tagBar.at = now;
+    }
+    barTop = _tagBar.top;
+  }
+  const clear = (x, y) => {
+    if (y + TAG_HH > barTop - 4) return false;
+    for (const [px, py, hw, hh] of avoid) if (Math.abs(px - x) < TAG_HW + hw && Math.abs(py - y) < TAG_HH + hh) return false;
+    return true;
+  };
+  const add = (x, y, spots) => {
     const z = t.heightAt(x, y);
     const p = r.project(x, y, z);
     if (!p.visible || p.sx < 0 || p.sy < 0 || p.sx > app.cssW || p.sy > app.cssH) return;
+    const spot = spots.find(([dx, dy]) => clear(p.sx + dx, p.sy + dy));
+    if (!spot) return;
     const s = slopeAt(t, x, y, _tagSlope);
     const q = r.project(x + Math.cos(s.downYaw) * 0.6, y + Math.sin(s.downYaw) * 0.6, z - (s.pct / 100) * 0.6);
     const angle = Math.atan2(q.sy - p.sy, q.sx - p.sx);
-    list.push({ x: p.sx + dx, y: p.sy + dy, text: `${s.pct < 10 ? s.pct.toFixed(1) : Math.round(s.pct)}%`, angle, band: slopeBand(s.pct) });
+    const tx = p.sx + spot[0];
+    const ty = p.sy + spot[1];
+    list.push({ x: tx, y: ty, text: `${s.pct < 10 ? s.pct.toFixed(1) : Math.round(s.pct)}%`, angle, band: slopeBand(s.pct) });
+    avoid.push([tx, ty, TAG_HW, TAG_HH]); // tags do not cover each other
   };
-  const c = t.cup;
-  add(c.x, c.y, 58, -12);
-  if (app.view === 'read') {
-    const b = g.state.hole.ball;
-    add(b.x, b.y, 0, 30);
-  }
+  add(c.x, c.y, CUP_TAG_SPOTS);
+  if (app.view === 'read') add(b.x, b.y, BALL_TAG_SPOTS);
   ui.setSlopeTags(list);
 }
 

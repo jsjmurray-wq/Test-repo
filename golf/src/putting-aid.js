@@ -10,7 +10,8 @@
 //   then checked with the real cup. The pace finishes `past` m beyond the hole (0.4: firm enough
 //   to hold its line, the pace good putters aim for). PuttReader runs one simulation per step(),
 //   so main.js spreads a read over frames (at most one simulation per frame with the preview).
-// - readText: "Breaks ~1 ft R→L", "Uphill 8 in", "Plays 21 ft", "Aim 2 cups right".
+// - readText: "Breaks ~9 in R→L", "Uphill 8 in", "Plays 21 ft", "Aim 2 cups right" (the break is
+//   the aim's offset at the hole, so the two always agree).
 // - slopeAt / slopeBand / SLOPE_COLORS: steepness in percent and its colour band.
 // - PreviewThrottle: when to run the next preview simulation as the aim or the power moves.
 //
@@ -362,17 +363,20 @@ export function fmtPuttLen(m, units) {
 
 // The read in words. units 'yd' | 'm'; opts.showAim false (Pro) leaves out the break and the aim.
 // Returns {breakText, slopeText, playsText, aimText, line1, line2}.
+// The break is told as the aim: how far outside the hole to start it (aimOffset), the number a
+// golfer means by "breaks 6 in" (breakLat, the line's widest bulge, is smaller and is not shown).
+// "Straight" exactly when the aim rounds to the hole.
 export function readText(read, units = 'yd', { showAim = true } = {}) {
-  const bl = read.breakLat;
-  const straight = Math.abs(bl) < 0.03;
-  const breakText = straight ? 'Straight' : `Breaks ~${fmtSmall(bl, units)} ${bl > 0 ? 'R→L' : 'L→R'}`;
+  const ao = read.aimOffset;
+  const cups = Math.abs(ao) / CUP_D;
+  const straight = cups < 0.25;
+  const breakText = straight ? 'Straight' : `Breaks ~${fmtSmall(ao, units)} ${ao > 0 ? 'R→L' : 'L→R'}`;
   const dz = read.dz;
   const slopeText = Math.abs(dz) < 0.015 ? 'Level' : `${dz > 0 ? 'Uphill' : 'Downhill'} ${fmtSmall(dz, units)}`;
   const playsText = `Plays ${fmtPuttLen(read.plays, units)}`;
-  const cups = Math.abs(read.aimOffset) / CUP_D;
-  const side = read.aimOffset > 0 ? 'right' : 'left';
+  const side = ao > 0 ? 'right' : 'left';
   let aimText;
-  if (cups < 0.25) aimText = 'Aim at the hole';
+  if (straight) aimText = 'Aim at the hole';
   else if (cups <= 6) {
     const c = Math.max(0.5, half(cups));
     aimText = `Aim ${halves(c)} cup${c > 1 ? 's' : ''} ${side}`;

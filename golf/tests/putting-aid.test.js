@@ -238,6 +238,26 @@ test('units: inches and feet in yards mode, centimetres and metres in metres mod
   assert.equal(readText({ ...base, aimOffset: 0.01 }, 'yd').aimText, 'Aim at the hole');
 });
 
+test('read words: the break and the aim are one number; "Straight" only when the aim is the hole', () => {
+  // The line bulges 0.17 m but must start 0.48 m right: the card says ~1½ ft and 4½ cups, not 7 in.
+  const tx = readText({ breakLat: 0.168, aimOffset: 0.484, dz: 0, plays: 4 }, 'yd');
+  assert.equal(tx.breakText, 'Breaks ~1½ ft R→L');
+  assert.equal(tx.aimText, 'Aim 4½ cups right');
+  const left = readText({ breakLat: -0.154, aimOffset: -0.431, dz: 0, plays: 4 }, 'm');
+  assert.equal(left.breakText, 'Breaks ~43 cm L→R');
+  assert.match(left.aimText, /left$/);
+  // A tiny bulge with a half-cup aim is not "Straight"; a bulge with the aim on the hole is.
+  assert.match(readText({ breakLat: 0.01, aimOffset: 0.05, dz: -0.1, plays: 4 }).breakText, /^Breaks ~2 in R→L$/);
+  const s = readText({ breakLat: 0.05, aimOffset: 0.008, dz: 0, plays: 4 });
+  assert.equal(s.breakText, 'Straight');
+  assert.equal(s.aimText, 'Aim at the hole');
+  for (const t of [plane(0, -0.02), plane(0.01, 0.025), plane(-0.012, -0.01), plane(0.02, 0)]) {
+    const { r, tx: w } = readOn(t);
+    assert.equal(w.breakText === 'Straight', w.aimText === 'Aim at the hole', `${w.breakText} / ${w.aimText}`);
+    if (w.breakText !== 'Straight') assert.equal(/R→L/.test(w.breakText), r.aimOffset > 0);
+  }
+});
+
 test('notch power and range: the read pace over the range, a range that fits it', () => {
   assert.equal(puttNotchPower({ F: 6 }, 12), 0.5);
   assert.equal(puttNotchPower({ F: 40 }, 30), null);

@@ -1516,7 +1516,9 @@ slopeBall, slopeCup ({pct, downYaw}), d, sims}`. When built: 145/145 sampled put
 4.3 simulations on average (at most 6), at most 37 ms per read in node; 9 m putts on 3–3.5% synthetic planes in ≤ 14.
 
 **Words** (`readText(read, units, {showAim})` → `{breakText, slopeText, playsText, aimText, line1, line2}`): "Breaks ~4
-in L→R" ("Straight" under 3 cm), "Uphill 8 in" / "Downhill 5 cm" / "Level" (under 1.5 cm), "Plays 21 ft" / "Plays 6.4
+in L→R", told from `aimOffset` (how far outside the hole to start it, what a golfer means by the break; the line's
+bulge `breakLat` is about a third of that and is not shown), so break and aim are one number on the card; "Straight"
+exactly when the aim reads "Aim at the hole" (under a quarter cup), "Uphill 8 in" / "Downhill 5 cm" / "Level" (under 1.5 cm), "Plays 21 ft" / "Plays 6.4
 m", "Aim 2 cups right" (one cup = 108 mm, in halves; "Aim at the hole" under a quarter; beyond six cups in ft or m).
 `line1` = "Breaks ~1 ft R→L · Uphill, plays 21 ft", `line2` = the aim. Pro (`showAim: false`): "Uphill 8 in · Plays
 21 ft" and no aim. `fmtSmall(m, units)` (in / ft with halves, cm / m), `fmtPuttLen`.
@@ -1570,7 +1572,10 @@ The flagstick is hidden behind the hole (the cup marks it).
 putt toasts below it), `#read-cams` (Behind ball / Behind hole / Overhead, emits `'read-cam'` with the view; active
 `aria-pressed`; `ui.setReadCam(v)`), two `.slope-tag`s (`ui.setSlopeTags([{x, y, text, angle, band}])`: the cup's
 while lining up, the ball's and the cup's in Read, off to the side of their point, an arrow pointing downhill on
-screen, band-coloured), the settings row "Putt preview: Auto / Full / Part / Off" (`puttAid`, default 'auto', filled
+screen, band-coloured; main.js `updateSlopeTags` gives each the first of its spots (cup: right, left, above, below
+right, below left; ball: below, above, right, left) whose box keeps clear of the preview's stop ring (`pv.final` and
+the shown line's end), the ball, the cup, the other tag and the top of `#read-cams` (measured twice a second), and
+leaves it out when none is), the settings row "Putt preview: Auto / Full / Part / Off" (`puttAid`, default 'auto', filled
 in for old settings blobs) and the How to play line.
 
 **Chip preview**: no putter, not on the green, `lie.greenDist ≤ 40`, level not off: the shot at the gauge power
@@ -1886,7 +1891,9 @@ x, up to 0.32 toward the ball's side) so he sits about 0.48 NDC to his side (lef
 third for a left-hander) with the ball still in the swing arc; landscape keeps the pad shift (the ball at the pad
 centre, NDC x 0.6) and he stands beside it. Then the eye height is solved (bisection, within 1.45–3.6 m portrait,
 1.25–3.2 m landscape) for the ball at NDC y −0.6 / −0.45 and the target (`ctx.carry` down the line, ≤ cup + 10 m)
-at +0.15 / +0.3. Putts: h = 1.35 + 0.05·d (≤ 2.6 m), the ball at −0.55 / −0.45. `CameraRig` uses it for `address`
+at +0.15 / +0.3. Putts: h = 1.35 + 0.05·d (≤ 2.6 m), the ball at −0.55 / −0.45, and landscape uses
+`puttHWant` 1.3 instead of `hWant` (a putter stays below his waist, so he may stand taller on the short screen): the
+eye comes in from 7.2 m to 4.7 m and a 7 m putt spans about 110 px instead of 60 at 852 × 393. `CameraRig` uses it for `address`
 and `putt` whenever `ctx.golfer` is set (`_golferGoal`: the eye ≥ 1 m, putts 0.3 m, above the ground behind the
 ball with the pitch re-solved for the height it ends at; a ridge hiding the target lifts it 0.75 m at a time;
 `rig.framing.golfer` = true); without it the version 1 framing is unchanged (tests). Measured: driver 4.4 m back,
