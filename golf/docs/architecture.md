@@ -1755,9 +1755,9 @@ low: they rise into impact), shaft lean by club (irons 4° hands-ahead, driver �
 (33° driver … 40° wedges, 44° putter) unless the arms would hang outside 6°–29° forward (driver 30°; then the hinge moves
 toward the band), and the stance distance solved so the lead wrist is 0.965 of the arm's reach (putts 0.84, soft
 elbows). **P7 impact** is solved: the club's impact point exactly on the ball, lie +3.5°, shaft lean (irons 9°,
-wedges 11°, woods 4°, driver −1° up, putter 3°), hips open 39° and 9–10 cm toward the target (woods 6–8 cm), shoulders
+wedges 11°, woods 4°, driver −1° up, putter 3°), hips open 39° and about 9.7 cm toward the target of their address spot (woods and driver 8.5–9 cm), shoulders
 open 13°, trail heel up; the side bend is solved so the head stays at its address spot along the line (0.4 cm
-behind it; driver 2.4, woods 1.6 cm), the hinge so the lead arm is straight, and if the trail hand cannot reach with
+behind it; driver 2.4, woods 1.4, hybrid 1 cm; for 1.8 m), the hinge so the lead arm is straight, and if the trail hand cannot reach with
 a moderate clavicle turn (≤ 0.25 rad) and no club give, the shoulders open further (≤ 17° more: punch, stinger) and
 then the trail side bends lower. **P2**
 (shaft parallel back), **P3** (lead arm parallel), **P4** top (shoulders 93°, hips 44°, club parallel on line),

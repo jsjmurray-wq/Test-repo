@@ -54,6 +54,8 @@
 //       (input.js onTarget: the same width under the thumb anywhere on the arc).
 //   ui.setTarget(power | null)   the target notch on the arc (the power that reaches the pin or
 //       the aim point, from main.js); it shows dimmed while idle too. null hides it.
+//   ui.setGolferBox({x0, y0, x1, y1} | null)   the golfer's body on screen (CSS px): the arc fades
+//       where it crosses him (section 9.7); a left-hander's arc is mirrored (style.css).
 //   ui.setHint(text | null)                       pad hint (null = default for full/putt and the
 //       swing control: swipe 'Drag down, then swipe up', tap 'Tap to start · tap again to hit')
 //   ui.setControls({phase, putt, canRead, read, map, puttRange})   all optional, merge:

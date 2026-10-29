@@ -1039,6 +1039,7 @@ async function golferPlay(page, tag, gl) {
   // launches nothing more. (Swipes: their speeds come from the event times, so a slow, loaded
   // SwiftShader cannot turn them into something else.)
   await page.evaluate(() => window.__golf.debug.freeze(true));
+  const pen0 = await page.evaluate(() => window.__golf.game.state.hole.penalties || 0);
   pad = await page.evaluate(() => window.__golf.debug.padRect());
   const fx = pad.x + pad.w * 0.5;
   const fy = pad.y + pad.h * 0.2;
@@ -1058,7 +1059,9 @@ async function golferPlay(page, tag, gl) {
   await page.evaluate(() => window.__golf.debug.freeze(false));
   await golferResolve(page, 'the paused swing');
   const after = await state(page);
-  check(after.strokes === st2.strokes + 1 || ['holed', 'scorecard'].includes(after.phase), `golfer: still one stroke after the animation caught up (${after.strokes})`);
+  // (A penalty taken on the way, e.g. a water drop, adds its stroke: counted apart.)
+  const pen = await page.evaluate(() => window.__golf.game.state.hole.penalties || 0);
+  check(after.strokes - pen === st2.strokes + 1 - pen0 || ['holed', 'scorecard'].includes(after.phase), `golfer: still one stroke after the animation caught up (${after.strokes}, penalties ${pen0} -> ${pen})`);
   if (after.phase !== 'address') return;
 
   // ---- a left-hander: the mirror image, on the other side of the ball
