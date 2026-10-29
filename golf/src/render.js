@@ -14,6 +14,8 @@
 //   (and any hole with sea water) get a sea out to the horizon: the skirt falls below the sea level
 //   toward it (seaSetup in meshes.js), an annulus of sea joins the hole's water, and the sky shader
 //   draws the open sea beyond the far plane.
+// - The golfer (scene.golfer, section 9): one rigidly skinned mesh (2 draw calls with its ground
+//   shadow); buffers are rebuilt when the mesh (look, club) changes and after a context loss.
 // - Every GPU resource is rebuilt from CPU copies on webglcontextrestored.
 // - Resolution: DPR capped at 2 times an adaptive renderScale (0.6..1) driven by the frame interval.
 
@@ -28,9 +30,11 @@ import { bakeTerrainColor, bakeClouds, bakeNoise, bakeWaterDepth } from './bake.
 import {
   SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, WATER_VS, WATER_FS, TREE_VS, TREE_FS, PROP_VS, PROP_FS,
   FLAG_VS, FLAG_FS, OVERLAY_VS, OVERLAY_FS, READ_VS, READ_FS, OBJ_VS, OBJ_FS,
+  GOLFER_VS, GOLFER_FS, GOLFER_MASK_VS, GOLFER_MASK_FS, GOLFER_GROUND_VS, GOLFER_GROUND_FS, GOLFER_BONES,
 } from './shaders.js';
 import { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R, SURF } from './constants.js';
 import { themeFor } from './themes.js';
+import { buildGolferMesh } from './golfer-mesh.js';
 
 const EXPOSURE = 1.0;
 
@@ -99,6 +103,9 @@ export class Renderer {
     this._trailBuf = new Float32Array(400 * 12 + 24);
     this._aimBuf = new Float32Array(4096);
     this._quad = new Float32Array(24);
+    this._golferBones = new Float32Array(GOLFER_BONES * 16);
+    this._golferMesh = null; // {key, mesh} built from scene.golfer.look + club
+    this.golferGL = null;
     const ctx = createContext(canvas, { test, forceGL1: gl1 });
     this.ok = !!ctx;
     if (!ctx) return;
@@ -138,7 +145,14 @@ export class Renderer {
       overlay: createProgram(gl, OVERLAY_VS, OVERLAY_FS),
       read: createProgram(gl, READ_VS, READ_FS),
       obj: createProgram(gl, OBJ_VS, OBJ_FS),
+      golfer: createProgram(gl, GOLFER_VS, GOLFER_FS),
+      golferMask: createProgram(gl, GOLFER_MASK_VS, GOLFER_MASK_FS),
+      golferGround: createProgram(gl, GOLFER_GROUND_VS, GOLFER_GROUND_FS),
     };
+    // Golfer buffers are rebuilt on the next draw (new context or first use); the shadow mask is
+    // a small offscreen texture.
+    this.golferGL = null;
+    this._shadowMask = this._makeMask(256);
     // Static meshes (built once on the CPU and kept for restore).
     if (!this.static) {
       this.static = {
@@ -743,6 +757,10 @@ export class Renderer {
       gl.enable(gl.CULL_FACE);
     }
 
+    // ---- the golfer (opaque, skinned)
+    const golf = this._golferPrep(scene.golfer);
+    if (golf) this._drawGolfer(golf, frame);
+
     // ---- ball (icosphere when it covers its minimum size, else a billboard after the sky).
     // scene.ball.minPx (CSS px radius, default 2.5) keeps it readable from a raised camera.
     const ball = scene.ball;
@@ -825,6 +843,9 @@ export class Renderer {
     gl.enable(gl.POLYGON_OFFSET_FILL);
     gl.polygonOffset(-1, -4);
     const op = this.P.overlay;
+
+    // Golfer's ground shadow (a blurred mask of the flattened figure).
+    if (golf) this._drawGolferShadow(golf, frame, sun);
 
     // Blob shadow under the ball: darker and tighter when the ball is on the ground.
     if (ball && ball.visible !== false && T) {
@@ -922,6 +943,177 @@ export class Renderer {
     gl.disable(gl.BLEND);
     const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     st.ms += (t1 - now - st.ms) * 0.1;
+  }
+
+  // ------------------------------------------------------------------ golfer
+  // scene.golfer = {visible, mesh | {look, club}, bones: Float32Array (skin matrices, world),
+  // alpha}. Returns the draw state or null.
+  _golferPrep(gs) {
+    if (!gs || gs.visible === false || !gs.bones) return null;
+    const alpha = gs.alpha == null ? 1 : gs.alpha;
+    if (alpha <= 0.004) return null;
+    let mesh = gs.mesh;
+    if (!mesh) {
+      const key = JSON.stringify([gs.look || null, gs.club || '7i']);
+      if (!this._golferMesh || this._golferMesh.key !== key) this._golferMesh = { key, mesh: buildGolferMesh(gs.look, gs.club || '7i') };
+      mesh = this._golferMesh.mesh;
+    }
+    const G = this._golferUpload(mesh);
+    if (!G) return null;
+    // Camera-relative skin matrices; a mirrored figure (left-hander) flips the winding.
+    const src = gs.bones;
+    const b = this._golferBones;
+    const n = Math.min(src.length, b.length);
+    for (let i = 0; i < n; i++) b[i] = src[i];
+    const e = this.eye;
+    for (let o = 0; o + 15 < n; o += 16) {
+      b[o + 12] -= e.x;
+      b[o + 13] -= e.y;
+      b[o + 14] -= e.z;
+    }
+    const det = b[0] * (b[5] * b[10] - b[6] * b[9]) - b[4] * (b[1] * b[10] - b[2] * b[9]) + b[8] * (b[1] * b[6] - b[2] * b[5]);
+    // Ground under the golfer: the pelvis (mesh.center) carried by the root's skin matrix.
+    const c = mesh.center || [0, 0, 1];
+    const wx = src[0] * c[0] + src[4] * c[1] + src[8] * c[2] + src[12];
+    const wy = src[1] * c[0] + src[5] * c[1] + src[9] * c[2] + src[13];
+    return { G, alpha, mirror: det < 0, wx, wy, fadeNear: gs.fadeNear !== false };
+  }
+
+  _golferUpload(mesh) {
+    const gl = this.gl;
+    if (this.golferGL && this.golferGL.mesh === mesh) return this.golferGL;
+    if (this.golferGL) for (const k of ['pos', 'nrm', 'col', 'bm', 'idx']) gl.deleteBuffer(this.golferGL[k]);
+    const nv = mesh.pos.length / 3;
+    const bm = new Float32Array(nv * 2);
+    for (let i = 0; i < nv; i++) {
+      bm[i * 2] = mesh.bone[i];
+      bm[i * 2 + 1] = mesh.mat ? mesh.mat[i] : 0;
+    }
+    this.golferGL = {
+      mesh,
+      pos: makeBuffer(gl, mesh.pos),
+      nrm: makeBuffer(gl, mesh.nrm),
+      col: makeBuffer(gl, mesh.col),
+      bm: makeBuffer(gl, bm),
+      idx: makeBuffer(gl, mesh.idx, gl.ELEMENT_ARRAY_BUFFER),
+      count: mesh.idx.length,
+    };
+    return this.golferGL;
+  }
+
+  _drawGolfer(st, frame) {
+    const gl = this.gl;
+    const p = this.P.golfer;
+    const u = this._use(p, frame);
+    gl.uniformMatrix4fv(u.uBones, false, this._golferBones);
+    gl.uniform1f(u.uAlpha, st.alpha);
+    gl.uniform1f(u.uNear, st.fadeNear ? 1 : 0);
+    const A = this.attribs;
+    A.bind(p.a.aPos, st.G.pos, 3);
+    A.bind(p.a.aNrm, st.G.nrm, 3);
+    A.bind(p.a.aCol, st.G.col, 3);
+    A.bind(p.a.aBM, st.G.bm, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
+    gl.enable(gl.CULL_FACE);
+    if (st.mirror) gl.frontFace(gl.CW);
+    this._drawElements(st.G.count);
+    gl.frontFace(gl.CCW);
+  }
+
+  _makeMask(size) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok ? { tex, fb, size } : null;
+  }
+
+  // The golfer's sun shadow: the flattened figure rendered into the mask over a square of ground
+  // under and beyond the feet (away from the sun), then laid on the ground blurred.
+  _drawGolferShadow(st, frame, sun) {
+    const M = this._shadowMask;
+    if (!M) return;
+    const gl = this.gl;
+    const T = this.terrain;
+    const e = this.eye;
+    let gz = 0;
+    let n = { x: 0, y: 0, z: 1 };
+    if (T) {
+      gz = T.heightAt(st.wx, st.wy);
+      if (T.normalAt) n = T.normalAt(st.wx, st.wy);
+    }
+    const alpha = 0.42 * st.alpha * Math.min(1, Math.max(0, sun.z * 2.5));
+    if (alpha < 0.004) return;
+    // Shadow length of a ~2.4 m figure-with-club; the square reaches that far from the feet.
+    const sh = Math.hypot(sun.x, sun.y);
+    const len = Math.min(8, (2.4 * sh) / Math.max(0.2, sun.z));
+    const half = 1.4 + 0.5 * len;
+    const ox = sh > 1e-4 ? (-sun.x / sh) * len * 0.5 : 0;
+    const oy = sh > 1e-4 ? (-sun.y / sh) * len * 0.5 : 0;
+    const cx = st.wx + ox;
+    const cy = st.wy + oy;
+    const cz = gz - (n.x * ox + n.y * oy) / (n.z || 1) + 0.02;
+    // Quad (also defines the mask axes).
+    this._groundQuad(cx, cy, cz, n, half);
+    const q = this._quad;
+    // Axes from the quad's corners: a = (corner1 - corner0) / 2r, b = (corner2 - corner0) / 2r.
+    const ax = (q[6] - q[0]) / (2 * half);
+    const ay = (q[7] - q[1]) / (2 * half);
+    const az = (q[8] - q[2]) / (2 * half);
+    const bx = (q[12] - q[0]) / (2 * half);
+    const by = (q[13] - q[1]) / (2 * half);
+    const bz = (q[14] - q[2]) / (2 * half);
+    // ---- mask pass
+    gl.bindFramebuffer(gl.FRAMEBUFFER, M.fb);
+    gl.viewport(0, 0, M.size, M.size);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    const pm = this.P.golferMask;
+    let u = this._use(pm, frame);
+    gl.uniformMatrix4fv(u.uBones, false, this._golferBones);
+    const d = -(n.x * (st.wx - e.x) + n.y * (st.wy - e.y) + n.z * (gz - e.z));
+    gl.uniform4f(u.uPlane, n.x, n.y, n.z, d);
+    gl.uniform3f(u.uSun, sun.x, sun.y, sun.z);
+    gl.uniform3f(u.uC, cx - e.x, cy - e.y, cz - e.z);
+    gl.uniform3f(u.uE1, ax, ay, az);
+    gl.uniform3f(u.uE2, bx, by, bz);
+    gl.uniform1f(u.uInvHalf, 1 / half);
+    const A = this.attribs;
+    A.bind(pm.a.aPos, st.G.pos, 3);
+    A.bind(pm.a.aBM, st.G.bm, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
+    this._drawElements(st.G.count);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    // ---- ground quad
+    const pg = this.P.golferGround;
+    u = this._use(pg, frame);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, M.tex);
+    gl.uniform1i(u.uMask, 0);
+    gl.uniform1f(u.uAlpha, alpha);
+    gl.uniform2f(u.uTexel, 1.2 / M.size, 1.2 / M.size);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.G.quad);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._quad);
+    A.bind(pg.a.aPos, this.G.quad, 3, 24, 0);
+    A.bind(pg.a.aMisc, this.G.quad, 3, 24, 12);
+    this._drawStrip(4);
   }
 
   _bindOverlay(buffer, data) {

@@ -7,6 +7,8 @@
 // projection * view-rotation only. Large world coordinates therefore never meet the view
 // translation, which keeps far geometry stable on mobile GPUs.
 
+import { BONE_COUNT } from './golfer.js';
+
 // Shared fragment chunk: sky model, fog and tone mapping. Every colour constant of the look comes
 // from the course theme (themes.js) through uniforms; parkland's values are the shipped constants.
 const COMMON = `
@@ -990,4 +992,142 @@ void main() {
     a = max(a, chev * 0.85);
   }
   gl_FragColor = vec4(c, a * mask * uAlpha);
+}`;
+
+// ---------------------------------------------------------------- golfer (rigid skinning)
+// One merged mesh (golfer-mesh.js); each vertex follows one bone's skin matrix (uBones, camera-
+// relative translation; GOLFER_BONES mat4s = 80 vertex uniform vectors, within WebGL1's 128).
+// aBM = (bone index, material): 0 cloth, 1 skin, 2 hair, 3 metal, 4 gloss, 5 rubber/leather,
+// 6 eyes. Lit like the rest of the scene (theme sun, hemisphere ambient, fog) plus a soft
+// sky-tinted rim light; skin wraps the light with a warm terminator. uAlpha fades the figure
+// (dithered, no sorting), and so does a camera within ~1 m.
+export const GOLFER_BONES = BONE_COUNT;
+export const GOLFER_VS = `
+attribute vec3 aPos;
+attribute vec3 aNrm;
+attribute vec3 aCol;
+attribute vec2 aBM;
+uniform mat4 uVP;
+uniform mat4 uBones[${BONE_COUNT}];
+varying vec3 vRel;
+varying vec3 vN;
+varying vec3 vCol;
+varying float vMat;
+void main() {
+  mat4 m = uBones[int(aBM.x + 0.5)];
+  vec4 p = m * vec4(aPos, 1.0);
+  vRel = p.xyz;
+  vN = (m * vec4(aNrm, 0.0)).xyz;
+  vCol = aCol;
+  vMat = aBM.y;
+  gl_Position = uVP * vec4(vRel, 1.0);
+}`;
+
+export const GOLFER_FS = `${COMMON}
+uniform float uAlpha;
+uniform float uNear;     // 1: fade out within ~1 m of the camera, 0: never
+varying vec3 vRel;
+varying vec3 vN;
+varying vec3 vCol;
+varying float vMat;
+void main() {
+  float dist = length(vRel);
+  float a = uAlpha * mix(1.0, smoothstep(0.45, 1.05, dist), uNear);
+  if (a < 0.999 && a < bayer4(gl_FragCoord.xy) * 0.96 + 0.02) discard;
+  vec3 v = vRel / max(dist, 1e-4);
+  vec3 n = normalize(vN);
+  if (!gl_FrontFacing) n = -n;
+  float m = vMat;
+  bool skin = m > 0.5 && m < 1.5;
+  bool hair = m > 1.5 && m < 2.5;
+  bool metal = m > 2.5 && m < 3.5;
+  bool gloss = m > 3.5 && m < 4.5;
+  bool rubber = m > 4.5 && m < 5.5;
+  bool eye = m > 5.5;
+  vec3 alb = toLin(vCol);
+  float ndl = dot(n, uSun);
+  float wrap = skin ? 0.4 : hair ? 0.25 : 0.18;
+  float diff = max((ndl + wrap) / (1.0 + wrap), 0.0);
+  vec3 h = normalize(uSun - v);
+  float nh = max(dot(n, h), 0.0);
+  float sp = skin ? pow(nh, 22.0) * 0.06 : hair ? pow(nh, 28.0) * 0.09 : metal ? pow(nh, 70.0) * 1.4
+           : gloss ? pow(nh, 90.0) * 0.7 : rubber ? pow(nh, 10.0) * 0.03 : eye ? pow(nh, 140.0) * 0.8 : pow(nh, 10.0) * 0.035;
+  sp *= smoothstep(-0.1, 0.15, ndl);
+  vec3 amb = ambient(n);
+  vec3 c;
+  if (metal) {
+    vec3 r = reflect(v, n);
+    vec3 env = skyCol(normalize(vec3(r.xy, max(r.z, -0.25))));
+    env = mix(env, uAmbGround * 2.0, smoothstep(0.0, -0.3, r.z));
+    c = alb * (uSunCol * diff * 0.35 + amb * 0.5) + env * alb * 0.9 + uSunCol * sp;
+  } else {
+    // Soft cloth sheen at grazing angles; a warm terminator on skin.
+    float fres = pow(1.0 - max(dot(n, -v), 0.0), 4.0);
+    vec3 sss = skin ? vec3(0.28, 0.08, 0.04) * smoothstep(-0.35, 0.1, ndl) * (1.0 - smoothstep(0.1, 0.6, ndl)) : vec3(0.0);
+    c = alb * (uSunCol * (diff + sss) + amb * 1.3) + uSunCol * sp;
+    if (!skin && !eye) c += alb * amb * fres * 0.6;
+  }
+  // Rim: a cool sky light from behind keeps the silhouette readable against the ground.
+  float rim = pow(1.0 - max(dot(n, -v), 0.0), 3.0) * (0.55 + 0.45 * n.z);
+  c += rim * (uZenith * 0.18 + uSunCol * 0.05) * (metal ? 0.3 : 1.0);
+  c = applyFog(c, vRel);
+  gl_FragColor = vec4(finish(c), 1.0);
+}`;
+
+// Ground shadow of the golfer: the skinned mesh flattened along the sun onto the ground plane
+// under the feet, drawn as white into a small mask texture whose square (centre uC, axes uE1,
+// uE2, half-size 1/uInvHalf; camera-relative) lies on that plane. Overlaps write the same white,
+// so the shadow darkens once; GOLFER_GROUND then lays the blurred mask on the ground.
+export const GOLFER_MASK_VS = `
+attribute vec3 aPos;
+attribute vec2 aBM;
+uniform mat4 uBones[${BONE_COUNT}];
+uniform vec3 uSun;
+uniform vec4 uPlane;
+uniform vec3 uC;
+uniform vec3 uE1;
+uniform vec3 uE2;
+uniform float uInvHalf;
+void main() {
+  vec4 p = uBones[int(aBM.x + 0.5)] * vec4(aPos, 1.0);
+  float hgt = dot(uPlane.xyz, p.xyz) + uPlane.w;
+  float ln = max(dot(uPlane.xyz, uSun), 0.2);
+  vec3 q = p.xyz - uSun * (max(hgt, 0.0) / ln);
+  vec3 r = q - uC;
+  gl_Position = vec4(dot(r, uE1) * uInvHalf, dot(r, uE2) * uInvHalf, 0.0, 1.0);
+}`;
+
+export const GOLFER_MASK_FS = `
+precision mediump float;
+void main() {
+  gl_FragColor = vec4(1.0);
+}`;
+
+export const GOLFER_GROUND_VS = `
+attribute vec3 aPos;
+attribute vec3 aMisc;
+uniform mat4 uVP;
+varying vec2 vUV;
+void main() {
+  vUV = aMisc.xy * 0.5 + 0.5;
+  gl_Position = uVP * vec4(aPos, 1.0);
+}`;
+
+export const GOLFER_GROUND_FS = `
+precision highp float;
+uniform sampler2D uMask;
+uniform float uAlpha;
+uniform vec2 uTexel;
+varying vec2 vUV;
+void main() {
+  vec2 t = uTexel;
+  float s = texture2D(uMask, vUV).r * 0.2;
+  s += (texture2D(uMask, vUV + vec2(t.x, 0.0)).r + texture2D(uMask, vUV - vec2(t.x, 0.0)).r
+      + texture2D(uMask, vUV + vec2(0.0, t.y)).r + texture2D(uMask, vUV - vec2(0.0, t.y)).r) * 0.125;
+  s += (texture2D(uMask, vUV + t).r + texture2D(uMask, vUV - t).r
+      + texture2D(uMask, vUV + vec2(t.x, -t.y)).r + texture2D(uMask, vUV + vec2(-t.x, t.y)).r) * 0.075;
+  float edge = smoothstep(0.0, 0.04, min(min(vUV.x, vUV.y), min(1.0 - vUV.x, 1.0 - vUV.y)));
+  float a = s * uAlpha * edge;
+  if (a < 0.003) discard;
+  gl_FragColor = vec4(0.0, 0.0, 0.0, a);
 }`;
