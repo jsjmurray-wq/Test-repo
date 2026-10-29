@@ -327,6 +327,12 @@ button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
    result toasts go to the top, under the info card. */
 body:not([data-layout="landscape"]) #hud[data-putt="1"] .pad-hint { top: 57%; }
 #hud[data-putt="1"][data-hinted="1"] .pad-hint { opacity: 0; }
+/* The golfer at address (section 9.7; data-golfer = his side of the ball, R or L) stands beside the
+   ball, across the middle of the arc: the idle hint drops to the bottom of the pad, just above the
+   club picker (under his feet); in landscape a right-hander stands left of the arc, so the live
+   readout moves further left, clear of him. */
+body:not([data-layout="landscape"]) #hud:is([data-golfer="R"], [data-golfer="L"])[data-putt="0"] .pad-hint { top: auto; bottom: 78px; transform: translateX(-50%); }
+body[data-layout="landscape"] #hud[data-golfer="R"] .pad-readout { left: calc(50% - var(--arc, 260px) * 0.5 - 112px); }
 /* Left-aligned under the info card and clear of the tool buttons on the right (Read / Map /
    Flyover reach down past it), so a long "LW · 15/22 yd · Straight → push fade" wraps instead. */
 body:not([data-layout="landscape"]) #hud[data-putt="1"] #toast {

@@ -1244,6 +1244,7 @@ const golfer = {
   look: null, // the player's look (golfer.js)
   lookKey: '',
   meshes: new Map(), // `${lookKey}#${club}` -> buildGolferMesh() result (LRU)
+  meshLook: '', // the look of scene.mesh
   key: '', // what he was placed for (ball, aim, club, shot, hand, look); '' = not placed
   placedAt: -1,
   frame: null, // {lat, along, H}: his stance relative to the ball and aim (camera framing)
@@ -1338,7 +1339,10 @@ function golferScene(g) {
   s.visible = true;
   s.alpha = 1;
   s.fadeNear = true;
-  s.mesh = golferMesh(golfer.anim.club);
+  if (!s.mesh || s.mesh.club !== golfer.anim.club || golfer.meshLook !== golfer.lookKey) {
+    s.mesh = golferMesh(golfer.anim.club);
+    golfer.meshLook = golfer.lookKey;
+  }
   s.bones = golfer.anim.bones;
   return s;
 }

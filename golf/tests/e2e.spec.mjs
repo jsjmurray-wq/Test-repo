@@ -894,6 +894,15 @@ async function golferResolve(page, what) {
   check(ok, `golfer: ${what} resolved`);
 }
 
+// Full-swing checks need the ball off the green (on it, a release at the bottom strokes a putt):
+// moved back 60 m down the line from the cup when it is on the green.
+async function offGreen(page) {
+  if (!(await state(page)).putt) return;
+  await page.evaluate(() => window.__golf.debug.placeNearCup(60));
+  await waitFor(page, () => window.__golf.game.phase === 'address' && !window.__golf.game.isPutt && window.__golf.debug.golferState().state === 'address', 5000);
+  await page.waitForTimeout(400);
+}
+
 // The golfer standing at the ball at address on this course: placed, drawn, holding the club.
 async function golferAt(page, where) {
   if (!(await page.evaluate(() => !!(window.__golf.debug && window.__golf.debug.golferState)))) return;
@@ -909,6 +918,7 @@ async function golferAt(page, where) {
 async function golferPlay(page, tag, gl) {
   await golferResolve(page, 'the previous shot');
   if ((await state(page)).phase !== 'address') return;
+  await offGreen(page);
   await page.waitForTimeout(500);
   const isNull = await page.evaluate(() => !!window.__golf.renderer.isNull);
 
@@ -978,6 +988,8 @@ async function golferPlay(page, tag, gl) {
   check(s.placed && s.state === 'address' && s.club === st.clubId && near < 2, `golfer: steps up to the ball for the next shot (${near.toFixed(2)} m, ${s.club})`);
 
   // ---- a cancel (held at the bottom and lifted) eases back to address, no stroke
+  await offGreen(page);
+  st = await state(page);
   pad = await page.evaluate(() => window.__golf.debug.padRect());
   let held = null;
   await swingWithHold(page, pad.x + pad.w * 0.5, pad.y + pad.h * 0.2, Math.min(200, pad.h * 0.3), 'lift', async () => {
