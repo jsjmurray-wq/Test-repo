@@ -262,7 +262,7 @@ function keyDesign(spec, shot) {
   // Spine angle from vertical at address (hinge + upper-back flex), by club.
   const posture = (driver ? 33 : wood ? 35 : head === 'hybrid' ? 36 : putt ? 44 : wedge ? 40 : 38) * D;
   return {
-    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.17 : wood ? 0.13 : putt ? 0.05 : 0.1, angMin: (putt ? -2 : 6) * D, angMax: (putt ? 26 : 24) * D, posture, reach: putt ? 0.84 : 0.965, flex: putt ? 0.14 : 0.06, drop: putt ? 0.022 : 0.036, shiftX: putt ? -0.014 : -0.022 },
+    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.17 : wood ? 0.13 : putt ? 0.05 : 0.1, angMin: (putt ? -2 : 6) * D, angMax: (putt ? 26 : driver ? 30 : 29) * D, posture, reach: putt ? 0.84 : 0.965, flex: putt ? 0.14 : 0.06, drop: putt ? 0.022 : 0.036, shiftX: putt ? -0.014 : -0.022 },
     imp: { lie: putt ? 0 : -0.5 * D, lean: leanImp, face, reach: putt ? 0.84 : 0.995 },
   };
 }

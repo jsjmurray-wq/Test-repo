@@ -65,6 +65,9 @@ metres). Wind shows in mph (or km/h).
 | `camera.js` | `CameraRig`, which produces `{eye, target, up, fovY, near, far}` (pure maths) |
 | `meshes.js` | Geometry builders that return typed arrays; themed objects and the sea (`seaSetup`, §8.3 as built) |
 | `bake.js` | `bakeTerrainColor(terrain, {theme})`, `bakeWaterDepth(terrain)`, `bakeClouds(seed)`, `bakeNoise(seed)` |
+| `golfer.js` | The golfer: skeleton (`BONES`, `B`, `BONE_PARENT`), the LOOK (`DEFAULT_LOOK`, `normalizeLook`, `PRESETS`, `randomLook`, palettes), proportions (`bodyDims`) and club specs (`clubSpec`) (§9) |
+| `golfer-mesh.js` | `buildGolferMesh(look, club)`: one rigidly skinned mesh (§9) |
+| `swing-anim.js` | Poses, FK/IK, `placeGolfer`, `SwingAnimator`: the visible swing (§9) |
 
 DOM and GL modules: `gl.js`, `shaders.js`, `render.js`, `input.js`, `ui.js`, `audio.js`, `main.js`.
 
@@ -555,7 +558,8 @@ export class Renderer {
   debugPixel(sx, sy) -> [r,g,b,a]           // tests: reads back right after draw
 }
 scene = { time, cam:{eye,target,up,fovY,near,far,shiftX?}, ball:{x,y,z,visible,minPx?}, trail:{data:Float32Array([x,y,z]*), count}|null,
-          aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir?, clearView? }
+          aim:{x,y,z,yaw,carry}|null, pin:{visible}, wind:{x,y}, read:{on}, sunDir?, clearView?,
+          golfer?:{visible, mesh | look+club, bones, alpha, fadeNear?} }   // §9.5
 ```
 
 - GLSL 100 (works on WebGL1 and WebGL2), `highp` fragments, camera-relative positions, and
@@ -1418,3 +1422,220 @@ root's `npm test` 159/159.
 
 **Known gaps:** near-field turf is still the 0.5 m bake (soft at 3× up close); the buttes are still silhouettes (no
 geometry); the bot plays the flop only from deep bunkers.
+
+## 9. Golfer (as built)
+
+The user request: "Change the game so you can actually see the golfer hit the shot and you can select what he
+looks like." This stage builds the character: a realistic, smooth low-poly golfer (console-golf style, not a
+cartoon) with a customisable look, a rigidly skinned mesh, a real golf swing driven by the game's swing input,
+and a skinned render pass with a ground shadow. The game wiring (customiser screen, the TV camera behind the
+golfer, calling `strike` from a swipe) is the next stage; `tests/visual/golfer-preview.html` shows the
+character on a real tee. Physics is untouched: the animation is looks only.
+
+Files: `src/golfer.js` (skeleton, look, proportions, clubs), `src/golfer-mesh.js` (mesh), `src/swing-anim.js`
+(poses, IK, placement, animator), the golfer programs in `src/shaders.js` and the pass in `src/render.js`.
+All three new modules are pure.
+
+### 9.1 Frames, skeleton, proportions (`golfer.js`)
+
+- **Golfer frame G**: +X forward (from the golfer toward the ball line), +Y toward the target (the golfer's left
+  for a right-hander), +Z up, origin on the ground at the centre of the stance (between the ankles). For aim
+  direction d a right-hander faces right(d) = d × ẑ and stands on the **left** of the ball looking down the line
+  from behind. A left-hander is the mirror image: G → world is T(origin) · Rz(yaw) · diag(1, −1, 1) with yaw =
+  aimYaw + π/2 (right-hander: aimYaw − π/2, no mirror). Bone names say L/R for the right-handed figure, so `L` is
+  always the lead side (a left-hander's glove is on the right hand).
+- **Bones** (`BONES`, `B`, `BONE_PARENT`, `BONE_COUNT` = 20): pelvis (root), spine, chest, neck, head, clavL,
+  upperArmL, forearmL, handL, clavR, upperArmR, forearmR, handR, thighL, shinL, footL, thighR, shinR, footR, club
+  (child of handL; the trail hand grips the club by IK). Rest pose = G standing upright, arms hanging, every rest
+  rotation the identity; limb segments lie exactly along −Z (shoulder/elbow/wrist and hip/knee/ankle share x, y),
+  so a bone's −Z is its segment and +X the way the joint below bends.
+- **Proportions** `bodyDims(look)` → `{look, H, fem, build, headH, chinZ, hipZ, kneeZ, ankleZ, shZ, shoulderHalf,
+  hipHalf, joints: Float64Array(20*3) rest joint positions, upperArm, forearm, thigh, shin, foot:{toe, heel,
+  ball, width, sole}, hand, grip}`: hip joint 0.52 H, knee 0.283 H, ankle 0.042 H, shoulder joint 0.80 H, upper
+  arm 0.186 H, forearm 0.146 H; the head grows more slowly than the body (0.232 m × (H/1.78)^0.45: 7.7 heads at
+  1.78 m); shoulders 0.112 H half-width (female 0.101), hips 0.05 H (female 0.055); `build` scales shoulders,
+  chest, waist, belly, hips, limbs and neck (slim 0.88–0.96, athletic +6–10% up top and slimmer waist, heavy
+  waist × 1.24 and belly × 1.55).
+- **Grip frames** (`dims.grip`): each hand's bone pose in club space `{rot (Float64Array 3×3), wrist, grip}`: the
+  lead hand's back faces the target, the trail hand sits `gap` (8.8 cm for 1.8 m) lower with its palm toward the
+  target. The hands are modelled gripping and follow the club, so they never leave the grip.
+
+### 9.2 The look (`golfer.js`)
+
+```js
+LOOK = { body:'male'|'female', skin:0..7, height:155..200 (cm), build:'slim'|'regular'|'athletic'|'heavy',
+         hair:'short'|'buzz'|'sidepart'|'curly'|'long'|'ponytail'|'bald', hairColor:'#rrggbb',
+         facialHair:'none'|'stubble'|'moustache'|'beard', sunglasses:bool,
+         headwear:'none'|'cap'|'visor'|'bucket'|'flatcap', hatColor,
+         shirt:'polo'|'striped'|'vest', shirtColor, shirtColor2 (stripes / the polo under the vest),
+         legwear:'trousers'|'shorts', legColor, shoeColor, gloveColor,
+         swing:'classic'|'compact'|'bigfinish'|'smooth' }
+```
+
+- `DEFAULT_LOOK`, `OPTIONS` (lists, menu order; `height: [155, 200]`), `OPTION_NAMES` (display names),
+  palettes `SKIN_TONES` (8 natural tones, fair to deep), `HAIR_COLORS` (10), `CLOTH_COLORS` (20), each
+  `{id, name, hex}`; `hexToRgb(hex)`.
+- `normalizeLook(any)` → a complete valid look from anything (saved data, partial looks, garbage): unknown enums →
+  default, colours accept `#rrggbb` (lower-cased) or a palette id, skin accepts 0..7 or a tone id, height is
+  rounded and clamped (missing: 180 male / 168 female), a female figure has no facial hair, unknown keys dropped.
+  Idempotent. `lookKey(look)` is a stable cache key.
+- `PRESETS` (8: Tour Pro, Lady Pro, Power Hitter, Classic Gent, Weekend Warrior, Rising Star, Links Veteran,
+  Collegiate; 3 female, skin tones 0–7 represented), `presetById(id)`, `randomLook(rng)` (tasteful colour pairs).
+- Swing style is part of the look: Classic; Compact (backswing about 3/4 of Classic, quicker tempo); Big finish
+  (high hands, reverse-C finish); Smooth (slower tempo). Looks only.
+
+**Clubs** `clubSpec(club | id | kind, heightM)` → `{id, kind, head:'driver'|'wood'|'hybrid'|'iron'|'wedge'|'putter',
+len, lie, loft (rad), butt, hosel, toe, up, faceN, sweet, impact, dims}`. `CLUB_SPECS` has the standard lengths
+(driver 45", 3W 43", 5W 42", 4H 40", 5i 38" … LW 35", putter 34") and lies (56° … 64°, putter 71°), fitted to the
+golfer (length ± 4.2% per 10% of height from 1.78 m; lie ± 6° per m). **Club space** (the club bone): origin at the
+lead hand's grip point on the shaft, −Z down the shaft, +X the square (unlofted) face normal, −Y toward the toe.
+`impact` = sweet spot + lofted face normal × ball radius: where the **centre of a ball** struck on the sweet
+spot sits. That point is "the club head" for placement and tests.
+
+### 9.3 Mesh (`golfer-mesh.js`)
+
+`buildGolferMesh(look, club = '7i')` → `{pos, nrm, col, bone, mat, idx, tris, verts, center, height, key, club,
+bones, parts}`: Float32Array positions (bind space = G at rest), unit normals, sRGB vertex colours, a bone index
+per vertex (Float32Array; rigid skinning), a material per vertex (0 cloth, 1 skin, 2 hair, 3 metal, 4 gloss,
+5 rubber/leather, 6 eyes), Uint16Array indices (counter-clockwise outside), `center` = the pelvis rest point,
+`parts` = triangles per part.
+
+- Parts are parametric surfaces (`Geo`: grids with normals averaged over coincident vertices, tubes with
+  superelliptic sections, sweeps along curves, ellipsoids, caps, slabs); limbs overlap at the joints (rounded caps,
+  knee balls under trousers, clavicle shoulder pads) so rigid skinning shows no gaps.
+- **Body**: torso lofted from measured cross-section tables (pelvis/belt, abdomen, chest with pecs or bust),
+  trapezius on the clavicles, neck; arms with deltoids, biceps, elbow; legs with trouser looseness, knees, calves
+  for shorts with socks; golf shoes with soles. **Head**: lofted from a profile table (forehead, brow ridge, nasion,
+  cheekbones, lips, chin, jaw, cranium), eye sockets, a wedge nose, ears, eyes with iris, pupil and lids (a 1 cm
+  opening), brows; female heads have a smaller brow, narrower jaw and fuller lips. **Hair** shells over the scalp
+  thinning to a natural hairline (seven styles; long hair hangs to the shoulders, the ponytail has a band); hats
+  clip the hair. **Facial hair**: stubble (vertex colour), moustache, a beard shell that keeps the lips clear.
+  **Sunglasses**: two lenses and a bridge with temple arms. **Headwear**: cap (panels, button, curved bill),
+  visor, bucket hat (stitched brim), flat cap (tweed). **Clothes**: polo with an open collar and placket; striped
+  polo with crisp bands (duplicated rows at every stripe edge); sweater vest over the polo with a crisp V-neck
+  (two columns land exactly on the V's edges); belt and buckle; trousers or shorts. **Hands**: a fist of fingers
+  wrapped round the grip, the back of the hand, a thumb down the shaft and a wrist; the lead hand is gloved.
+- **Clubs**: grip with a band and butt cap, steel or graphite shaft; driver/wood/hybrid superellipsoid heads with
+  a flat lofted face and an alignment mark; iron and wedge blades lofted per club with a thicker sole, hosel and
+  grooves; a heel-toe blade putter with a plumber's neck. Length per club as fitted.
+- **Budget** (measured): presets 6.9–8.0 k triangles, the heaviest combination (long hair, bucket hat, striped
+  polo, beard, shorts, sunglasses, heavy, 2 m, driver) 8.9 k; tests cap every option at 9 000.
+
+### 9.4 Animation (`swing-anim.js`)
+
+**Pose parameters** (`P`, `NP` = 28, Float64Array): hipTurn (+ = turned back), shiftY (toward the target / H),
+shiftX, drop (knee flex / H), tilt (hip hinge), bank, chest (shoulder turn), flex, bend (+ = trail shoulder lower),
+e/phi/k (the lead **wrist** as a direction in the chest frame — polar from the spine's down axis, azimuth toward
+the lead side — at k × the arm's length from the lead shoulder), qx..qw (club orientation in G), heel/pivot
+(trail foot), kneeIn, look (0 ball … 1 down the line), trail/lead elbow pole vectors, clav (lead shoulder
+protraction), rock (putting). `evalPose(rig, prm)` → bone world rotations/positions in G (`rig.s.R`, `rig.s.X`):
+FK down the spine (spine/chest share flex, bend and twist 40/60), clavicles, the lead wrist from (e, phi, k), the
+club hanging from it through the lead grip frame, the trail hand on the club, two-bone IK for both arms (the trail
+clavicle reaches up to 3% of H when short) and both legs (feet planted on the ground, the trail heel lifts and
+pivots about the ball of the foot, the trail knee kicks in), the head looking at the ball (40% neck, ≤ 85° on the
+chest) or down the line. The skin matrices are world × [R | X] × T(−rest joint).
+
+**Placement** `placeGolfer({ball, aimYaw, terrain | ground, handed, look, club, shot})` → rig (`W` G→world
+Float64Array(16), `origin`, `mirror`, `ballG`, `bx`/`by` ball in G, `st` stance, `feet`, `keys`, …). The ground is
+`terrain.heightAt/normalAt`, else `ground(x, y)`, else flat under the ball. Stance by club (half-width 0.092–
+0.136 H: driver widest, putter narrowest; flop +0.02, bump −0.03), ball position along the line (driver
++0.088 H, off the lead heel; woods +0.05; hybrid +0.03; 7-iron centre; wedges just back; putter forward), feet
+flared (lead 24°, trail 8°) and tilted to the ground at each foot, a pelvis drop for a lower foot.
+
+**Keys** (P1…P10). **P1 address** is solved: the club soled 0.6 cm behind the ball at its address lie (hands 4°
+low: they rise into impact), shaft lean by club (irons 4° hands-ahead, driver −3°), the spine angle per club
+(33° driver … 40° wedges, 44° putter) unless the arms would hang outside 6°–29° forward (driver 30°; then the hinge moves
+toward the band), and the stance distance solved so the lead wrist is 0.965 of the arm's reach (putts 0.84, soft
+elbows). **P7 impact** is solved: the club's impact point exactly on the ball, lie +3.5°, shaft lean (irons 9°,
+wedges 11°, woods 4°, driver −1° up, putter 3°), hips open 39°, shoulders open 18°, trail shoulder low (more
+side bend until the trail hand reaches), trail heel up, the hinge solved so the lead arm is straight. **P2**
+(shaft parallel back), **P3** (lead arm parallel), **P4** top (shoulders 93°, hips 44°, club parallel on line),
+**P4X** overswing, **P5** (lead arm parallel down, lag), **P6** (shaft parallel down), **P8** (shaft parallel
+through), **P9** (trail arm parallel), **P10** finish (belt buckle to the target, trail heel up and pivoted,
+hands above the lead shoulder, shaft across the back) are designed (body angles, a grip position for a 1.8 m
+golfer scaled and pulled toward the solved grip, shaft and face directions, elbow poles) and converted to the
+same parameters. Follow-through variants: `low` (punch, stinger, bump & run: held-off, abbreviated), `flop`
+(open face, high), `draw` (face rolled), `cut` (face held), `bigfinish` (reverse C, high hands).
+
+**Motion.** Backswing u: 0 address, 1 P2, 2 P3, 3 P4, 4 P4X (Catmull–Rom over the keys, quaternions aligned);
+power → u: 0.25 → 1, 0.5 → 1.9, 0.75 → 2.5, 1 → 3, 1.1 → 3.42 (Compact × 0.85). Downswing from the reached top:
+the arms and club follow the downswing keys (P4 → P5 → P6 → P7) on d^1.9, the chest on d^1.45, the hips lead on
+1 − (1 − d)^1.5, blending out of the backswing over the first 28%; it ends exactly on P7. Follow-through over
+P7 → P8 → P9 → P10 on 1 − (1 − x)^2.4, shortened for partial swings (1.2 + 1.9·min(1, p/0.8) of 3) and shots.
+Bump & run keeps the wrists 70% "dead" (the club turns with the lead arm). Putting: the chest and the club rock
+about the chest (axis ⟂ to the target line and the chest–ball line), 0.025 + 0.3·power rad back, a pendulum
+cos-timed through the solved impact and 1.15 × through. Idle at address: breathing, a waggle and a look at the
+target every 4–6.5 s (putts: looks only).
+
+**Timing** `swingTiming(style, power, kind)` → `{down, follow, back}` s: downswing (transition + downswing to
+impact) Classic 0.27, Compact 0.235, Big finish 0.26, Smooth 0.315 (× 0.92–1 with power); follow-through 0.95 /
+0.8 / 1.05 / 1.15 (shorter for partial swings); automatic backswing 0.85 / 0.68 / 0.9 / 1.05; putts 0.34 down,
+0.55 follow (Smooth × 1.1, Compact × 0.92).
+
+```js
+const anim = new SwingAnimator(look, {club, handed, shot, style, ball, aimYaw, terrain, ground});
+anim.place({ball, aimYaw, terrain, ground, handed, look, club, shot})   // -> anim; re-fits (about 1 ms)
+anim.setClub(club); anim.setShot(id); anim.setLook(look)                // re-place with the same ball
+anim.setBackswing(power)          // live, 0..1.1; the club follows smoothly (rate 14/s); 0 returns to address
+anim.strike({power = 1, kind, shot, style, onImpact}) -> seconds to impact
+                                  // from a live backswing (>= 60% of the target length) the downswing starts
+                                  // at once; otherwise an automatic backswing first. onImpact fires exactly
+                                  // once, on the frame that shows the exact impact pose
+anim.cancel()                     // ease back to address over 0.45 s (no onImpact)
+anim.reset()                      // snap to address
+anim.update(dt) -> Float32Array   // skin matrices, BONE_COUNT column-major mat4 (world x inverse bind); the
+                                  // same buffer every frame, no allocation
+anim.showPose(name, power = 1)    // 'address'|'P2'|'half'|'top'|'P5'|'P6'|'impact'|'P8'|'P9'|'finish'
+anim.state                        // 'address'|'backswing'|'auto'|'downswing'|'follow'|'finish'|'cancel'
+anim.kind, anim.impactTime, anim.bones, anim.rig
+anim.clubHeadWorld(out?) -> {x,y,z}   // the club's impact point in world (= the ball at impact)
+anim.jointWorld(bone, out?), anim.restPointWorld(bone, [x,y,z], out?), anim.footPoints() -> [heelL, toeL, heelR, toeR]
+anim.pose -> {root:[x,y,z], quats:Float64Array(BONE_COUNT*4) local rotations, world:G->world}
+```
+
+- **Allocation-free update**: everything lives in preallocated typed arrays; doubles are handed to helpers in
+  typed arrays rather than as arguments (a double passed to a non-inlined function is boxed every frame), and
+  `Math.hypot` (a boxed builtin call) is replaced by `Math.sqrt` of sums. Measured with V8's sampling heap
+  profiler: < 1 byte per frame in `swing-anim.js` after warm-up (unoptimized code boxes floats, an engine detail).
+- **Deviation**: "backswing club-head height increases monotonically with power" holds up to lead-arm parallel;
+  past it the club head comes down to parallel at the top, as in a real swing. The hands rise monotonically and
+  the club head's path grows monotonically (tests check all three).
+
+### 9.5 Rendering (`shaders.js`, `render.js`)
+
+`scene.golfer = {visible, mesh | {look, club}, bones: Float32Array (anim.update()), alpha = 1, fadeNear = true}`.
+`mesh` is a `buildGolferMesh` result (GPU buffers rebuilt when the object changes); with `look` + `club` the
+renderer builds and caches the mesh itself. `GOLFER_VS/FS`: rigid skinning with `uniform mat4 uBones[20]`
+(80 vertex uniform vectors, within WebGL1's 128), camera-relative bone translations, lit by the theme sun with
+wrap diffuse (soft on skin with a warm terminator), hemisphere ambient, per-material specular (metal reflects the
+sky), a cool sky rim light and the scene's fog and tone map. `alpha` fades the figure by ordered dither (no
+sorting), and so does a camera within ~1 m (`fadeNear: false` turns that off for close-ups). A left-hander's
+mirrored bones flip the winding (front face CW for that draw). **Shadow**: the figure flattened along the sun onto
+the ground plane under the feet is drawn white into a 256² mask (`GOLFER_MASK_VS/FS`, an offscreen texture over a
+square of ground reaching away from the sun), then laid on the ground blurred (`GOLFER_GROUND_VS/FS`, 9 taps,
+alpha 0.42 × sun height): a soft sun shadow that darkens once where parts overlap. Draw calls: golfer 1 + shadow
+2. Drawn after the trees and objects (opaque) and first among the overlays (shadow). Context loss: programs,
+buffers and the mask are rebuilt (checked on WebGL2 and WebGL1).
+
+### 9.6 Preview and tests
+
+`tests/visual/golfer-preview.html?look=<preset>&club=<id>&pose=<key>|t=<s>&cam=behind|face|side|close|profile|
+hands|clubhead|clubface&turn=<deg>&dist=<m>&handed=L&shot=<id>&power=<p>&slope=x,y&gl1=1&anim=1` plus any look
+field (`&skin=5&hair=curly...`): the golfer on Hollow Pines' first tee (`?course=`, `?hole=`); `t` runs a
+scripted swing (address 0.4 s, backswing, strike, impact at about 1.7 s); `window.__golfer.set({...})` re-poses
+without a reload. Reviewed with Playwright (iPhone 393×852 and 852×393 at 3×, SwiftShader) through the ten key
+positions and frame-by-frame swings for driver, 7-iron, wedge and putter, down the line and face on, every preset,
+a left-hander, bump & run, punch, flop, Compact and Big finish.
+
+`tests/golfer.test.js` (15 tests): skeleton invariants; `normalizeLook` on garbage; presets; club specs; mesh
+budgets, index ranges, bone ids, unit normals for every option; no NaN in any key pose; the club head within 2 cm
+of the ball at the onImpact frame for every club × height (155/175/200) × hand × style × build (1 344 swings;
+measured 0.0 cm); placement side (right-hander left of the ball, left-hander mirrored); feet within 5 cm of the
+ground on flat and 10% slopes (up, down, side) at address, top and impact; terrain placement; backswing
+monotonicity (above); onImpact exactly once at the returned time (live and automatic backswings, every style;
+downswing 0.22–0.32 s); cancel and reset; rigid, mirrored skin matrices and unit local quaternions; no
+allocation in `update` (sampling heap profiler).
+
+**Known gaps**: the game does not show the golfer yet (customiser, camera and strike wiring are the next stage);
+faces are deliberately simple (no texture maps); rigid skinning shows soft creases at the knees and wrists in
+extreme poses; long hair does not collide with the shoulders; the club does not flex.

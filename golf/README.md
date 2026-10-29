@@ -56,6 +56,35 @@ and the saved round remembers its course.
 The club readout, power arc, target notch and toast all follow the selected shot
 ("7i Stinger · 140/178 yd · Straight").
 
+## Your golfer
+
+The game has a realistic golfer character (smooth low-poly, console-golf proportions) who addresses
+the ball, swings and holds the finish. The character and its swing are built; showing it in the
+round, the customiser screen and the TV camera behind the golfer arrive with the next update.
+Meanwhile `tests/visual/golfer-preview.html` shows the golfer on the first tee of Hollow Pines.
+
+| Choice | Options |
+|---|---|
+| Body | Male or female figure, 8 natural skin tones, height 155–200 cm, build slim / regular / athletic / heavy |
+| Hair and face | Short, buzz cut, side part, curly, long, ponytail or bald, 10 hair colours; no facial hair, stubble, moustache or beard; sunglasses |
+| Clothes | Cap, visor, bucket hat, flat cap or none (any colour); polo, striped polo or sweater vest over a polo (two colours); trousers or shorts; shoe and glove colours |
+| Swing style | **Classic**; **Compact** (about a three-quarter backswing, quicker); **Big finish** (high hands, reverse C); **Smooth** (slower tempo). Looks only: the ball flies exactly the same |
+| Presets | Tour Pro, Lady Pro, Power Hitter, Classic Gent, Weekend Warrior, Rising Star, Links Veteran, Collegiate |
+
+The swing is a real golf swing: a one-piece takeaway, a full shoulder turn (about 90°, hips 45°)
+with the club parallel at the top, the hips leading the downswing, the club lagging, hands ahead and
+the club head exactly on the ball at impact, extension and a balanced finish facing the target with
+the trail heel up. The backswing follows your swipe (a half swipe is a half swing), the setup changes
+with the club (wider stance and the ball off the lead heel with the driver, more bend with the
+wedges, eyes over the ball with the putter: a shoulder-rocking putting stroke), and the special
+shots look the part (a short, hands-ahead bump & run, a held-off punch, an open-faced high flop). A
+left-hander is the mirror image. The golfer casts a soft shadow on the ground.
+
+Preview URL options: `?look=tour` (a preset id) or any look field (`&body=female&skin=5&hair=curly`),
+`&club=D` (any club id), `&pose=address|top|impact|finish` or `&t=1.7` (seconds into a scripted swing),
+`&cam=behind|face|side|close`, `&turn=45` (turntable), `&handed=L`, `&shot=flop`, `&anim=1` (swing on a
+loop).
+
 ## Rules
 
 Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out of bounds is stroke
@@ -110,14 +139,15 @@ resume after closing Safari.
 
 | Path | Contents |
 |---|---|
-| `docs/architecture.md` | The binding contract: coordinate frame, module style, every public API (section 8: version 2) |
+| `docs/architecture.md` | The binding contract: coordinate frame, module style, every public API (section 8: version 2; section 9: the golfer) |
 | `src/constants.js`, `vec3.js`, `rng.js` | Shared constants, surfaces and course conditions, unit helpers, vector maths, seeded RNG |
 | `src/clubs.js`, `aero.js`, `physics.js` | Club table, drag/lift and wind profile, flight/bounce/roll/cup simulation (firmness and green speed per course) |
 | `src/noise.js`, `spline.js`, `terrain.js` | Procedural terrain from the hole data: corridors, desert/fescue/waste, pot bunkers, island and sea water, themed objects |
 | `src/course.js`, `course-desert.js`, `course-water.js`, `course-links.js`, `courses.js` | The four courses as data (Hollow Pines, Red Mesa, Coral Cay, Kittiwake Links) and the course registry |
 | `src/lie.js`, `swing.js`, `shots.js`, `caddie.js`, `rules.js`, `scoring.js`, `game.js`, `bot.js` | Gameplay: lies, swipe interpretation, special shots, club suggestions, rules, scorecard, state machine, autoplay bot |
 | `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js`, `themes.js` | WebGL renderer, per-course looks (parkland, desert, tropical, links) and camera rig |
+| `src/golfer.js`, `golfer-mesh.js`, `swing-anim.js` | The golfer: skeleton, customisable look and presets, the skinned mesh, swing poses, IK and the animator |
 | `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures and tap meter, DOM HUD and menus, synthesised audio, boot and loop |
 | `index.html`, `style.css` | Shell and broadcast-style HUD (portrait, landscape and square layouts) |
 | `scripts/` | Single-file build, icon renderer, calibration and course report |
-| `tests/` | `node --test` unit tests and the Playwright e2e spec |
+| `tests/` | `node --test` unit tests, the Playwright e2e spec and visual previews (`tests/visual/`: renderer, golfer) |

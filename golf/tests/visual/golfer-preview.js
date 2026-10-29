@@ -31,7 +31,7 @@ function main() {
   const course = courseById(qs.get('course') || 'pines');
   const holeN = parseInt(qs.get('hole') || '1', 10);
   const terrain = buildHole(course.holes[holeN - 1], { pinIndex: 0, seed: 1, course });
-  const renderer = new Renderer(canvas, { test: true, quality: qs.get('quality') || 'auto' });
+  const renderer = new Renderer(canvas, { test: true, quality: qs.get('quality') || 'auto', gl1: qs.get('gl1') === '1' });
   if (!renderer.ok) {
     info.textContent = 'WebGL unavailable';
     document.body.dataset.ready = '1';

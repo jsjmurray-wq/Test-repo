@@ -612,8 +612,8 @@ function buildTorso(g, D, L, pal, J) {
   for (const [cl, ua] of [[B.clavL, B.upperArmL], [B.clavR, B.upperArmR]]) {
     const a = J(cl);
     const b = J(ua);
-    const c = [lin(a[0], b[0], 0.55) - 0.006 * H, lin(a[1], b[1], 0.6), b[2] + 0.004 * H];
-    g.ellipsoid(c, [0.034 * H * td.chest.dF, 0.05 * H * td.chest.w, 0.02 * H], {
+    const c = [lin(a[0], b[0], 0.55) - 0.008 * H, lin(a[1], b[1], 0.55), b[2] + 0.001 * H];
+    g.ellipsoid(c, [0.027 * H * td.chest.dF, 0.042 * H * td.chest.w, 0.016 * H], {
       nu: 8, nv: 4, bone: cl, mat: 0, col: vest ? underCol : stripes ? pal.shirt : torsoCol,
     });
   }
@@ -657,7 +657,7 @@ function J0(D, b) {
 function buildNeck(g, D, L, pal, J) {
   const H = D.H;
   const n = J(B.neck);
-  const r = 0.031 * H * D.build.neck * (D.fem ? 0.86 : 1);
+  const r = 0.0335 * H * D.build.neck * (D.fem ? 0.85 : 1);
   const zTop = D.chinZ + 0.03 * H;
   g.tube({
     vs: linspace(0, 1, 5), nu: 12, bone: B.neck, mat: 1, col: pal.skin,
@@ -869,19 +869,19 @@ function buildFace(g, D, L, pal, hs, P) {
   // wings at the base, its back half buried in the face.
   {
     const zr = Math.asin(0.06);
-    const zb = Math.asin(-0.42);
+    const zb = Math.asin(-0.39);
     const root = P(0, zr);
     const base = P(0, zb);
     const midZ = (root[2] + base[2]) / 2;
     const rz = (root[2] - base[2]) / 2;
     const mid = P(0, Math.asin((midZ - hs.c[2]) / hs.az));
     const nk = fem ? 0.88 : 1;
-    g.ellipsoid([mid[0] - 0.006 * s, 0, midZ], [0.017 * s * nk, 0.0165 * s * nk, rz], {
+    g.ellipsoid([mid[0] - 0.0065 * s, 0, midZ], [0.0155 * s * nk, 0.0185 * s * nk, rz], {
       nu: 10, nv: 7, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.97, 0.96]),
       shape: (x, y, z) => {
         const t = 0.5 - z / (2 * rz); // 0 at the root, 1 at the base
         // Width grows toward the wings; the bridge stays slim.
-        const wy = 0.38 + 0.62 * Math.pow(t, 1.3);
+        const wy = 0.42 + 0.58 * Math.pow(t, 1.6);
         // Protrusion grows toward the tip, which sits just above the base.
         const px = 0.35 + 0.65 * Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5);
         let xx = x * (x > 0 ? px : 0.6);
@@ -895,8 +895,8 @@ function buildFace(g, D, L, pal, hs, P) {
   // Eyes: dark-irised spheres in the sockets with upper and lower lids, and brows.
   for (const sd of [1, -1]) {
     const th = sd * 0.42;
-    const eye = P(th, Math.asin(-0.01), -0.0085 * s);
-    const er = 0.0118 * s;
+    const eye = P(th, Math.asin(-0.01), -0.0079 * s);
+    const er = 0.0127 * s;
     const fwd = [Math.cos(th * 0.35), Math.sin(th * 0.35), -0.05];
     g.ellipsoid(eye, [er, er, er], { nu: 8, nv: 5, bone, mat: 6, col: pal.sclera });
     // Iris and pupil: a cap just proud of the eyeball, looking forward.
@@ -907,7 +907,7 @@ function buildFace(g, D, L, pal, hs, P) {
     // Lids: skin shells covering the top 45% and bottom 30% of the eyeball.
     const lidR = er * 1.12;
     // Upper lid (its edge a touch darker: lashes), lower lid; the opening is about 1 cm.
-    const lidVs = [0.36, 0.48, 0.85, 1.45];
+    const lidVs = [0.42, 0.54, 0.88, 1.45];
     g.grid({
       us: linspace(-1.45, 1.45, 7), vs: lidVs, bone, mat: 1, closeU: false,
       col: (u, v, j) => (j === 0 ? mix3(pal.skin, [0.12, 0.09, 0.08], 0.55) : tint3(pal.skin, [0.97, 0.93, 0.92])),
@@ -918,7 +918,7 @@ function buildFace(g, D, L, pal, hs, P) {
       },
     });
     g.grid({
-      us: linspace(-1.45, 1.45, 7), vs: linspace(-1.4, -0.42, 3), bone, mat: 1, closeU: false, col: pal.skin,
+      us: linspace(-1.45, 1.45, 7), vs: linspace(-1.4, -0.47, 3), bone, mat: 1, closeU: false, col: pal.skin,
       pos: (u, v) => [eye[0] + Math.cos(v) * Math.cos(u) * lidR * 0.98, eye[1] + Math.cos(v) * Math.sin(u) * lidR * 0.98, eye[2] + Math.sin(v) * lidR * 0.98],
     });
     // Brow: a slim arc on the brow ridge.
@@ -948,7 +948,7 @@ function buildFace(g, D, L, pal, hs, P) {
   void c;
 }
 
-const j0 = (v) => v < 0.37;
+const j0 = (v) => v < 0.43;
 
 function earRot(sd) {
   // Tilted back 15 degrees, turned slightly forward.
@@ -1213,15 +1213,19 @@ function buildHeadwear(g, D, L, pal, hs, P) {
 function buildSunglasses(g, D, L, pal, hs, P) {
   const s = hs.s;
   const bone = B.head;
-  const lens = [0.12, 0.13, 0.15];
-  const frame = [0.08, 0.08, 0.09];
+  const lens = [0.1, 0.095, 0.09];
+  const frame = [0.06, 0.06, 0.065];
   // Wraparound lens band in front of the eyes, a notch for the nose.
   const us = linspace(-1.02, 1.02, 13);
   const vs = [0, 0.5, 1];
   const posAt = (th, v, out) => {
     const a = Math.abs(th);
-    const bottom = -0.07 + 0.05 * smooth(0.55, 1.0, a) + 0.12 * smooth(0.17, 0.04, a);
-    const ph = lin(bottom, 0.25, v);
+    // Two rounded lenses joined by a bridge over the nose; the wrap narrows at the temples.
+    const e = (a - 0.44) / 0.42;
+    let bottom = -0.13 + 0.11 * e * e;
+    bottom = lin(bottom, 0.15, smooth(0.11, 0.04, a));
+    const top = 0.235 - 0.06 * smooth(0.75, 1.02, a) - 0.02 * smooth(0.1, 0.0, a);
+    const ph = Math.asin(lin(bottom, top, v));
     return P(th, ph, out);
   };
   g.grid({ us, vs, closeU: false, bone, mat: 4, col: (th, v) => (v > 0.9 ? frame : lens), pos: (th, v) => posAt(th, v, 0.017 * s) });
@@ -1311,11 +1315,11 @@ function buildLegs(g, D, L, pal, J) {
       matFn: (u, v) => (shorts && v < hemT ? 1 : 0),
       col: (u, v) => (shorts && v < hemT ? pal.skin : shorts && v < hemT + 0.07 ? mul3(pal.legs, 0.9) : pal.legs),
       ring: (v) => {
-        const z = knee[2] - 0.02 * H + v * (lenT + 0.05 * H);
+        const z = knee[2] - (shorts ? 0.02 : 0.028) * H + v * (lenT + 0.05 * H);
         let r = lin(0.03, 0.047, smooth(0.05, 0.85, v)) * H * thighK;
         if (!shorts || v >= hemT) r += 0.006 * H; // trouser / shorts looseness
         if (v > 0.92) r *= 0.8;
-        if (v === 0) r *= 0.6;
+        if (v === 0) r *= shorts ? 0.6 : 0.82;
         // Inner thigh sits slightly inward at the top (toward the crotch).
         return { c: [hip[0] + 0.003 * H * bump(v, 0.5, 0.3), hip[1] - sd * 0.006 * H * smooth(0.6, 1, v), z], r1: r * 0.98, r2: r };
       },
@@ -1344,7 +1348,11 @@ function buildLegs(g, D, L, pal, J) {
         return { c: [ank[0] + dx, ank[1], z], r1: r, r2: r * 0.95 };
       },
     });
-    // Knee cap for bare legs (covers the rigid seam at the joint).
+    // Knee joint: covers the rigid seam where thigh and shin meet (trouser fabric or bare knee).
+    if (!shorts) {
+      const kr = 0.0305 * H * (0.75 + 0.25 * limb);
+      g.ellipsoid([knee[0], knee[1], knee[2] + 0.002 * H], [kr, kr * 0.97, kr * 1.15], { nu: 10, nv: 5, bone: sn, mat: 0, col: pal.legs });
+    }
     if (shorts) {
       g.ellipsoid([knee[0] + 0.004 * H, knee[1], knee[2]], [0.024 * H * limb, 0.026 * H * limb, 0.03 * H * limb], { nu: 8, nv: 4, bone: sn, mat: 1, col: pal.skin });
     }
