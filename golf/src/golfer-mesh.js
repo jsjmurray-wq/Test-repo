@@ -413,13 +413,20 @@ export function buildGolferMesh(look, club = '7i') {
   const pal = palette(L);
   const g = new Geo();
   const J = (b) => [D.joints[b * 3], D.joints[b * 3 + 1], D.joints[b * 3 + 2]];
-  buildTorso(g, D, L, pal, J);
-  buildNeck(g, D, L, pal, J);
-  buildHead(g, D, L, pal, J);
-  buildArms(g, D, L, pal, J);
-  buildLegs(g, D, L, pal, J);
-  buildHandsAndClub(g, D, L, pal, J, spec);
+  const parts = {};
+  const part = (name, fn) => {
+    const n0 = g.I.length;
+    fn();
+    parts[name] = (g.I.length - n0) / 3;
+  };
+  part('torso', () => buildTorso(g, D, L, pal, J));
+  part('neck', () => buildNeck(g, D, L, pal, J));
+  part('head', () => buildHead(g, D, L, pal, J));
+  part('arms', () => buildArms(g, D, L, pal, J));
+  part('legs', () => buildLegs(g, D, L, pal, J));
+  part('handsClub', () => buildHandsAndClub(g, D, L, pal, J, spec));
   const m = g.build();
+  m.parts = { ...parts, ...(g.sub || {}) };
   const pel = J(B.pelvis);
   return { ...m, center: pel, height: D.H, key: `${lookKey(L)}#${spec.id}`, club: spec.id, bones: BONE_COUNT };
 }
@@ -482,10 +489,10 @@ function buildTorso(g, D, L, pal, J) {
   const legC = pal.legs;
   const torsoCol = pal.shirt;
   const underCol = vest ? pal.shirt2 : pal.shirt;
-  const nu = 22;
+  const nu = 20;
   const us = ring(nu, 0);
-  // Stripe bands: 0.024 H tall (about 4 cm), duplicated rows at every boundary for crisp edges.
-  const stripeBand = 0.024;
+  // Stripe bands: 0.03 H tall (about 5 cm), duplicated rows at every boundary for crisp edges.
+  const stripeBand = 0.03;
   const vsWithStripes = (z0, z1, rows) => {
     const vs = [];
     for (const r of rows) if (r[0] >= z0 - 1e-9 && r[0] <= z1 + 1e-9) vs.push(r[0]);
@@ -564,26 +571,50 @@ function buildTorso(g, D, L, pal, J) {
     const vs = vsWithStripes(0.664, 0.846, rows);
     const pecs = D.fem ? td.chest.bust : 0.004 * D.build.chest;
     const vBottom = 0.742;
-    g.grid({
-      us, vs, bone: B.chest,
-      pos: (u, v) => {
-        const amt = pecs * bump(v, D.fem ? 0.735 : 0.745, D.fem ? 0.03 : 0.028);
-        return section(rows, td.chest, v, u, amt);
-      },
-      col: (u, v, j, i, p) => {
-        const a = Math.atan2(Math.sin(u), Math.cos(u)); // -pi..pi, 0 = front
-        if (vest) {
-          // V-neck: the polo shows above a V from 0.742 H at the front centre.
-          const open = (v - vBottom) / (0.832 - vBottom);
-          if (open > 0 && Math.abs(a) < 0.08 + 0.62 * open && Math.cos(u) > 0) return underCol;
+    const amtAt = (v) => pecs * bump(v, D.fem ? 0.735 : 0.745, D.fem ? 0.03 : 0.028);
+    if (vest) {
+      // Sweater vest: columns 1/2 and N-1 sit exactly on the V's edges (duplicated, so the
+      // polo-to-knit edge is crisp); below the V they collapse onto the front centre.
+      const N = nu + 4;
+      const aV = (v) => (v > vBottom ? 0.07 + 0.6 * Math.min(1, (v - vBottom) / (0.832 - vBottom)) : 0);
+      const ang = (i, v) => {
+        const a = aV(v);
+        if (i === 0) return 0;
+        if (i === 1 || i === 2) return a;
+        if (i === N - 1) return TAU - a;
+        return a + ((i - 2) / (N - 4)) * (TAU - 2 * a);
+      };
+      g.grid({
+        us: Array.from({ length: N }, (_, i) => i), vs, bone: B.chest,
+        pos: (i, v) => section(rows, td.chest, v, ang(i, v), amtAt(v)),
+        col: (i, v) => {
           if (v > 0.82) return underCol; // shoulders and neckline of the polo
+          if (aV(v) > 0 && (i === 0 || i === 1 || i === N - 1)) return underCol;
           return torsoCol;
-        }
-        let c = stripes ? stripeCol(vs[j]) : torsoCol;
-        // Placket: a narrow darker strip down the front from the collar.
-        if (v > 0.775 && Math.abs(a) < 0.07 && Math.cos(u) > 0) c = mul3(stripes ? pal.shirt : torsoCol, 0.86);
-        return c;
-      },
+        },
+      });
+    } else {
+      g.grid({
+        us, vs, bone: B.chest,
+        pos: (u, v) => section(rows, td.chest, v, u, amtAt(v)),
+        col: (u, v, j) => {
+          const a = Math.atan2(Math.sin(u), Math.cos(u)); // -pi..pi, 0 = front
+          let c = stripes ? stripeCol(vs[j]) : torsoCol;
+          // Placket: a narrow darker strip down the front from the collar.
+          if (v > 0.775 && Math.abs(a) < 0.07 && Math.cos(u) > 0) c = mul3(stripes ? pal.shirt : torsoCol, 0.86);
+          return c;
+        },
+      });
+    }
+  }
+  // Shoulder tops (trapezius) on the clavicles: they follow the shoulder girdle as it shrugs and
+  // reaches across at the top of the backswing.
+  for (const [cl, ua] of [[B.clavL, B.upperArmL], [B.clavR, B.upperArmR]]) {
+    const a = J(cl);
+    const b = J(ua);
+    const c = [lin(a[0], b[0], 0.55) - 0.006 * H, lin(a[1], b[1], 0.6), b[2] + 0.004 * H];
+    g.ellipsoid(c, [0.034 * H * td.chest.dF, 0.05 * H * td.chest.w, 0.02 * H], {
+      nu: 8, nv: 4, bone: cl, mat: 0, col: vest ? underCol : stripes ? pal.shirt : torsoCol,
     });
   }
   // Polo collar (open at the front): an outer band and its inner face.
@@ -639,73 +670,116 @@ function buildNeck(g, D, L, pal, J) {
 }
 
 // ------------------------------------------------------------------ head
-// The head is a superellipsoid deformed into a skull and face: a fuller cranium, a narrower
-// jaw and chin, a brow ridge, soft eye sockets, cheekbones and lips. Features (nose, ears,
-// eyes and lids, brows) are separate small parts on the head bone. Head-local axes are G's (x
-// toward the face).
+// The head is lofted from horizontal sections given by a profile table (front depth, back depth
+// and half-width against height, measured on a real head: a fairly upright forehead, the brow
+// ridge, the nasion, cheekbones, lips, chin, the jaw under the ear and the full cranium behind),
+// with local touches for the eye sockets, cheekbones and lips. Features (nose, ears, eyes and
+// lids, brows) are separate small parts on the head bone. Head-local axes are G's (x toward the
+// face). Positions are addressed by (th: angle round the head from the face, + = left; ph: an
+// elevation whose sine is the height, so ph = +-pi/2 are the crown and under the chin).
+// Rows: [z / 0.116 (-1 chin .. 1 crown), centre x, front depth, back depth, half-width] in m for a
+// 0.232 m head (scaled by s).
+const HEAD_M = [
+  [-1.0, 0.024, 0.0, 0.0, 0.0],
+  [-0.975, 0.022, 0.034, 0.03, 0.02],
+  [-0.93, 0.016, 0.06, 0.042, 0.034],
+  [-0.86, 0.01, 0.077, 0.05, 0.046],
+  [-0.76, 0.004, 0.087, 0.056, 0.056],
+  [-0.66, 0.0, 0.091, 0.062, 0.061],
+  [-0.57, 0.0, 0.092, 0.07, 0.064],
+  [-0.48, 0.0, 0.094, 0.078, 0.067],
+  [-0.37, 0.0, 0.093, 0.087, 0.071],
+  [-0.22, 0.0, 0.092, 0.094, 0.075],
+  [-0.06, 0.0, 0.091, 0.098, 0.077],
+  [0.1, 0.0, 0.094, 0.1, 0.078],
+  [0.22, 0.0, 0.097, 0.101, 0.078],
+  [0.35, 0.0, 0.095, 0.101, 0.077],
+  [0.55, 0.0, 0.089, 0.098, 0.073],
+  [0.72, 0.0, 0.077, 0.088, 0.065],
+  [0.85, 0.0, 0.06, 0.071, 0.053],
+  [0.94, 0.0, 0.038, 0.046, 0.035],
+  [0.985, 0.0, 0.017, 0.02, 0.016],
+  [1.0, 0.0, 0.0, 0.0, 0.0],
+];
+// A female head: smaller brow ridge, narrower jaw and chin, fuller lips (in the touches).
+const HEAD_F = HEAD_M.map((r) => {
+  const z = r[0];
+  const jaw = z < -0.4 ? 1 - 0.13 * Math.min(1, (-0.4 - z) / 0.45) : 1;
+  const brow = z > 0.1 && z < 0.4 ? 0.985 : 1;
+  return [z, r[1] * 0.85, r[2] * brow * (z < -0.7 ? 0.97 : 1), r[3], r[4] * jaw];
+});
+
 function headShape(D, L) {
   const s = D.headH / 0.232;
   const fem = D.fem;
-  const ax = 0.097 * s * (fem ? 0.97 : 1);
-  const ay = 0.077 * s * (fem ? 0.95 : 1);
   const az = 0.116 * s;
-  const c = [0.006 * D.H, 0, D.chinZ + az * 0.98];
-  const jaw = fem ? 0.36 : 0.3;
-  return {
-    s, ax, ay, az, c,
-    // (th: around z from the face, 0 = front, + = left; ph: -pi/2 chin .. pi/2 crown) -> head-local point
-    at(th, ph) {
-      const ct = Math.cos(th);
-      const st = Math.sin(th);
-      const cp = Math.cos(ph);
-      const sp = Math.sin(ph);
-      // Boxier face, rounder back.
-      const n = ct > 0 ? 2.5 : 2.1;
-      const ex = Math.sign(ct) * Math.pow(Math.abs(ct), 2 / n);
-      const ey = Math.sign(st) * Math.pow(Math.abs(st), 2 / n);
-      let x = ax * cp * ex;
-      let y = ay * cp * ey;
-      let z = az * sp;
-      const lower = smooth(0.05, -0.95, sp);
-      // Jaw narrows toward the chin; the lower back of the head tucks into the neck.
-      y *= 1 - jaw * lower * (0.55 + 0.45 * Math.max(0, ct));
-      if (ct < 0) x *= 1 - 0.38 * lower * -ct;
-      // Fuller cranium at the back and top.
-      if (sp > 0) x *= 1 + 0.07 * sp * Math.max(0, -ct);
-      // Flatter temples.
-      y *= 1 - 0.05 * bump(sp, 0.45, 0.25) * Math.abs(st);
-      // Chin forward, jaw angle (softer for a female face).
-      x += 0.012 * s * bump(th, 0, 0.42) * bump(ph, -1.12, 0.28);
-      if (!fem) y += Math.sign(st) * 0.004 * s * bump(Math.abs(th), 1.15, 0.3) * bump(ph, -0.8, 0.25);
-      // Face front: brow ridge, eye sockets, cheekbones, mouth.
-      if (ct > 0) {
-        const fw = bump(th, 0, 0.62);
-        x += (fem ? 0.0035 : 0.0062) * s * bump(ph, 0.27, 0.09) * fw;
-        for (const e of [0.42, -0.42]) x -= 0.0075 * s * bump(th, e, 0.17) * bump(ph, 0.12, 0.09);
-        y += Math.sign(st) * 0.004 * s * bump(Math.abs(th), 0.78, 0.2) * bump(ph, -0.06, 0.12);
-        // Lips: upper and lower lip forward, a soft line between.
-        const lw = bump(th, 0, 0.26);
-        x += 0.0045 * s * lw * (bump(ph, -0.47, 0.05) + (fem ? 1.15 : 0.9) * bump(ph, -0.58, 0.05));
-        x -= 0.0022 * s * lw * bump(ph, -0.525, 0.025);
-        // Philtrum-to-nose area slightly forward; mouth corners in.
-        x += 0.003 * s * bump(th, 0, 0.3) * bump(ph, -0.36, 0.1);
-        x -= 0.002 * s * (bump(th, 0.3, 0.06) + bump(th, -0.3, 0.06)) * bump(ph, -0.53, 0.06);
-      }
-      return [x, y, z];
-    },
+  const c = [0.008 * D.H, 0, D.chinZ + az * 0.99];
+  const rows = fem ? HEAD_F : HEAD_M;
+  const at = (th, ph) => {
+    const zn = Math.sin(ph);
+    const ct = Math.cos(th);
+    const st = Math.sin(th);
+    const cx = table(rows, zn, 1) * s;
+    const xF = table(rows, zn, 2) * s;
+    const xB = table(rows, zn, 3) * s;
+    const w = table(rows, zn, 4) * s;
+    const nf = 2.55;
+    const nb = 2.1;
+    const n = ct > 0 ? nf : nb;
+    const ex = Math.sign(ct) * Math.pow(Math.abs(ct), 2 / n);
+    const ey = Math.sign(st) * Math.pow(Math.abs(st), 2 / n);
+    let x = cx + (ct > 0 ? xF : xB) * ex;
+    let y = w * ey;
+    const z = zn * az;
+    if (ct > 0) {
+      const fw = Math.pow(ct, 1.5);
+      // Eye sockets, under the brow.
+      for (const e of [0.42, -0.42]) x -= 0.0085 * s * bump(th, e, 0.19) * bump(zn, -0.02, 0.11);
+      // Nasion notch between the eyes; cheekbones; lips and the line between them.
+      x -= 0.003 * s * bump(th, 0, 0.12) * bump(zn, 0.06, 0.06);
+      y += Math.sign(st) * 0.0045 * s * bump(Math.abs(th), 0.85, 0.22) * bump(zn, -0.2, 0.13);
+      const lw = bump(th, 0, 0.27);
+      x += (fem ? 0.0048 : 0.0038) * s * lw * (bump(zn, -0.5, 0.045) + (fem ? 1.2 : 1) * bump(zn, -0.635, 0.05));
+      x -= 0.0022 * s * lw * bump(zn, -0.57, 0.022);
+      // Mouth corners sit back; a soft chin.
+      x -= 0.0025 * s * (bump(th, 0.3, 0.07) + bump(th, -0.3, 0.07)) * bump(zn, -0.57, 0.06);
+      x += (fem ? 0.002 : 0.004) * s * bump(th, 0, 0.5) * bump(zn, -0.84, 0.08) * fw;
+    }
+    // Jaw angle under the ear (men) and slimmer temples.
+    if (!fem) y += Math.sign(st) * 0.004 * s * bump(Math.abs(th), 1.3, 0.3) * bump(zn, -0.62, 0.14);
+    y *= 1 - 0.04 * bump(zn, 0.5, 0.2) * Math.abs(st);
+    return [x, y, z];
   };
+  // Outward normal by finite differences (for shells: hair, hats, beard, glasses).
+  const normal = (th, ph) => {
+    const e = 0.004;
+    const a = at(th - e, ph);
+    const b = at(th + e, ph);
+    const p0 = at(th, Math.max(-Math.PI / 2, ph - e));
+    const p1 = at(th, Math.min(Math.PI / 2, ph + e));
+    const du = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const dv = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let n = cross(du, dv);
+    const l = Math.hypot(n[0], n[1], n[2]);
+    if (l < 1e-12) return Math.sin(ph) > 0 ? [0, 0, 1] : [0, 0, -1];
+    n = [n[0] / l, n[1] / l, n[2] / l];
+    const p = at(th, ph);
+    if (n[0] * p[0] + n[1] * p[1] + n[2] * p[2] < 0) n = [-n[0], -n[1], -n[2]];
+    return n;
+  };
+  return { s, az, c, at, normal, ax: 0.097 * s, ay: 0.077 * s };
 }
 
 function buildHead(g, D, L, pal, J) {
   const hs = headShape(D, L);
-  const s = hs.s;
   const c = hs.c;
   const bone = B.head;
   // Theta samples: dense over the face, sparse at the back.
   const ths = [];
-  for (let i = 0; i < 18; i++) ths.push(-1.7 + (i / 18) * 3.4);
-  for (let i = 0; i < 7; i++) ths.push(1.7 + ((i / 7) * (TAU - 3.4)));
-  const phs = [-Math.PI / 2, -1.35, -1.18, -1.02, -0.86, -0.72, -0.62, -0.55, -0.5, -0.43, -0.34, -0.22, -0.1, 0.02, 0.13, 0.24, 0.36, 0.52, 0.7, 0.9, 1.15, 1.38, Math.PI / 2];
+  for (let i = 0; i < 16; i++) ths.push(-1.7 + (i / 16) * 3.4);
+  for (let i = 0; i < 6; i++) ths.push(1.7 + ((i / 6) * (TAU - 3.4)));
+  const zns = [-1, -0.97, -0.9, -0.8, -0.7, -0.635, -0.57, -0.5, -0.43, -0.32, -0.2, -0.08, 0.04, 0.16, 0.28, 0.42, 0.58, 0.74, 0.87, 0.96, 1];
+  const phs = zns.map((z) => Math.asin(z));
   const hairCol = pal.hair;
   const bald = L.hair === 'bald';
   const hairLine = hairlineFor(L);
@@ -715,7 +789,8 @@ function buildHead(g, D, L, pal, J) {
     const cheek = lin(-0.16, -0.5, smooth(0.9, 1.6, a));
     if (ph > cheek) return 0;
     // Keep the lips clear.
-    if (a < 0.3 && ph > -0.62 && ph < -0.44) return 0;
+    const zn = Math.sin(ph);
+    if (a < 0.32 && zn > -0.68 && zn < -0.45) return 0;
     return smooth(cheek, cheek - 0.12, ph) * smooth(1.62, 1.4, a);
   };
   g.grid({
@@ -727,10 +802,11 @@ function buildHead(g, D, L, pal, J) {
     col: (th, ph) => {
       let col = pal.skin;
       const a = Math.abs(th);
-      // Lips.
-      if (a < 0.3 && ph > -0.62 && ph < -0.43 && Math.cos(th) > 0) {
-        const k = bump(th, 0, 0.24) * (bump(ph, -0.47, 0.05) + bump(ph, -0.58, 0.05));
-        col = mix3(col, pal.lip, Math.min(1, k * 1.4));
+      // Lips (a gentle tint, a little stronger on the lower lip).
+      const zn = Math.sin(ph);
+      if (a < 0.34 && zn > -0.7 && zn < -0.44 && Math.cos(th) > 0) {
+        const k = bump(th, 0, 0.22) * (0.8 * bump(zn, -0.5, 0.04) + bump(zn, -0.635, 0.045));
+        col = mix3(col, pal.lip, Math.min(0.85, k));
       }
       // Scalp under the hair takes the hair colour (no skin shows at the hairline).
       const hl = hairLine(th);
@@ -748,23 +824,21 @@ function buildHead(g, D, L, pal, J) {
   });
   const P = (th, ph, out = 0) => {
     const p = hs.at(th, ph);
-    const l = Math.hypot(p[0] / hs.ax, p[1] / hs.ay, p[2] / hs.az) || 1;
-    // Approximate outward normal of the base ellipsoid.
-    let nx = p[0] / (hs.ax * hs.ax);
-    let ny = p[1] / (hs.ay * hs.ay);
-    let nz = p[2] / (hs.az * hs.az);
-    const nl = Math.hypot(nx, ny, nz) || 1;
-    nx /= nl;
-    ny /= nl;
-    nz /= nl;
-    void l;
-    return [c[0] + p[0] + nx * out, c[1] + p[1] + ny * out, c[2] + p[2] + nz * out];
+    if (!out) return [c[0] + p[0], c[1] + p[1], c[2] + p[2]];
+    const n = hs.normal(th, ph);
+    return [c[0] + p[0] + n[0] * out, c[1] + p[1] + n[1] * out, c[2] + p[2] + n[2] * out];
   };
-  buildFace(g, D, L, pal, hs, P);
-  buildHair(g, D, L, pal, hs, P, hairLine);
-  buildFacialHair(g, D, L, pal, hs, P, beardRegion);
-  buildHeadwear(g, D, L, pal, hs, P);
-  if (L.sunglasses) buildSunglasses(g, D, L, pal, hs, P);
+  const t = (name, fn) => {
+    const n0 = g.I.length;
+    fn();
+    g.sub = g.sub || {};
+    g.sub[name] = (g.I.length - n0) / 3;
+  };
+  t('face', () => buildFace(g, D, L, pal, hs, P));
+  t('hair', () => buildHair(g, D, L, pal, hs, P, hairLine));
+  t('facialHair', () => buildFacialHair(g, D, L, pal, hs, P, beardRegion));
+  t('headwear', () => buildHeadwear(g, D, L, pal, hs, P));
+  if (L.sunglasses) t('glasses', () => buildSunglasses(g, D, L, pal, hs, P));
 }
 
 // Hairline height (ph) by angle round the head: forehead, temples, above the ears, nape.
@@ -791,55 +865,67 @@ function buildFace(g, D, L, pal, hs, P) {
   const bone = B.head;
   const c = hs.c;
   const fem = D.fem;
-  // Nose: a tapered wedge from the bridge to the tip, wider at the base, plus the wings.
+  // Nose: one smooth wedge from the bridge to the tip, narrow at the root, widening into the
+  // wings at the base, its back half buried in the face.
   {
-    const root = P(0, 0.13, -0.004 * s);
-    const tip = P(0, -0.3, 0.019 * s * (fem ? 0.85 : 1));
-    const base = P(0, -0.36, 0.002 * s);
-    g.tube({
-      vs: linspace(0, 1, 7), nu: 10, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.97, 0.96]),
-      ring: (v) => {
-        const z = lin(root[2], base[2] + 0.004 * s, v);
-        const x = lin(root[0], tip[0], Math.pow(v, 0.8)) - (v > 0.85 ? (v - 0.85) * 0.04 * s : 0);
-        const w = (0.0045 + 0.007 * v * v) * s * (fem ? 0.88 : 1);
-        const d = (0.006 + 0.007 * v) * s;
-        const cap = v >= 0.999 ? 0.35 : 1;
-        return { c: [x - d * 0.55, 0, z], r1: d * cap, r2: w * cap };
+    const zr = Math.asin(0.06);
+    const zb = Math.asin(-0.42);
+    const root = P(0, zr);
+    const base = P(0, zb);
+    const midZ = (root[2] + base[2]) / 2;
+    const rz = (root[2] - base[2]) / 2;
+    const mid = P(0, Math.asin((midZ - hs.c[2]) / hs.az));
+    const nk = fem ? 0.88 : 1;
+    g.ellipsoid([mid[0] - 0.006 * s, 0, midZ], [0.017 * s * nk, 0.0165 * s * nk, rz], {
+      nu: 10, nv: 7, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.97, 0.96]),
+      shape: (x, y, z) => {
+        const t = 0.5 - z / (2 * rz); // 0 at the root, 1 at the base
+        // Width grows toward the wings; the bridge stays slim.
+        const wy = 0.38 + 0.62 * Math.pow(t, 1.3);
+        // Protrusion grows toward the tip, which sits just above the base.
+        const px = 0.35 + 0.65 * Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5);
+        let xx = x * (x > 0 ? px : 0.6);
+        // Flatter underside and a slightly rounded tip.
+        let zz = z;
+        if (t > 0.8 && x > 0) zz = z + (t - 0.8) * 0.25 * rz * (x / (0.017 * s));
+        return [xx, y * wy, zz];
       },
-      flip: true, // runs downward
     });
-    for (const sd of [1, -1]) {
-      const w = P(sd * 0.15, -0.355, 0.003 * s);
-      g.ellipsoid([w[0] - 0.003 * s, w[1], w[2]], [0.009 * s, 0.0075 * s, 0.0065 * s], { nu: 8, nv: 5, bone, mat: 1, col: tint3(pal.skin, [1.0, 0.94, 0.93]) });
-    }
   }
   // Eyes: dark-irised spheres in the sockets with upper and lower lids, and brows.
   for (const sd of [1, -1]) {
     const th = sd * 0.42;
-    const eye = P(th, 0.12, -0.0115 * s);
+    const eye = P(th, Math.asin(-0.01), -0.0085 * s);
     const er = 0.0118 * s;
     const fwd = [Math.cos(th * 0.35), Math.sin(th * 0.35), -0.05];
-    g.ellipsoid(eye, [er, er, er], { nu: 10, nv: 6, bone, mat: 6, col: pal.sclera });
+    g.ellipsoid(eye, [er, er, er], { nu: 8, nv: 5, bone, mat: 6, col: pal.sclera });
     // Iris and pupil: a cap just proud of the eyeball, looking forward.
     const fl = Math.hypot(fwd[0], fwd[1], fwd[2]);
     const fa = [fwd[0] / fl, fwd[1] / fl, fwd[2] / fl];
-    g.cap(eye, fa, er * 1.006, 0.5, { nu: 10, nv: 2, bone, mat: 6, col: pal.iris });
-    g.cap(eye, fa, er * 1.012, 0.2, { nu: 8, nv: 1, bone, mat: 6, col: [0.04, 0.035, 0.03] });
+    g.cap(eye, fa, er * 1.006, 0.46, { nu: 8, nv: 2, bone, mat: 6, col: pal.iris });
+    g.cap(eye, fa, er * 1.012, 0.19, { nu: 6, nv: 1, bone, mat: 6, col: [0.04, 0.035, 0.03] });
     // Lids: skin shells covering the top 45% and bottom 30% of the eyeball.
     const lidR = er * 1.12;
+    // Upper lid (its edge a touch darker: lashes), lower lid; the opening is about 1 cm.
+    const lidVs = [0.36, 0.48, 0.85, 1.45];
     g.grid({
-      us: linspace(-1.45, 1.45, 9), vs: linspace(0.12, 1.45, 4), bone, mat: 1, closeU: false, col: tint3(pal.skin, [0.97, 0.93, 0.92]),
-      pos: (u, v) => [eye[0] + Math.cos(v) * Math.cos(u) * lidR, eye[1] + Math.cos(v) * Math.sin(u) * lidR, eye[2] + Math.sin(v) * lidR],
+      us: linspace(-1.45, 1.45, 7), vs: lidVs, bone, mat: 1, closeU: false,
+      col: (u, v, j) => (j === 0 ? mix3(pal.skin, [0.12, 0.09, 0.08], 0.55) : tint3(pal.skin, [0.97, 0.93, 0.92])),
+      pos: (u, v) => {
+        // The lid line tilts down toward the outer corner a little.
+        const vv = v - (j0(v) ? 0.06 * sd * Math.sin(u) : 0);
+        return [eye[0] + Math.cos(vv) * Math.cos(u) * lidR, eye[1] + Math.cos(vv) * Math.sin(u) * lidR, eye[2] + Math.sin(vv) * lidR];
+      },
     });
     g.grid({
-      us: linspace(-1.45, 1.45, 9), vs: linspace(-1.4, -0.42, 3), bone, mat: 1, closeU: false, col: pal.skin,
+      us: linspace(-1.45, 1.45, 7), vs: linspace(-1.4, -0.42, 3), bone, mat: 1, closeU: false, col: pal.skin,
       pos: (u, v) => [eye[0] + Math.cos(v) * Math.cos(u) * lidR * 0.98, eye[1] + Math.cos(v) * Math.sin(u) * lidR * 0.98, eye[2] + Math.sin(v) * lidR * 0.98],
     });
     // Brow: a slim arc on the brow ridge.
     const browCol = L.hair === 'bald' ? mix3(pal.hair, pal.skin, 0.3) : mix3(pal.hair, [0.1, 0.08, 0.07], 0.25);
     g.sweep({
-      vs: linspace(0, 1, 6), nu: 6, bone, mat: 2, col: browCol, up: [1, 0, 0],
-      center: (v) => P(sd * lin(0.17, 0.72, v), 0.285 - 0.05 * v * v + 0.015 * v, 0.0012 * s),
+      vs: linspace(0, 1, 5), nu: 5, bone, mat: 2, col: browCol, up: [1, 0, 0],
+      center: (v) => P(sd * lin(0.17, 0.74, v), Math.asin(0.2 + 0.03 * Math.sin(v * Math.PI) - 0.04 * v * v), 0.0012 * s),
       radius: (v) => {
         const r = (fem ? 0.0021 : 0.0029) * s * (v === 0 || v === 1 ? 0.25 : 1 - 0.35 * v);
         return [r * 0.6, r];
@@ -848,10 +934,10 @@ function buildFace(g, D, L, pal, hs, P) {
   }
   // Ears.
   for (const sd of [1, -1]) {
-    const p = P(sd * 1.6, -0.05, -0.002 * s);
+    const p = P(sd * 1.62, Math.asin(-0.12), -0.002 * s);
     const rot = earRot(sd);
     g.ellipsoid([p[0] - 0.006 * s, p[1] + sd * 0.004 * s, p[2]], [0.017 * s, 0.0075 * s, 0.03 * s], {
-      rot, nu: 10, nv: 7, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.93, 0.9]),
+      rot, nu: 8, nv: 6, bone, mat: 1, col: tint3(pal.skin, [1.02, 0.93, 0.9]),
       shape: (x, y, z) => {
         // Hollow the outer face a little (concha) and thin the lobe.
         const k = sd * y > 0 ? 1 - 0.45 * bump(x / (0.017 * s), 0.1, 0.5) * bump(z / (0.03 * s), -0.1, 0.5) : 1;
@@ -861,6 +947,8 @@ function buildFace(g, D, L, pal, hs, P) {
   }
   void c;
 }
+
+const j0 = (v) => v < 0.37;
 
 function earRot(sd) {
   // Tilted back 15 degrees, turned slightly forward.
@@ -903,9 +991,9 @@ function buildHair(g, D, L, pal, hs, P, hairLine) {
     if (hat !== 'none' && hat !== 'visor') t = Math.min(t, 0.0045);
     return t * s;
   };
-  const ths = ring(28, 0);
+  const ths = ring(24, 0);
   // Rows from the hairline (per column) to the crown.
-  const rows = 9;
+  const rows = 8;
   const vs = linspace(0, 1, rows);
   const phAt = (th, v) => {
     const hl = hairLine(th);
@@ -932,7 +1020,7 @@ function buildHair(g, D, L, pal, hs, P, hairLine) {
   }
   // Long hair: a curtain falling to the shoulders behind and beside the face.
   if (style === 'long') {
-    const us = linspace(0.95, TAU - 0.95, 16);
+    const us = linspace(0.95, TAU - 0.95, 13);
     g.grid({
       us, vs: linspace(0, 1, 6), bone, mat: 2, closeU: false, flip: true, col: mul3(col, 0.95),
       pos: (th, v) => {
@@ -996,7 +1084,7 @@ function buildFacialHair(g, D, L, pal, hs, P, beardRegion) {
   const col = mix3(pal.hair, [0.12, 0.1, 0.09], 0.15);
   // Moustache: a soft bar over the upper lip, tapering at the corners.
   g.sweep({
-    vs: linspace(0, 1, 9), nu: 7, bone, mat: 2, col, up: [1, 0, 0],
+    vs: linspace(0, 1, 8), nu: 6, bone, mat: 2, col, up: [1, 0, 0],
     center: (v) => {
       const th = lin(-0.38, 0.38, v);
       const ph = -0.425 - 0.08 * Math.pow(Math.abs(v - 0.5) * 2, 2.2);
@@ -1010,8 +1098,8 @@ function buildFacialHair(g, D, L, pal, hs, P, beardRegion) {
   });
   if (fh === 'beard') {
     // A short full beard: a shell over the jaw, chin and cheeks, clear of the lips.
-    const us = linspace(-1.62, 1.62, 21);
-    const vs = linspace(-Math.PI / 2 + 0.05, -0.12, 9);
+    const us = linspace(-1.62, 1.62, 17);
+    const vs = linspace(-Math.PI / 2 + 0.05, -0.12, 8);
     g.grid({
       us, vs, bone, mat: 2, closeU: false, col,
       pos: (th, ph) => {
@@ -1034,8 +1122,8 @@ function buildHeadwear(g, D, L, pal, hs, P) {
   const off = hat === 'bucket' ? 0.011 * s : 0.0085 * s;
   if (hat !== 'visor') {
     // Crown: a shell from the hat line to the top, a little taller than the head.
-    const ths = ring(24, 0);
-    const vs = linspace(0, 1, 7);
+    const ths = ring(20, 0);
+    const vs = linspace(0, 1, 6);
     const phAt = (th, v) => lin(hatLine(th), Math.PI / 2, v);
     g.grid({
       us: ths, vs, bone, mat: 0,
@@ -1071,7 +1159,7 @@ function buildHeadwear(g, D, L, pal, hs, P) {
     }
   } else {
     // Visor band.
-    const ths = ring(24, 0);
+    const ths = ring(20, 0);
     g.grid({
       us: ths, vs: [0, 1], bone, mat: 0, col,
       pos: (th, v) => P(th, hatLine(th) + v * 0.17, off * 0.7),
@@ -1085,8 +1173,8 @@ function buildHeadwear(g, D, L, pal, hs, P) {
   if (hat === 'cap' || hat === 'visor' || hat === 'flatcap') {
     const len = (hat === 'flatcap' ? 0.045 : 0.074) * s;
     const half = hat === 'flatcap' ? 1.0 : 0.95;
-    const us = linspace(-half, half, 13);
-    const vs = linspace(0, 1, 5);
+    const us = linspace(-half, half, 11);
+    const vs = linspace(0, 1, 4);
     const edge = (th) => P(th, hatLine(th) + (hat === 'flatcap' ? 0.0 : 0.01), off * 0.95);
     const billPos = (th, v, dz) => {
       const e = edge(th);
@@ -1105,7 +1193,7 @@ function buildHeadwear(g, D, L, pal, hs, P) {
     });
   }
   if (hat === 'bucket') {
-    const ths = ring(24, 0);
+    const ths = ring(20, 0);
     const vs = linspace(0, 1, 4);
     const brim = (th, v, dz) => {
       const e = P(th, hatLine(th), off);
@@ -1128,8 +1216,8 @@ function buildSunglasses(g, D, L, pal, hs, P) {
   const lens = [0.12, 0.13, 0.15];
   const frame = [0.08, 0.08, 0.09];
   // Wraparound lens band in front of the eyes, a notch for the nose.
-  const us = linspace(-1.02, 1.02, 17);
-  const vs = [0, 0.33, 0.66, 1];
+  const us = linspace(-1.02, 1.02, 13);
+  const vs = [0, 0.5, 1];
   const posAt = (th, v, out) => {
     const a = Math.abs(th);
     const bottom = -0.07 + 0.05 * smooth(0.55, 1.0, a) + 0.12 * smooth(0.17, 0.04, a);
@@ -1167,19 +1255,19 @@ function buildArms(g, D, L, pal, J) {
     // Upper arm: rounded elbow end, biceps, deltoid cap above the joint.
     const vsU = [0, 0.04, 0.12, 0.3, 0.5, 0.55 - 1e-4, 0.55, 0.62, 0.75, 0.86, 0.94, 1.0];
     g.tube({
-      vs: vsU, nu: 12, bone: ua,
+      vs: vsU, nu: 10, bone: ua,
       mat: 0,
       matFn: (u, v) => (v < 0.55 ? 1 : 0),
       col: (u, v) => {
         if (v < 0.55) return pal.skin;
-        if (stripes) return Math.floor((sh[2] - lenU * (1 - v)) / (0.024 * H) + 1e-6) % 2 === 0 ? pal.shirt : pal.shirt2;
+        if (stripes) return Math.floor((sh[2] - lenU * (1 - v)) / (0.03 * H) + 1e-6) % 2 === 0 ? pal.shirt : pal.shirt2;
         return v < 0.6 ? mul3(sleeveCol, 0.93) : sleeveCol;
       },
       ring: (v) => {
-        const z = el[2] - 0.02 * H + v * (lenU + 0.05 * H);
-        let r = lin(0.0165, 0.0212, smooth(0, 0.55, v)) * H * limb;
-        if (v >= 0.55) r = (0.0232 + 0.0018 * bump(v, 0.78, 0.15)) * H * limb; // sleeve, looser
-        if (v > 0.86) r *= 1 - (v - 0.86) * 5.5; // close over the shoulder
+        const z = el[2] - 0.02 * H + v * (lenU + 0.034 * H);
+        let r = lin(0.0178, 0.0232, smooth(0, 0.55, v)) * H * limb;
+        if (v >= 0.55) r = (0.0262 + 0.0016 * bump(v, 0.78, 0.15)) * H * limb; // sleeve, looser
+        if (v > 0.84) r *= Math.sqrt(Math.max(0, 1 - Math.pow((v - 0.84) / 0.16, 2))); // round over the shoulder
         if (v === 0) r *= 0.5;
         // Deltoid sits outward and slightly forward of the joint.
         const dx = 0.002 * H * bump(v, 0.85, 0.15);
@@ -1192,11 +1280,11 @@ function buildArms(g, D, L, pal, J) {
     // Forearm: elbow cap, forearm muscle near the top, slim wrist.
     const lenF = el[2] - wr[2];
     g.tube({
-      vs: [0, 0.06, 0.2, 0.45, 0.7, 0.86, 0.95, 1], nu: 11, bone: fa, mat: 1, col: pal.skin,
+      vs: [0, 0.06, 0.2, 0.45, 0.7, 0.86, 0.95, 1], nu: 10, bone: fa, mat: 1, col: pal.skin,
       ring: (v) => {
         const z = wr[2] - 0.012 * H + v * (lenF + 0.03 * H);
-        let r = lin(0.0118, 0.0172, smooth(0.0, 0.72, v)) * H * limb;
-        if (v > 0.86) r = 0.0158 * H * limb * (1 - (v - 0.86) * 4.5);
+        let r = lin(0.0124, 0.0186, smooth(0.0, 0.72, v)) * H * limb;
+        if (v > 0.86) r = 0.0172 * H * limb * (1 - (v - 0.86) * 4.5);
         if (v === 0) r *= 0.6;
         return { c: [el[0] - 0.002 * H * bump(v, 0.9, 0.1), el[1], z], r1: r * 0.92, r2: r * 1.05 };
       },
@@ -1219,7 +1307,7 @@ function buildLegs(g, D, L, pal, J) {
     const vsT = shorts ? [0, 0.06, 0.2, 0.38 - 1e-4, 0.38, 0.45, 0.62, 0.8, 0.92, 1] : [0, 0.06, 0.2, 0.4, 0.62, 0.8, 0.92, 1];
     const thighK = (fem ? 1.05 : 1) * (0.6 + 0.4 * D.build.hip) * limb;
     g.tube({
-      vs: vsT, nu: 13, bone: th,
+      vs: vsT, nu: 12, bone: th,
       matFn: (u, v) => (shorts && v < hemT ? 1 : 0),
       col: (u, v) => (shorts && v < hemT ? pal.skin : shorts && v < hemT + 0.07 ? mul3(pal.legs, 0.9) : pal.legs),
       ring: (v) => {
@@ -1236,7 +1324,7 @@ function buildLegs(g, D, L, pal, J) {
     const lenS = knee[2] - ank[2];
     const vsS = shorts ? [0, 0.04, 0.1, 0.16 - 1e-4, 0.16, 0.3, 0.55, 0.72, 0.88, 0.95, 1] : [0, 0.05, 0.15, 0.35, 0.6, 0.85, 0.95, 1];
     g.tube({
-      vs: vsS, nu: 12, bone: sn,
+      vs: vsS, nu: 11, bone: sn,
       matFn: (u, v) => (shorts && v >= 0.16 ? 1 : 0),
       col: (u, v) => (shorts ? (v < 0.16 ? pal.sock : pal.skin) : pal.legs),
       ring: (v) => {
@@ -1258,7 +1346,7 @@ function buildLegs(g, D, L, pal, J) {
     });
     // Knee cap for bare legs (covers the rigid seam at the joint).
     if (shorts) {
-      g.ellipsoid([knee[0] + 0.004 * H, knee[1], knee[2]], [0.024 * H * limb, 0.026 * H * limb, 0.03 * H * limb], { nu: 10, nv: 6, bone: sn, mat: 1, col: pal.skin });
+      g.ellipsoid([knee[0] + 0.004 * H, knee[1], knee[2]], [0.024 * H * limb, 0.026 * H * limb, 0.03 * H * limb], { nu: 8, nv: 4, bone: sn, mat: 1, col: pal.skin });
     }
     buildShoe(g, D, L, pal, ank, ft, sd);
   }
@@ -1271,9 +1359,9 @@ function buildShoe(g, D, L, pal, ank, bone, sd) {
   const len = (f.toe + f.heel) * (fem ? 0.94 : 1) * 1.04;
   const x0 = ank[0] - f.heel * 1.08;
   const w = f.width * (fem ? 0.9 : 1);
-  const vs = linspace(0, 1, 11);
+  const vs = linspace(0, 1, 10);
   g.tube({
-    vs, nu: 12, bone,
+    vs, nu: 11, bone,
     matFn: (u, v) => 5,
     col: (u, v) => {
       // Sole: the lower part of the section.
@@ -1330,71 +1418,92 @@ function buildHandsAndClub(g, D, L, pal, J, spec) {
   g.clearXform();
 }
 
-// One gripping hand in club space: a fist round the grip (fingers wrapped toward the golfer), the
-// back of the hand and palm rising to the wrist, a thumb down the shaft, a glove cuff.
+// One gripping hand in club space (the shaft is +Z toward the butt): a fist of fingers and palm
+// wrapped round the grip, a broad back of the hand rising to the wrist, a thumb lying down the
+// shaft, and a wrist (a glove cuff on the lead hand) that meets the forearm.
 function buildHand(g, which, fr, bone, col, gloved, pal, s) {
   const lead = which === 'lead';
   const gz = fr.grip[2];
   const R = fr.rot;
   const zH = [R[6], R[7], R[8]]; // toward the elbow
-  const back = lead ? [R[3], R[4], R[5]] : [-R[3], -R[4], -R[5]]; // back of the hand
   const w = fr.wrist;
   const mat = gloved ? 0 : 1;
-  const knuckle = gloved ? mul3(col, 0.94) : tint3(col, [1.02, 0.95, 0.93]);
-  // Fist: an ellipsoid-ish loft along the shaft wrapping the grip, offset toward the palm side.
-  const fistLen = 0.056 * s;
+  const skinShade = gloved ? col : tint3(col, [1.0, 0.95, 0.94]);
+  // Back-of-hand direction round the shaft: the lead hand shows its knuckles to the target and
+  // a little up to the golfer; the trail hand's back faces away from the target.
+  const k = lead ? norm([0.8, 0.6, 0]) : norm([-0.78, 0.62, 0]);
+  const perp = cross([0, 0, 1], k); // round the shaft from the knuckles
+  const half = 0.044 * s;
+  // 1. Fist: fingers and palm round the grip (an off-centre rounded loft along the shaft).
   g.tube({
-    vs: linspace(0, 1, 7), nu: 12, bone, mat,
-    col: (u, v) => (Math.cos(u) * (lead ? 1 : -1) > 0.55 ? knuckle : col),
+    vs: [0, 0.07, 0.2, 0.4, 0.6, 0.8, 0.93, 1], nu: 12, bone, mat,
+    frame: [...k, ...perp, 0, 0, 1],
+    col: (u, v) => {
+      // Finger creases on the wrapped side; knuckles a touch lighter.
+      const c = Math.cos(u);
+      if (!gloved && c < -0.2 && Math.abs(Math.sin(v * Math.PI * 4)) < 0.18) return mul3(col, 0.9);
+      if (gloved && c < -0.3 && Math.abs(Math.sin(v * Math.PI * 4)) < 0.12) return mul3(col, 0.9);
+      return c > 0.55 ? mul3(skinShade, 1.02) : col;
+    },
     ring: (v) => {
-      const z = gz - fistLen + v * fistLen * 2;
-      const e = (v - 0.5) * 2;
-      const k = Math.sqrt(Math.max(0, 1 - Math.pow(Math.abs(e), 2.6)));
-      const r = 0.031 * s * (0.45 + 0.55 * k);
-      // Fingers wrap round to the golfer's side (+Y club); knuckles on the back-of-hand side.
-      return { c: [0.004 * s * (lead ? 1 : -1), 0.006 * s, z], r1: r, r2: r * 0.95 };
+      const z = gz - half + v * 2 * half;
+      const e = Math.abs(v - 0.5) * 2;
+      const cap = Math.sqrt(Math.max(0, 1 - Math.pow(e, 3.2)));
+      const r = 0.0262 * s * (0.35 + 0.65 * cap);
+      return { c: [0.006 * s, 0.0, z], r1: r * 1.16, r1b: r * 0.98, r2: r, n: 2.3 };
     },
   });
-  // Back of the hand / palm: from the fist up to the wrist.
-  const p0 = [0.003 * s * (lead ? 1 : -1), 0.003 * s, gz + 0.012 * s];
-  const p1 = w;
-  const ax = norm([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]]);
-  const e2 = norm(cross(ax, back));
-  const e1 = cross(e2, ax);
-  const frame = [...e1, ...e2, ...ax];
-  const L = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+  // 2. Back of the hand and palm: from the knuckle side of the fist up to the wrist.
+  const p0 = [k[0] * 0.012 * s, k[1] * 0.012 * s, gz + 0.004 * s];
+  const L = Math.hypot(w[0] - p0[0], w[1] - p0[1], w[2] - p0[2]);
+  const ax = norm([w[0] - p0[0], w[1] - p0[1], w[2] - p0[2]]);
+  // Section axes: across the hand (along the shaft at the knuckles) and through it.
+  const acr = norm([0 - ax[0] * ax[2], 0 - ax[1] * ax[2], 1 - ax[2] * ax[2]]);
+  const thr = cross(acr, ax);
   g.tube({
-    vs: linspace(0, 1, 6), nu: 12, bone, mat, frame, origin: p0,
-    col: (u, v) => (gloved && v > 0.62 && v < 0.78 && Math.cos(u) > 0.2 ? mul3(col, 0.82) : col),
+    vs: [0, 0.25, 0.55, 0.8, 1], nu: 10, bone, mat,
+    frame: [...thr, ...acr, ...ax], origin: p0,
+    col,
     ring: (v) => {
-      const z = v * (L + 0.022 * s);
-      const wide = lin(0.05, 0.03, smooth(0.1, 0.95, v)) * s;
-      const thick = lin(0.019, 0.021, v) * s;
-      const cap = v === 1 ? 0.55 : 1;
-      return { c: [0.004 * s * (1 - v), 0, z], r1: thick * cap, r2: wide * 0.5 * cap };
+      const z = v * L;
+      const wide = lin(0.04, 0.026, smooth(0.0, 1.0, v)) * s;
+      const thick = lin(0.021, 0.02, v) * s;
+      return { c: [0, 0, z], r1: thick, r2: wide, n: 2.4 };
     },
   });
-  // Thumb: along the shaft on the target side of the grip, pointing down.
+  // 3. Thumb: from the base of the palm, lying down the shaft round from the knuckles.
   const ts = lead ? 1 : -1;
-  g.tube({
-    vs: linspace(0, 1, 5), nu: 8, bone, mat, col: gloved ? col : tint3(col, [1.0, 0.95, 0.94]),
-    ring: (v) => {
-      const z = gz + 0.02 * s - v * 0.055 * s;
-      const r = 0.012 * s * (v === 1 ? 0.45 : v === 0 ? 0.8 : 1 - 0.15 * v);
-      return { c: [ts * 0.012 * s, -0.008 * s, z], r1: r, r2: r * 0.9 };
+  const tdir = norm([k[0] * -0.25 + perp[0] * ts * 0.97, k[1] * -0.25 + perp[1] * ts * 0.97, 0]);
+  g.sweep({
+    vs: linspace(0, 1, 5), nu: 7, bone, mat, col: skinShade, up: [0, 0, 1],
+    center: (v) => {
+      const rr = 0.0215 * s;
+      const z = gz + 0.022 * s - v * 0.06 * s;
+      const out = rr + 0.002 * s * Math.sin(v * Math.PI);
+      return [tdir[0] * out + k[0] * 0.004 * s * (1 - v), tdir[1] * out + k[1] * 0.004 * s * (1 - v), z];
     },
-    flip: true,
+    radius: (v) => {
+      const r = 0.0105 * s * (v === 1 ? 0.25 : v === 0 ? 0.8 : 1 - 0.18 * v);
+      return [r, r * 1.05];
+    },
   });
-  // Glove cuff / wrist.
-  g.ellipsoid([w[0], w[1], w[2]], [0.02 * s, 0.024 * s, 0.022 * s], {
-    rot: [...e1, ...e2, ...ax], nu: 10, nv: 5, bone, mat, col: gloved ? mul3(col, 0.96) : col,
+  // 4. Wrist (a glove cuff on the lead hand): continues the hand into the forearm.
+  g.tube({
+    vs: [0, 0.3, 0.7, 1], nu: 10, bone, mat,
+    frame: [...thr, ...acr, ...ax], origin: w,
+    col: (u, v) => (gloved ? (v > 0.25 && v < 0.75 && Math.cos(u) > 0.3 ? mul3(col, 0.8) : col) : col),
+    ring: (v) => {
+      const z = (-0.01 + v * 0.022) * s;
+      const cap = v === 1 ? 0.7 : 1;
+      return { c: [0, 0, z], r1: 0.021 * s * cap * (gloved ? 1.07 : 1), r2: 0.026 * s * cap * (gloved ? 1.07 : 1) };
+    },
   });
+  void zH;
   void pal;
 }
 
 function buildClub(g, spec) {
   const bone = B.club;
-  const len = spec.len;
   const butt = spec.butt;
   const head = spec.head;
   const gripLen = 0.26;

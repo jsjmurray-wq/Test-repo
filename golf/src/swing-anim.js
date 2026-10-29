@@ -87,11 +87,29 @@ function m3axis(o, oo, x, y, z, ang) {
   o[oo + 3] = t * x * y - s * z; o[oo + 4] = t * y * y + c; o[oo + 5] = t * y * z + s * x;
   o[oo + 6] = t * x * z + s * y; o[oo + 7] = t * y * z - s * x; o[oo + 8] = t * z * z + c;
 }
-// Basis from columns x, y, z (arrays with offsets).
-function m3cols(o, oo, x, xo, y, yo, z, zo) {
-  o[oo] = x[xo]; o[oo + 1] = x[xo + 1]; o[oo + 2] = x[xo + 2];
-  o[oo + 3] = y[yo]; o[oo + 4] = y[yo + 1]; o[oo + 5] = y[yo + 2];
-  o[oo + 6] = z[zo]; o[oo + 7] = z[zo + 1]; o[oo + 8] = z[zo + 2];
+// Rotation about a unit axis by src[si] * k (the angle stays in a typed array: a double passed
+// as an argument to a non-inlined function would be boxed on the heap every frame).
+function m3axisA(o, oo, x, y, z, src, si, k) {
+  const ang = src[si] * k;
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const t = 1 - c;
+  o[oo] = t * x * x + c; o[oo + 1] = t * x * y + s * z; o[oo + 2] = t * x * z - s * y;
+  o[oo + 3] = t * x * y - s * z; o[oo + 4] = t * y * y + c; o[oo + 5] = t * y * z + s * x;
+  o[oo + 6] = t * x * z + s * y; o[oo + 7] = t * y * z - s * x; o[oo + 8] = t * z * z + c;
+}
+// Same, axis and angle from arrays: axis ax[ai..ai+2], angle src[si].
+function m3axisV(o, oo, ax, ai, src, si) {
+  const x = ax[ai];
+  const y = ax[ai + 1];
+  const z = ax[ai + 2];
+  const ang = src[si];
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const t = 1 - c;
+  o[oo] = t * x * x + c; o[oo + 1] = t * x * y + s * z; o[oo + 2] = t * x * z - s * y;
+  o[oo + 3] = t * x * y - s * z; o[oo + 4] = t * y * y + c; o[oo + 5] = t * y * z + s * x;
+  o[oo + 6] = t * x * z + s * y; o[oo + 7] = t * y * z - s * x; o[oo + 8] = t * z * z + c;
 }
 // out = m * (x, y, z)
 function m3v(out, oo, m, mo, x, y, z) {
@@ -161,7 +179,7 @@ function m3FromQuat(o, oo, q, qo) {
   let y = q[qo + 1];
   let z = q[qo + 2];
   let w = q[qo + 3];
-  const l = Math.hypot(x, y, z, w) || 1;
+  const l = len4(x, y, z, w) || 1;
   x /= l;
   y /= l;
   z /= l;
@@ -171,6 +189,10 @@ function m3FromQuat(o, oo, q, qo) {
   o[oo + 6] = 2 * (x * z + y * w); o[oo + 7] = 2 * (y * z - x * w); o[oo + 8] = 1 - 2 * (x * x + y * y);
 }
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+// Math.hypot is a builtin call that returns a boxed number; these inline to plain sqrt.
+const len2 = (a, b) => Math.sqrt(a * a + b * b);
+const len3 = (a, b, c) => Math.sqrt(a * a + b * b + c * c);
+const len4 = (a, b, c, d) => Math.sqrt(a * a + b * b + c * c + d * d);
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (e0, e1, x) => {
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
@@ -185,6 +207,9 @@ function makeScratch() {
     X: new Float64Array(BONE_COUNT * 3), // world positions (bone origins) in G
     m: new Float64Array(9 * 8),
     v: new Float64Array(3 * 16),
+    a: new Float64Array(8), // angles handed to the rotation helpers
+    k: new Float64Array(16), // ik inputs
+    rk: new Float64Array(9), // putting rock rotation
   };
 }
 
@@ -237,8 +262,8 @@ function keyDesign(spec, shot) {
   // Spine angle from vertical at address (hinge + upper-back flex), by club.
   const posture = (driver ? 33 : wood ? 35 : head === 'hybrid' ? 36 : putt ? 44 : wedge ? 40 : 38) * D;
   return {
-    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.17 : wood ? 0.13 : putt ? 0.05 : 0.1, angMin: (putt ? -4 : 6) * D, angMax: (putt ? 16 : 24) * D, posture, reach: putt ? 0.9 : 0.965, flex: putt ? 0.12 : 0.06, drop: putt ? 0.018 : 0.036, shiftX: putt ? -0.014 : -0.022 },
-    imp: { lie: putt ? 0 : -0.5 * D, lean: leanImp, face, reach: putt ? 0.9 : 0.995 },
+    addr: { lie: putt ? 0 : -4 * D, lean: leanAddr, face: face * 0.9, bend: driver ? 0.17 : wood ? 0.13 : putt ? 0.05 : 0.1, angMin: (putt ? -2 : 6) * D, angMax: (putt ? 26 : 24) * D, posture, reach: putt ? 0.84 : 0.965, flex: putt ? 0.14 : 0.06, drop: putt ? 0.022 : 0.036, shiftX: putt ? -0.014 : -0.022 },
+    imp: { lie: putt ? 0 : -0.5 * D, lean: leanImp, face, reach: putt ? 0.84 : 0.995 },
   };
 }
 
@@ -255,7 +280,7 @@ const DESIGN = {
   P6: { hipTurn: -0.33, shiftY: 0.075, chest: 0.42, flex: 0.11, bend: 0.2, tiltD: 0.01, drop: 0.012, heel: 0.12, kneeIn: 0.4, grip: [0.29, -0.17, 0.9], w: 0.8, shaft: [0.12, -0.99, -0.05], face: [0.88, 0, -0.45], tel: [-0.4, -0.35, -0.85], lel: [-0.4, 0.5, -0.75], look: 0 },
   P8: { hipTurn: -1.0, shiftY: 0.095, chest: -0.95, flex: 0.1, bend: 0.28, tiltD: -0.03, drop: 0.006, heel: 0.55, pivot: 0.1, kneeIn: 0.6, grip: [0.31, 0.45, 0.94], w: 0.75, shaft: [0.1, 1, 0.08], face: [-0.88, 0, -0.45], tel: [-0.4, -0.5, -0.75], lel: [-0.3, 0.2, -0.95], look: 0.12, k: 0.97, kMin: 0.93 },
   P9: { hipTurn: -1.32, shiftY: 0.11, chest: -1.42, flex: 0.06, bend: 0.2, tiltD: -0.2, drop: 0.0, heel: 0.95, pivot: 0.3, kneeIn: 0.85, grip: [0.2, 0.47, 1.36], w: 0.35, shaft: [-0.45, 0.15, 0.88], face: [-0.6, -0.65, -0.2], tel: [-0.3, -0.4, -0.9], lel: [-0.2, 0.3, -0.95], look: 0.5, k: 0.86, kMin: 0.7 },
-  P10: { hipTurn: -1.55, shiftY: 0.12, chest: -1.88, flex: -0.04, bend: -0.04, tiltD: -0.5, drop: -0.005, heel: 1.3, pivot: 0.55, kneeIn: 1.05, grip: [-0.1, 0.2, 1.55], w: 0.0, shaft: [-0.35, -0.8, -0.48], face: [-0.3, 0.45, -0.8], tel: [0.1, -0.6, -0.8], lel: [-0.1, 0.3, -0.95], look: 1, k: 0.62, kMin: 0.45 },
+  P10: { hipTurn: -1.55, shiftY: 0.12, chest: -1.88, flex: -0.04, bend: -0.04, tiltD: -0.5, drop: -0.005, heel: 1.3, pivot: 0.55, kneeIn: 1.05, grip: [-0.3, 0.02, 1.58], w: 0.0, shaft: [0.55, -0.5, -0.62], face: [0.3, 0.75, -0.3], tel: [0.4, 0.3, -0.85], lel: [-0.2, 0.5, -0.85], look: 1, k: 0.62, kMin: 0.45 },
 };
 // Shot and style variants of the follow-through (held-off low finish, high open flop, rolled
 // draw, held cut, reverse-C big finish).
@@ -267,7 +292,7 @@ const VARIANTS = {
   },
   flop: {
     P8: { shaft: [0.1, 0.98, 0.18], face: [-0.25, -0.15, 0.95] },
-    P10: { grip: [-0.04, 0.24, 1.62], shaft: [-0.25, -0.62, -0.74], face: [-0.2, 0.75, -0.6] },
+    P10: { grip: [-0.26, 0.04, 1.68], shaft: [0.45, -0.45, -0.77], face: [0.3, 0.8, -0.2] },
   },
   draw: {
     P8: { face: [-0.95, 0, -0.3] },
@@ -276,10 +301,10 @@ const VARIANTS = {
   cut: {
     P8: { face: [-0.6, -0.1, 0.75] },
     P9: { grip: [0.24, 0.5, 1.4], face: [-0.25, -0.7, 0.4] },
-    P10: { grip: [-0.04, 0.24, 1.58], face: [-0.1, 0.6, -0.8] },
+    P10: { grip: [-0.26, 0.05, 1.6], face: [0.1, 0.9, -0.3] },
   },
   bigfinish: {
-    P10: { bend: -0.3, flex: -0.12, tiltD: -0.62, grip: [-0.05, 0.12, 1.68], shaft: [-0.3, -0.84, -0.44], hipTurn: -1.5, chest: -1.95 },
+    P10: { bend: -0.3, flex: -0.12, tiltD: -0.62, grip: [-0.24, -0.04, 1.72], shaft: [0.5, -0.6, -0.62], hipTurn: -1.5, chest: -1.95 },
   },
 };
 
@@ -363,9 +388,13 @@ export function placeGolfer(opts = {}) {
     autoDrop: 0,
     s: makeScratch(),
     keys: null,
+    groundFn: ground,
+    normalFn: normalAt,
+    armLen: 0.6,
+    rockAxis: null,
+    bx: 0,
+    by: 0,
   };
-  rig.groundFn = ground;
-  rig.normalFn = normalAt;
   const st = rig.st;
   const by = st.ballY * H;
   // Initial stance distance guess: the club's horizontal reach plus the hands under the shoulders.
@@ -459,7 +488,7 @@ function setFeet(rig) {
     // Minimal rotation from z to the normal.
     const ax = -ny;
     const ayy = nx;
-    const al = Math.hypot(ax, ayy);
+    const al = len2(ax, ayy);
     if (al < 1e-6) m3id(Rg, 0);
     else m3axis(Rg, 0, ax / al, ayy / al, 0, Math.acos(clamp(nz, -1, 1)));
     feet.push({ side, flare, ball: new Float64Array([bxp, byp, gz]), Rg, ankleY: ay });
@@ -486,16 +515,17 @@ function torsoFK(rig, prm) {
   const m = S.m;
   const H = D.H;
   // Pelvis: R = Rz(-turn) Rx(bank) Ry(tilt)
-  m3axis(m, 0, 0, 1, 0, prm[P.tilt]);
-  m3axis(m, 9, 1, 0, 0, prm[P.bank]);
+  m3axisA(m, 0, 0, 1, 0, prm, P.tilt, 1);
+  m3axisA(m, 9, 1, 0, 0, prm, P.bank, 1);
   m3mul(m, 0, m, 9, m, 0);
-  m3axis(m, 9, 0, 0, 1, -prm[P.hipTurn]);
+  m3axisA(m, 9, 0, 0, 1, prm, P.hipTurn, -1);
   m3mul(R, BR(B.pelvis), m, 9, m, 0);
   X[0] = prm[P.shiftX] * H;
   X[1] = prm[P.shiftY] * H;
   X[2] = J[2] - (prm[P.drop] * H + rig.autoDrop);
   // Spine and chest share flex, bend and twist (40/60).
-  const twist = prm[P.chest] - prm[P.hipTurn];
+  const A = S.a;
+  A[0] = prm[P.chest] - prm[P.hipTurn];
   for (let i = 0; i < 2; i++) {
     const b = i === 0 ? B.spine : B.chest;
     const par = i === 0 ? B.pelvis : B.spine;
@@ -505,18 +535,17 @@ function torsoFK(rig, prm) {
     X[BX(b)] = X[BX(par)] + v[0];
     X[BX(b) + 1] = X[BX(par) + 1] + v[1];
     X[BX(b) + 2] = X[BX(par) + 2] + v[2];
-    m3axis(m, 0, 0, 1, 0, prm[P.flex] * k);
-    m3axis(m, 9, 1, 0, 0, prm[P.bend] * k);
+    m3axisA(m, 0, 0, 1, 0, prm, P.flex, k);
+    m3axisA(m, 9, 1, 0, 0, prm, P.bend, k);
     m3mul(m, 0, m, 0, m, 9);
-    m3axis(m, 9, 0, 0, 1, -twist * k);
+    m3axisA(m, 9, 0, 0, 1, A, 0, -k);
     m3mul(m, 0, m, 0, m, 9);
     m3mul(R, BR(b), R, BR(par), m, 0);
   }
   // Putting rock: an extra rotation of the chest about the rig's rock axis.
   if (prm[P.rock] !== 0 && rig.rockAxis) {
-    const a = rig.rockAxis;
-    m3axis(m, 0, a[0], a[1], a[2], prm[P.rock]);
-    m3mul(R, BR(B.chest), m, 0, R, BR(B.chest));
+    m3axisV(S.rk, 0, rig.rockAxis, 0, prm, P.rock);
+    m3mul(R, BR(B.chest), S.rk, 0, R, BR(B.chest));
   }
   // Clavicles: the lead one protracts (reaches across) as the arm crosses the chest.
   for (let i = 0; i < 2; i++) {
@@ -528,9 +557,8 @@ function torsoFK(rig, prm) {
     X[BX(cl)] = X[BX(B.chest)] + v[0];
     X[BX(cl) + 1] = X[BX(B.chest) + 1] + v[1];
     X[BX(cl) + 2] = X[BX(B.chest) + 2] + v[2];
-    const pro = sd > 0 ? prm[P.clav] : 0;
     // Protraction: rotate about the chest's z axis (forward for the lead side).
-    m3axis(m, 0, 0, 0, 1, -pro * sd);
+    m3axisA(m, 0, 0, 0, 1, prm, P.clav, sd > 0 ? -1 : 0);
     m3mul(R, BR(cl), R, BR(B.chest), m, 0);
     m3v(v, 0, R, BR(cl), J[ua * 3] - J[cl * 3], J[ua * 3 + 1] - J[cl * 3 + 1], J[ua * 3 + 2] - J[cl * 3 + 2]);
     X[BX(ua)] = X[BX(cl)] + v[0];
@@ -566,14 +594,31 @@ function gripFromArm(rig, prm, out, oo) {
 // and lower bone world rotations (bones b1, b2) and their origins. bendSign: +1 when the joint
 // bends toward the bone's local -X... arms: the forearm swings toward the upper arm's +X, which
 // points away from the pole; legs: toward -X (the knee, toward the pole, is +X).
-function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, twistX, twistY, twistZ) {
+// Inputs in rig.s.k: root (0..2), target (3..5), lengths (6, 7), pole (8..10), twist hint for
+// the lower bone (11..13).
+function ik(rig, b1, b2, armLike) {
   const S = rig.s;
   const R = S.R;
   const X = S.X;
+  const K = S.k;
+  const rx = K[0];
+  const ry = K[1];
+  const rz = K[2];
+  const tx = K[3];
+  const ty = K[4];
+  const tz = K[5];
+  const l1 = K[6];
+  const l2 = K[7];
+  const px = K[8];
+  const py = K[9];
+  const pz = K[10];
+  const twistX = K[11];
+  const twistY = K[12];
+  const twistZ = K[13];
   let dx = tx - rx;
   let dy = ty - ry;
   let dz = tz - rz;
-  let d = Math.hypot(dx, dy, dz);
+  let d = len3(dx, dy, dz);
   if (d < 1e-6) {
     dx = 0;
     dy = 0;
@@ -591,7 +636,7 @@ function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, tw
   let qx = px - ux * pd;
   let qy = py - uy * pd;
   let qz = pz - uz * pd;
-  let ql = Math.hypot(qx, qy, qz);
+  let ql = len3(qx, qy, qz);
   if (ql < 1e-6) {
     // Any perpendicular.
     qx = Math.abs(uz) < 0.9 ? -uy : 1;
@@ -601,7 +646,7 @@ function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, tw
     qx -= ux * pd;
     qy -= uy * pd;
     qz -= uz * pd;
-    ql = Math.hypot(qx, qy, qz) || 1;
+    ql = len3(qx, qy, qz) || 1;
   }
   qx /= ql;
   qy /= ql;
@@ -616,12 +661,18 @@ function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, tw
   let zx = rx - ex;
   let zy = ry - ey;
   let zz = rz - ez;
-  let zl = Math.hypot(zx, zy, zz) || 1;
+  let zl = len3(zx, zy, zz) || 1;
   zx /= zl;
   zy /= zl;
   zz /= zl;
   const sg = armLike ? -1 : 1;
-  frameFrom(R, BR(b1), zx, zy, zz, sg * qx, sg * qy, sg * qz);
+  K[0] = zx;
+  K[1] = zy;
+  K[2] = zz;
+  K[3] = sg * qx;
+  K[4] = sg * qy;
+  K[5] = sg * qz;
+  frameFrom(R, BR(b1), K);
   // Lower bone: from the joint toward the (reachable) target.
   X[BX(b2)] = ex;
   X[BX(b2) + 1] = ey;
@@ -629,7 +680,7 @@ function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, tw
   let wx = tx - ex;
   let wy = ty - ey;
   let wz = tz - ez;
-  zl = Math.hypot(wx, wy, wz) || 1;
+  zl = len3(wx, wy, wz) || 1;
   zx = -wx / zl;
   zy = -wy / zl;
   zz = -wz / zl;
@@ -637,16 +688,28 @@ function ik(rig, b1, b2, rx, ry, rz, tx, ty, tz, l1, l2, px, py, pz, armLike, tw
   const ux1 = R[BR(b1)];
   const uy1 = R[BR(b1) + 1];
   const uz1 = R[BR(b1) + 2];
-  frameFrom(R, BR(b2), zx, zy, zz, ux1 + twistX, uy1 + twistY, uz1 + twistZ);
+  K[0] = zx;
+  K[1] = zy;
+  K[2] = zz;
+  K[3] = ux1 + twistX;
+  K[4] = uy1 + twistY;
+  K[5] = uz1 + twistZ;
+  frameFrom(R, BR(b2), K);
 }
 
 // Rotation with +Z = z and +X as close as possible to hint (orthonormalised).
-function frameFrom(R, o, zx, zy, zz, hx, hy, hz) {
+function frameFrom(R, o, K) {
+  const zx = K[0];
+  const zy = K[1];
+  const zz = K[2];
+  const hx = K[3];
+  const hy = K[4];
+  const hz = K[5];
   const d = hx * zx + hy * zy + hz * zz;
   let xx = hx - zx * d;
   let xy = hy - zy * d;
   let xz = hz - zz * d;
-  let l = Math.hypot(xx, xy, xz);
+  let l = len3(xx, xy, xz);
   if (l < 1e-6) {
     xx = Math.abs(zz) < 0.9 ? zy : 1;
     xy = Math.abs(zz) < 0.9 ? -zx : 0;
@@ -655,7 +718,7 @@ function frameFrom(R, o, zx, zy, zz, hx, hy, hz) {
     xx -= zx * d2;
     xy -= zy * d2;
     xz -= zz * d2;
-    l = Math.hypot(xx, xy, xz) || 1;
+    l = len3(xx, xy, xz) || 1;
   }
   xx /= l;
   xy /= l;
@@ -676,8 +739,9 @@ export function evalPose(rig, prm) {
   const v = S.v;
   const H = D.H;
   torsoFK(rig, prm);
-  // ---- club and hands
+  // ---- club and hands (a putting stroke rocks the club with the shoulders)
   m3FromQuat(R, BR(B.club), prm, P.qx);
+  if (prm[P.rock] !== 0 && rig.rockAxis) m3mul(R, BR(B.club), S.rk, 0, R, BR(B.club));
   gripFromArm(rig, prm, v, 0);
   X[BX(B.club)] = v[3];
   X[BX(B.club) + 1] = v[4];
@@ -701,7 +765,7 @@ export function evalPose(rig, prm) {
     const tx = X[BX(B.handR)] - X[s0];
     const ty = X[BX(B.handR) + 1] - X[s0 + 1];
     const tz = X[BX(B.handR) + 2] - X[s0 + 2];
-    const dist = Math.hypot(tx, ty, tz);
+    const dist = len3(tx, ty, tz);
     const over = dist - (la + lf) * 0.995;
     if (over > 0) {
       const k = Math.min(over, 0.03 * H) / dist;
@@ -716,7 +780,22 @@ export function evalPose(rig, prm) {
     const hb = i === 0 ? B.handL : B.handR;
     const pb = i === 0 ? P.lelX : P.telX;
     const s0 = BX(ua);
-    ik(rig, ua, fa, X[s0], X[s0 + 1], X[s0 + 2], X[BX(hb)], X[BX(hb) + 1], X[BX(hb) + 2], la, lf, prm[pb], prm[pb + 1], prm[pb + 2], true, R[BR(hb)], R[BR(hb) + 1], R[BR(hb) + 2]);
+    const K = S.k;
+    K[0] = X[s0];
+    K[1] = X[s0 + 1];
+    K[2] = X[s0 + 2];
+    K[3] = X[BX(hb)];
+    K[4] = X[BX(hb) + 1];
+    K[5] = X[BX(hb) + 2];
+    K[6] = la;
+    K[7] = lf;
+    K[8] = prm[pb];
+    K[9] = prm[pb + 1];
+    K[10] = prm[pb + 2];
+    K[11] = R[BR(hb)];
+    K[12] = R[BR(hb) + 1];
+    K[13] = R[BR(hb) + 2];
+    ik(rig, ua, fa, true);
   }
   // ---- head: look at the ball (or down the target line)
   {
@@ -734,7 +813,7 @@ export function evalPose(rig, prm) {
     let fx = bg[0] - ex;
     let fy = bg[1] - ey;
     let fz = bg[2] - ez;
-    let fl = Math.hypot(fx, fy, fz) || 1;
+    let fl = len3(fx, fy, fz) || 1;
     fx /= fl;
     fy /= fl;
     fz /= fl;
@@ -746,7 +825,7 @@ export function evalPose(rig, prm) {
       let gx = lf2[0] - ex;
       let gy = lf2[1] - ey;
       let gz = lf2[2] - ez;
-      const gl = Math.hypot(gx, gy, gz) || 1;
+      const gl = len3(gx, gy, gz) || 1;
       gx /= gl;
       gy /= gl;
       gz /= gl;
@@ -754,7 +833,7 @@ export function evalPose(rig, prm) {
       fy = lerp(fy, gy, lk);
       fz = lerp(fz, gz, lk);
     }
-    fl = Math.hypot(fx, fy, fz) || 1;
+    fl = len3(fx, fy, fz) || 1;
     fx /= fl;
     fy /= fl;
     fz /= fl;
@@ -767,7 +846,7 @@ export function evalPose(rig, prm) {
     ux -= fx * d;
     uy -= fy * d;
     uz -= fz * d;
-    const ul = Math.hypot(ux, uy, uz) || 1;
+    const ul = len3(ux, uy, uz) || 1;
     ux /= ul;
     uy /= ul;
     uz /= ul;
@@ -798,9 +877,15 @@ export function evalPose(rig, prm) {
       axy = v[7] / sa;
       axz = v[8] / sa;
     }
-    m3axis(m, 36, axx, axy, axz, ang * sc * 0.4);
+    const A = S.a;
+    A[0] = axx;
+    A[1] = axy;
+    A[2] = axz;
+    A[3] = ang * sc * 0.4;
+    A[4] = ang * sc;
+    m3axisV(m, 36, A, 0, A, 3);
     m3mul(R, BR(nb), R, BR(B.chest), m, 36);
-    m3axis(m, 36, axx, axy, axz, ang * sc);
+    m3axisV(m, 36, A, 0, A, 4);
     m3mul(R, BR(B.head), R, BR(B.chest), m, 36);
     const hb = B.head;
     m3v(v, 0, R, BR(nb), J[hb * 3] - J[nb * 3], J[hb * 3 + 1] - J[nb * 3 + 1], J[hb * 3 + 2] - J[nb * 3 + 2]);
@@ -816,11 +901,12 @@ export function evalPose(rig, prm) {
     const th = lead ? B.thighL : B.thighR;
     const sn = lead ? B.shinL : B.shinR;
     const fb = lead ? B.footL : B.footR;
-    const heel = lead ? 0 : prm[P.heel];
-    const pivot = lead ? 0 : prm[P.pivot];
+    const A = S.a;
+    A[0] = ft.flare + (lead ? 0 : prm[P.pivot]);
+    A[1] = lead ? 0 : prm[P.heel];
     // Foot rotation: ground tilt * Rz(flare + pivot) * Ry(heel lift).
-    m3axis(m, 0, 0, 0, 1, ft.flare + pivot);
-    m3axis(m, 9, 0, 1, 0, heel);
+    m3axisA(m, 0, 0, 0, 1, A, 0, 1);
+    m3axisA(m, 9, 0, 1, 0, A, 1, 1);
     m3mul(m, 0, m, 0, m, 9);
     m3mul(R, BR(fb), ft.Rg, 0, m, 0);
     // Ankle = ball contact + R * (ankle - ball contact) in foot space.
@@ -835,7 +921,22 @@ export function evalPose(rig, prm) {
     const hz = X[2] + v[2];
     // Knee pole: forward along the foot, the trail knee kicking in toward the target.
     const pa = ft.flare * 0.5 + (lead ? 0 : prm[P.kneeIn]);
-    ik(rig, th, sn, hx, hy, hz, ax, ay, az, D.thigh, D.shin, Math.cos(pa), Math.sin(pa), 0.05, false, 0, 0, 0);
+    const K = S.k;
+    K[0] = hx;
+    K[1] = hy;
+    K[2] = hz;
+    K[3] = ax;
+    K[4] = ay;
+    K[5] = az;
+    K[6] = D.thigh;
+    K[7] = D.shin;
+    K[8] = Math.cos(pa);
+    K[9] = Math.sin(pa);
+    K[10] = 0.05;
+    K[11] = 0;
+    K[12] = 0;
+    K[13] = 0;
+    ik(rig, th, sn, false);
     X[BX(fb)] = ax;
     X[BX(fb) + 1] = ay;
     X[BX(fb) + 2] = az;
@@ -885,7 +986,7 @@ function clubBasis(rig, lie, lean, face, out, oo) {
   let sx = ca * cl;
   let sy = sl;
   let sz = -sa * cl;
-  const l = Math.hypot(sx, sy, sz);
+  const l = len3(sx, sy, sz);
   sx /= l;
   sy /= l;
   sz /= l;
@@ -896,7 +997,7 @@ function clubBasis(rig, lie, lean, face, out, oo) {
   let xx = 0 - zx * (zy * 1);
   let xy = 1 - zy * (zy * 1);
   let xz = 0 - zz * (zy * 1);
-  const xl = Math.hypot(xx, xy, xz) || 1;
+  const xl = len3(xx, xy, xz) || 1;
   xx /= xl;
   xy /= xl;
   xz /= xl;
@@ -921,7 +1022,7 @@ function clubBasisFromDirs(sh, fc, out, oo) {
   let zx = -sh[0];
   let zy = -sh[1];
   let zz = -sh[2];
-  const zl = Math.hypot(zx, zy, zz) || 1;
+  const zl = len3(zx, zy, zz) || 1;
   zx /= zl;
   zy /= zl;
   zz /= zl;
@@ -929,7 +1030,7 @@ function clubBasisFromDirs(sh, fc, out, oo) {
   let xx = fc[0] - zx * d;
   let xy = fc[1] - zy * d;
   let xz = fc[2] - zz * d;
-  const xl = Math.hypot(xx, xy, xz) || 1;
+  const xl = len3(xx, xy, xz) || 1;
   xx /= xl;
   xy /= xl;
   xz /= xl;
@@ -951,7 +1052,7 @@ function setArmToGrip(rig, prm, gx, gy, gz) {
   const dx = gx + v[3] - X[BX(B.upperArmL)];
   const dy = gy + v[4] - X[BX(B.upperArmL) + 1];
   const dz = gz + v[5] - X[BX(B.upperArmL) + 2];
-  const d = Math.hypot(dx, dy, dz) || 1e-6;
+  const d = len3(dx, dy, dz) || 1e-6;
   m3tv(v, 0, S.R, BR(B.chest), dx / d, dy / d, dz / d);
   prm[P.e] = Math.acos(clamp(-v[2], -1, 1));
   prm[P.phi] = Math.atan2(v[1], v[0]);
@@ -966,7 +1067,7 @@ function leadWristDist(rig, g, m, mo) {
   const v = S.v;
   const w = rig.dims.grip.lead.wrist;
   m3v(v, 6, m, mo, w[0], w[1], w[2]);
-  return Math.hypot(g[0] + v[6] - X[BX(B.upperArmL)], g[1] + v[7] - X[BX(B.upperArmL) + 1], g[2] + v[8] - X[BX(B.upperArmL) + 2]);
+  return len3(g[0] + v[6] - X[BX(B.upperArmL)], g[1] + v[7] - X[BX(B.upperArmL) + 1], g[2] + v[8] - X[BX(B.upperArmL) + 2]);
 }
 function trailWristDist(rig, g, m, mo) {
   const S = rig.s;
@@ -974,7 +1075,7 @@ function trailWristDist(rig, g, m, mo) {
   const v = S.v;
   const w = rig.dims.grip.trail.wrist;
   m3v(v, 6, m, mo, w[0], w[1], w[2]);
-  return Math.hypot(g[0] + v[6] - X[BX(B.upperArmR)], g[1] + v[7] - X[BX(B.upperArmR) + 1], g[2] + v[8] - X[BX(B.upperArmR) + 2]);
+  return len3(g[0] + v[6] - X[BX(B.upperArmR)], g[1] + v[7] - X[BX(B.upperArmR) + 1], g[2] + v[8] - X[BX(B.upperArmR) + 2]);
 }
 
 // Grip position for a club whose impact point sits at target (G) with rotation m.
@@ -1057,7 +1158,7 @@ function solveAddress(rig, bx0, by) {
     let hi = 1.0 * H;
     const dist = (bx) => {
       gripAt(bx);
-      return Math.hypot(g[0] + v[12] - sx, g[1] + v[13] - sy, g[2] + v[14] - sz);
+      return len3(g[0] + v[12] - sx, g[1] + v[13] - sy, g[2] + v[14] - sz);
     };
     // d grows with bx once the wrist is in front of the shoulder; start the bracket there.
     gripAt(lo);
@@ -1222,7 +1323,7 @@ function buildKeys(rig, addrPrm) {
     let ax = hz;
     let ay = 0;
     let az = -hx;
-    const l = Math.hypot(ax, ay, az) || 1;
+    const l = len3(ax, ay, az) || 1;
     ax /= l;
     az /= l;
     // Positive rock must move the head back (-Y): rotating h about axis by +eps changes y by
@@ -1243,19 +1344,17 @@ function buildKeys(rig, addrPrm) {
   keys.back = [P1, k('P2'), k('P3'), k('P4'), k('P4X')];
   keys.down = [P7, k('P6'), k('P5'), keys.back[3], keys.back[4]];
   keys.make = k;
-  keys.follow = { normal: [P7, k('P8'), k('P9'), k('P10')] };
-  for (const qs of [keys.back, keys.down, keys.follow.normal]) alignQuats(qs);
+  // Every follow-through variant up front (fixed shapes; no work at the strike).
+  keys.follow = {};
+  for (const v of FOLLOW_VARIANTS) keys.follow[v] = [P7, k('P8', v), k('P9', v), k('P10', v)];
+  for (const qs of [keys.back, keys.down, ...Object.values(keys.follow)]) alignQuats(qs);
   return keys;
 }
+const FOLLOW_VARIANTS = ['normal', 'low', 'flop', 'draw', 'cut', 'bigfinish'];
 
 function followKeys(rig, variant) {
-  const keys = rig.keys;
-  if (!keys.follow[variant]) {
-    const k = keys.make;
-    keys.follow[variant] = [keys.P7, k('P8', variant), k('P9', variant), k('P10', variant)];
-    alignQuats(keys.follow[variant]);
-  }
-  return keys.follow[variant];
+  const f = rig.keys.follow;
+  return f[variant] || f.normal;
 }
 
 function gripOf(rig, prm) {
@@ -1299,7 +1398,7 @@ function splineKeys(keys, u, out) {
   normQ(out);
 }
 function normQ(o) {
-  const l = Math.hypot(o[P.qx], o[P.qy], o[P.qz], o[P.qw]) || 1;
+  const l = len4(o[P.qx], o[P.qy], o[P.qz], o[P.qw]) || 1;
   o[P.qx] /= l;
   o[P.qy] /= l;
   o[P.qz] /= l;
@@ -1347,24 +1446,32 @@ export class SwingAnimator {
     this._v = new Float64Array(3);
     this._v4 = new Float64Array(4);
     this._dw = new Float64Array(45);
+    this._hinge = 1.5;
     this._hinge = 1;
     this._variant = 'normal';
+    this._follow = null;
+    this._tBack = 0.5;
+    this._tDown = 0.5;
+    this._tFollow = 0.5;
+    this._fMax = 0.5;
+    this._uFrom = 0.5;
     this.rig = null;
     this.state = 'address';
+    this.t = 0.5;
+    this.u = 0.5;
+    this.uTarget = 0.5;
+    this.uTop = 0.5;
+    this.power = 0.5;
     this.t = 0;
-    this.u = 0;
-    this.uTarget = 0;
-    this.uTop = 0;
-    this.power = 0;
     this.kind = 'full';
-    this.impactTime = 0;
-    this._tState = 0;
+    this.impactTime = 0.5;
+    this._tState = 0.5;
     this._onImpact = null;
     this._impacted = false;
     this._idleSeed = 1;
     this._nextIdle = 3.2;
     this._idleKind = 0;
-    this._idleT = -1;
+    this._idleT = -1.5;
     this._placeOpts = opts.ball ? opts : null;
     this.place(opts.ball ? opts : { ball: { x: 0, y: 0, z: BALL_R }, aimYaw: Math.PI / 2 });
   }
@@ -1433,7 +1540,7 @@ export class SwingAnimator {
     this._tFollow = tm.follow;
     this._fMax = this._followLength(p);
     this._variant = this._followVariant();
-    if (!this.rig.keys.putt) followKeys(this.rig, this._variant);
+    this._follow = this.rig.keys.putt ? null : followKeys(this.rig, this._variant);
     this._hinge = this.shot === 'bump' ? 0.3 : 1;
     // Without a live backswing (tap meter, bot), swing back automatically first.
     const live = this.state === 'backswing' && this.u >= uTop * 0.6;
@@ -1717,7 +1824,7 @@ export class SwingAnimator {
     }
     // Fast out of impact, decelerating into the finish.
     const e = 1 - Math.pow(1 - x, 2.4);
-    const keys = followKeys(this.rig, this._variant || 'normal');
+    const keys = this._follow || followKeys(this.rig, 'normal');
     splineKeys(keys, this._fMax * e, out);
     if (this._hinge < 1) this._deadWrist(out, 1 - this._hinge);
   }
@@ -1787,8 +1894,8 @@ const AF = new Float64Array(18);
 function armFrame(rig, prm, m, mo) {
   torsoFK(rig, prm);
   const R = rig.s.R;
-  m3axis(AF, 0, 0, 0, 1, prm[P.phi]);
-  m3axis(AF, 9, 0, 1, 0, -prm[P.e]);
+  m3axisA(AF, 0, 0, 0, 1, prm, P.phi, 1);
+  m3axisA(AF, 9, 0, 1, 0, prm, P.e, -1);
   m3mul(AF, 0, AF, 0, AF, 9);
   m3mul(m, mo, R, BR(B.chest), AF, 0);
 }

@@ -133,11 +133,32 @@ function main() {
       const k = dist || 3.6;
       eye = { x: gc.x + d.x * k, y: gc.y + d.y * k, z: ball.z + 1.15 };
       at = { x: gc.x, y: gc.y, z: ball.z + 0.9 };
-    } else if (mode === 'close') {
+    } else if (mode === 'close' || mode === 'profile') {
+      // Along the head's own forward axis (or its side for a profile), whatever the pose.
+      const b = anim.bones;
+      const o = 4 * 16;
+      const fw = { x: b[o], y: b[o + 1], z: b[o + 2] };
+      const sd = { x: b[o + 4], y: b[o + 5], z: b[o + 6] };
+      const up = { x: b[o + 8], y: b[o + 9], z: b[o + 10] };
       const head = anim.jointWorld(4);
-      const k = dist || 0.9;
-      eye = { x: head.x + f.x * k, y: head.y + f.y * k, z: head.z + 0.12 };
-      at = { x: head.x, y: head.y, z: head.z + 0.1 };
+      const c = { x: head.x + up.x * 0.1 + fw.x * 0.04, y: head.y + up.y * 0.1 + fw.y * 0.04, z: head.z + up.z * 0.1 + fw.z * 0.04 };
+      const k = dist || 0.75;
+      const ax = mode === 'profile' ? sd : fw;
+      eye = { x: c.x + ax.x * k, y: c.y + ax.y * k, z: c.z + ax.z * k };
+      at = c;
+      return { eye, target: at, up, fovY: (30 * Math.PI) / 180, near: 0.05, far: 6000, shiftX: 0 };
+    } else if (mode === 'clubhead') {
+      // Low, from in front of the ball (the golfer's far side), toe on the left.
+      const k = dist || 0.55;
+      eye = { x: ball.x + f.x * k - d.x * 0.25, y: ball.y + f.y * k - d.y * 0.25, z: ball.z + 0.12 };
+      at = { x: ball.x - f.x * 0.03, y: ball.y - f.y * 0.03, z: ball.z };
+      return { eye, target: at, up: { x: 0, y: 0, z: 1 }, fovY: (30 * Math.PI) / 180, near: 0.02, far: 6000, shiftX: 0 };
+    } else if (mode === 'clubface') {
+      // Low, from the target side, looking back at the face.
+      const k = dist || 0.5;
+      eye = { x: ball.x + d.x * k + f.x * 0.12, y: ball.y + d.y * k + f.y * 0.12, z: ball.z + 0.06 };
+      at = { x: ball.x - f.x * 0.06, y: ball.y - f.y * 0.06, z: ball.z };
+      return { eye, target: at, up: { x: 0, y: 0, z: 1 }, fovY: (30 * Math.PI) / 180, near: 0.02, far: 6000, shiftX: 0 };
     } else if (mode === 'hands') {
       const hnd = anim.jointWorld(8);
       const k = dist || 0.8;
@@ -171,7 +192,7 @@ function main() {
       pin: { visible: true },
       wind: { x: 1, y: 0.5 },
       read: { on: false },
-      golfer: { visible: true, mesh: state.mesh, bones: anim.bones, alpha: 1, fadeNear: !/close|hands/.test(state.opts.cam || '') },
+      golfer: { visible: true, mesh: state.mesh, bones: anim.bones, alpha: 1, fadeNear: !/close|hands|profile|clubhead|clubface/.test(state.opts.cam || '') },
     });
     const st = renderer.stats();
     const h = anim.clubHeadWorld();

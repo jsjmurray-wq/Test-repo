@@ -442,17 +442,17 @@ function gripFrames(hs) {
     const z = norm3(zDir);
     const y = norm3(sub3(yHint, scale3(z, dot3(yHint, z))));
     const x = cross3(y, z);
-    return { rot: [x[0], x[1], x[2], y[0], y[1], y[2], z[0], z[1], z[2]], wrist, grip };
+    return { rot: new Float64Array([x[0], x[1], x[2], y[0], y[1], y[2], z[0], z[1], z[2]]), wrist, grip };
   };
   const leadZ = norm3([0.16, -0.3, 0.94]);
   const lead = frame(leadZ, [1, 0, 0], null, [0, 0, 0]);
   // Wrist: up the forearm from the grip, a little toward the back of the hand.
-  lead.wrist = add3(scale3(leadZ, 0.083 * s), scale3([lead.rot[3], lead.rot[4], lead.rot[5]], 0.012 * s));
+  lead.wrist = new Float64Array(add3(scale3(leadZ, 0.083 * s), scale3([lead.rot[3], lead.rot[4], lead.rot[5]], 0.012 * s)));
   const gap = 0.088 * s;
   const trailZ = norm3([-0.3, -0.26, 0.92]);
   const trail = frame(trailZ, [1, 0, 0], null, [0, 0, -gap]);
   // The right hand's back faces -Y_hand (its palm faces the target, +X club).
-  trail.wrist = add3(add3([0, 0, -gap], scale3(trailZ, 0.083 * s)), scale3([trail.rot[3], trail.rot[4], trail.rot[5]], -0.012 * s));
+  trail.wrist = new Float64Array(add3(add3([0, 0, -gap], scale3(trailZ, 0.083 * s)), scale3([trail.rot[3], trail.rot[4], trail.rot[5]], -0.012 * s)));
   return { lead, trail, gap, scale: s };
 }
 
