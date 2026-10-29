@@ -132,7 +132,7 @@ test('mesh: budgets, valid indices, bone ids and unit normals for every option',
     assert.equal(m.mat.length, nv);
     assert.ok(m.idx instanceof Uint16Array && nv < 65536);
     assert.equal(m.tris, m.idx.length / 3);
-    assert.ok(m.tris <= 9000, `${JSON.stringify(L)} ${club}: ${m.tris} tris`);
+    assert.ok(m.tris <= 10000, `${JSON.stringify(L)} ${club}: ${m.tris} tris`);
     maxTris = Math.max(maxTris, m.tris);
     minTris = Math.min(minTris, m.tris);
     for (let k = 0; k < m.idx.length; k++) if (m.idx[k] >= nv) assert.fail(`index ${m.idx[k]} >= ${nv}`);

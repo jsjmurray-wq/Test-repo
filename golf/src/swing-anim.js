@@ -1177,14 +1177,6 @@ function leadWristDist(rig, g, m, mo) {
   m3v(v, 6, m, mo, w[0], w[1], w[2]);
   return len3(g[0] + v[6] - X[BX(B.upperArmL)], g[1] + v[7] - X[BX(B.upperArmL) + 1], g[2] + v[8] - X[BX(B.upperArmL) + 2]);
 }
-function trailWristDist(rig, g, m, mo) {
-  const S = rig.s;
-  const X = S.X;
-  const v = S.v;
-  const w = rig.dims.grip.trail.wrist;
-  m3v(v, 6, m, mo, w[0], w[1], w[2]);
-  return len3(g[0] + v[6] - X[BX(B.upperArmR)], g[1] + v[7] - X[BX(B.upperArmR) + 1], g[2] + v[8] - X[BX(B.upperArmR) + 2]);
-}
 
 // Grip position for a club whose impact point sits at target (G) with rotation m.
 function gripForImpact(rig, m, mo, tx, ty, tz, out) {

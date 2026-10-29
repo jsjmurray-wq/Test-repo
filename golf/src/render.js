@@ -1049,11 +1049,14 @@ export class Renderer {
     const gl = this.gl;
     if (this.golferGL && this.golferGL.mesh === mesh) return this.golferGL;
     if (this.golferGL) for (const k of ['pos', 'nrm', 'col', 'bm', 'idx']) gl.deleteBuffer(this.golferGL[k]);
+    // Per vertex (bone, material, second bone, its weight): joints blend two bones.
     const nv = mesh.pos.length / 3;
-    const bm = new Float32Array(nv * 2);
+    const bm = new Float32Array(nv * 4);
     for (let i = 0; i < nv; i++) {
-      bm[i * 2] = mesh.bone[i];
-      bm[i * 2 + 1] = mesh.mat ? mesh.mat[i] : 0;
+      bm[i * 4] = mesh.bone[i];
+      bm[i * 4 + 1] = mesh.mat ? mesh.mat[i] : 0;
+      bm[i * 4 + 2] = mesh.bone2 ? mesh.bone2[i] : mesh.bone[i];
+      bm[i * 4 + 3] = mesh.weight ? mesh.weight[i] : 0;
     }
     this.golferGL = {
       mesh,
@@ -1078,7 +1081,7 @@ export class Renderer {
     A.bind(p.a.aPos, st.G.pos, 3);
     A.bind(p.a.aNrm, st.G.nrm, 3);
     A.bind(p.a.aCol, st.G.col, 3);
-    A.bind(p.a.aBM, st.G.bm, 2);
+    A.bind(p.a.aBM, st.G.bm, 4);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
     gl.enable(gl.CULL_FACE);
     if (st.mirror) gl.frontFace(gl.CW);
@@ -1159,7 +1162,7 @@ export class Renderer {
     gl.uniform1f(u.uInvHalf, 1 / half);
     const A = this.attribs;
     A.bind(pm.a.aPos, st.G.pos, 3);
-    A.bind(pm.a.aBM, st.G.bm, 2);
+    A.bind(pm.a.aBM, st.G.bm, 4);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, st.G.idx);
     this._drawElements(st.G.count);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

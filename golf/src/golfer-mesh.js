@@ -427,8 +427,75 @@ export function buildGolferMesh(look, club = '7i') {
   part('handsClub', () => buildHandsAndClub(g, D, L, pal, J, spec));
   const m = g.build();
   m.parts = { ...parts, ...(g.sub || {}) };
+  jointBlend(m, D, J);
   const pel = J(B.pelvis);
   return { ...m, center: pel, height: D.H, key: `${lookKey(L)}#${spec.id}`, club: spec.id, bones: BONE_COUNT };
+}
+
+// Joints blend two bones (m.bone2, m.weight = bone2's share; render.js / shaders.js mix the two
+// skin matrices): the weights depend only on the bind-space position, so the overlapping parts
+// round a joint (thigh and shin tubes and the knee, upper arm and forearm, forearm and glove cuff,
+// pelvis and abdomen, abdomen and chest) move together and bend without the sawtooth seams of
+// rigid skinning; the buttocks partly follow the thighs.
+function jointBlend(m, D, J) {
+  const H = D.H;
+  const n = m.verts;
+  const bone = m.bone;
+  const bone2 = new Float32Array(bone);
+  const weight = new Float32Array(n);
+  const P = m.pos;
+  const hipZ = D.hipZ;
+  const side = [
+    { th: B.thighL, sn: B.shinL, ua: B.upperArmL, fa: B.forearmL, hd: B.handL },
+    { th: B.thighR, sn: B.shinR, ua: B.upperArmR, fa: B.forearmR, hd: B.handR },
+  ];
+  const set = (k, b1, b2, w) => {
+    bone[k] = b1;
+    bone2[k] = b2;
+    weight[k] = w;
+  };
+  for (let k = 0; k < n; k++) {
+    const b = bone[k];
+    const y = P[k * 3 + 1];
+    const z = P[k * 3 + 2];
+    for (const S of side) {
+      if (b === S.th || b === S.sn) {
+        const zK = J(S.sn)[2];
+        if (z < zK + 0.045 * H) set(k, S.th, S.sn, smooth(zK + 0.045 * H, zK - 0.035 * H, z));
+        else if (b === S.th && z > hipZ - 0.1 * H) {
+          // The thigh's top shares the buttock's blend (hipBlend); the inner thigh near the crotch
+          // stays with the pelvis a little longer.
+          const sideK = smooth(-0.012 * H, 0.03 * H, (S.th === B.thighL ? 1 : -1) * y);
+          const f = smooth(hipZ + 0.03 * H, hipZ - 0.05 * H, z) * (sideK + (1 - sideK) * smooth(hipZ - 0.05 * H, hipZ - 0.1 * H, z));
+          set(k, S.th, B.pelvis, 1 - f);
+        }
+      } else if (b === S.ua || b === S.fa || b === S.hd) {
+        const zE = J(S.fa)[2];
+        const zW = J(S.hd)[2];
+        if (b !== S.hd && z > zW + 0.03 * H) {
+          if (z < zE + 0.035 * H) set(k, S.ua, S.fa, smooth(zE + 0.035 * H, zE - 0.03 * H, z));
+        } else if (z > zW - 0.015 * H) {
+          set(k, S.fa, S.hd, smooth(zW + 0.022 * H, zW - 0.012 * H, z));
+        }
+      }
+    }
+    // Hair hanging below the chin (long hair, a ponytail) lags the head's turns a little.
+    if (b === B.head && m.mat[k] === 2 && z < D.chinZ + 0.02 * H && P[k * 3] < J(B.head)[0] + 0.01 * H) {
+      set(k, B.head, B.neck, 0.45 * smooth(D.chinZ + 0.02 * H, D.chinZ - 0.07 * H, z));
+    }
+    if (b === B.pelvis || b === B.spine || b === B.chest) {
+      if (b !== B.chest && z > 0.585 * H && z < 0.63 * H) set(k, B.pelvis, B.spine, smooth(0.594 * H, 0.624 * H, z));
+      else if (b !== B.pelvis && z > 0.66 * H && z < 0.716 * H) set(k, B.spine, B.chest, smooth(0.668 * H, 0.708 * H, z));
+      else if (b === B.pelvis && z < hipZ + 0.03 * H) {
+        // The buttock and the top of the leg follow the thigh (none of it at the crotch's middle).
+        const sd = y >= 0 ? 0 : 1;
+        const w = smooth(hipZ + 0.03 * H, hipZ - 0.05 * H, z) * smooth(0, 0.03 * H, Math.abs(y));
+        set(k, B.pelvis, side[sd].th, w);
+      }
+    }
+  }
+  m.bone2 = bone2;
+  m.weight = weight;
 }
 
 // ------------------------------------------------------------------ torso
@@ -989,11 +1056,17 @@ function buildHair(g, D, L, pal, hs, P, hairLine) {
     const hl = hairLine(th);
     t *= 0.25 + 0.75 * smooth(hl, hl + 0.22, ph);
     if (hat !== 'none' && hat !== 'visor') t = Math.min(t, 0.0045);
+    if (hat === 'visor') {
+      // Under the visor's band (0.006 s off the scalp) the hair stays inside it.
+      const b0 = hatLine(th);
+      const under = smooth(b0 - 0.12, b0 - 0.03, ph) * smooth(b0 + 0.29, b0 + 0.2, ph);
+      t = lin(t, Math.min(t, 0.0036), under);
+    }
     return t * s;
   };
   const ths = ring(24, 0);
-  // Rows from the hairline (per column) to the crown.
-  const rows = 8;
+  // Rows from the hairline (per column) to the crown (finer under a visor's band).
+  const rows = hat === 'visor' ? 13 : 8;
   const vs = linspace(0, 1, rows);
   const phAt = (th, v) => {
     const hl = hairLine(th);
@@ -1018,37 +1091,37 @@ function buildHair(g, D, L, pal, hs, P, hairLine) {
       },
     });
   }
-  // Long hair: a curtain falling to the shoulders behind and beside the face.
+  // Long hair: a closed shell (an outer and an inner surface meeting at a tapered hem and at the
+  // front edges) that leaves the scalp under the top shell, covers the ears and falls behind the
+  // jaw to the base of the neck, flaring off the head and neck. Its front edge sweeps back from the
+  // temple to behind the jaw, so the cheek and jaw stay clear in profile; the hem is rounded.
   if (style === 'long') {
-    const us = linspace(0.95, TAU - 0.95, 13);
-    g.grid({
-      us, vs: linspace(0, 1, 6), bone, mat: 2, closeU: false, flip: true, col: mul3(col, 0.95),
-      pos: (th, v) => {
-        const hl = Math.min(hairLine(th), 0.1);
-        const p = P(th, hl, thick(th, hl) * 0.9);
-        const drop = v * 0.2 * s;
-        const out = (0.004 + 0.02 * v) * s;
-        const ct = Math.cos(th);
-        const st = Math.sin(th);
-        // Hang below the jaw, flaring a little; shorter toward the front.
-        const front = smooth(1.6, 1.0, Math.min(Math.abs(Math.atan2(st, ct)), 3));
-        return [p[0] + ct * out * 0.6, p[1] + st * out, p[2] - drop * (1 - 0.45 * front)];
-      },
-    });
-    // Inner face of the curtain (so it is solid from the side).
-    g.grid({
-      us, vs: linspace(0, 1, 6), bone, mat: 2, closeU: false, col: mul3(col, 0.7),
-      pos: (th, v) => {
-        const hl = Math.min(hairLine(th), 0.1);
-        const p = P(th, hl, thick(th, hl) * 0.9 - 0.004 * s);
-        const drop = v * 0.2 * s;
-        const out = (0.0 + 0.018 * v) * s;
-        const ct = Math.cos(th);
-        const st = Math.sin(th);
-        const front = smooth(1.6, 1.0, Math.min(Math.abs(Math.atan2(st, ct)), 3));
-        return [p[0] + ct * out * 0.6, p[1] + st * out, p[2] - drop * (1 - 0.45 * front)];
-      },
-    });
+    const as = linspace(0, 1, 13);
+    const vsL = [0, 0.1, 0.25, 0.42, 0.6, 0.76, 0.9, 1];
+    const thF = (v) => lin(1.2, 1.95, smooth(0.0, 0.8, v));
+    const len = 0.165 * s;
+    const mid = (a, v, side) => {
+      const th = thF(v) + a * (TAU - 2 * thF(v));
+      const ph0 = hairLine(th) + 0.1;
+      const top = P(th, ph0, thick(th, ph0) * 0.75);
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      const rl = Math.hypot(ct * 0.75, st) || 1;
+      const rx = (ct * 0.75) / rl;
+      const ry = st / rl;
+      const edge = Math.sqrt(Math.max(0, Math.sin(Math.PI * a)));
+      // Shorter toward the front edges (a rounded hem), longest down the back.
+      const d = v * len * (0.5 + 0.5 * edge);
+      const out = (0.003 + 0.026 * smooth(0, 0.55, v) + 0.005 * v) * s;
+      // Thickness: closes at the front edges and tapers to the hem.
+      const T = 0.012 * s * Math.sqrt(edge) * Math.sqrt(Math.max(0, 1 - Math.pow(v, 3)));
+      const o = out + side * T * 0.5;
+      return [top[0] + rx * o, top[1] + ry * o, top[2] - d];
+    };
+    const strand = (a) => 0.92 + 0.08 * Math.sin(a * 53) * Math.sin(a * 19 + 1.3);
+    // a runs round the back counter-clockwise from above while v runs down: flip for the outside.
+    g.grid({ us: as, vs: vsL, bone, mat: 2, closeU: false, flip: true, col: (a) => mul3(col, 0.97 * strand(a)), pos: (a, v) => mid(a, v, 1) });
+    g.grid({ us: as, vs: vsL, bone, mat: 2, closeU: false, col: mul3(col, 0.7), pos: (a, v) => mid(a, v, -1) });
   }
   if (style === 'ponytail') {
     const root = P(Math.PI, -0.05, 0.004 * s);
@@ -1256,19 +1329,30 @@ function buildArms(g, D, L, pal, J) {
     const wr = J(sd > 0 ? B.handL : B.handR);
     const lenU = sh[2] - el[2];
     const sleeveEnd = 0.45; // fraction of the upper arm from the shoulder
-    // Upper arm: rounded elbow end, biceps, deltoid cap above the joint.
+    // Upper arm: rounded elbow end, biceps, deltoid cap above the joint. A striped sleeve has a
+    // duplicated row at every stripe edge (the same 0.03 H bands as the body, so the colours do
+    // not blend across a triangle).
+    const zAt = (v) => el[2] - 0.02 * H + v * (lenU + 0.034 * H);
     const vsU = [0, 0.04, 0.12, 0.3, 0.5, 0.55 - 1e-4, 0.55, 0.62, 0.75, 0.86, 0.94, 1.0];
+    if (stripes) {
+      const span = lenU + 0.034 * H;
+      for (let kz = Math.ceil(zAt(0.56) / (0.03 * H)); kz * 0.03 * H < zAt(0.995); kz++) {
+        const v = (kz * 0.03 * H - zAt(0)) / span;
+        vsU.push(v - 2e-5, v + 2e-5);
+      }
+      vsU.sort((a, b) => a - b);
+    }
     g.tube({
       vs: vsU, nu: 10, bone: ua,
       mat: 0,
       matFn: (u, v) => (v < 0.55 ? 1 : 0),
       col: (u, v) => {
         if (v < 0.55) return pal.skin;
-        if (stripes) return Math.floor((sh[2] - lenU * (1 - v)) / (0.03 * H) + 1e-6) % 2 === 0 ? pal.shirt : pal.shirt2;
+        if (stripes) return Math.floor(zAt(v) / (0.03 * H)) % 2 === 0 ? pal.shirt : pal.shirt2;
         return v < 0.6 ? mul3(sleeveCol, 0.93) : sleeveCol;
       },
       ring: (v) => {
-        const z = el[2] - 0.02 * H + v * (lenU + 0.034 * H);
+        const z = zAt(v);
         let r = lin(0.0178, 0.0232, smooth(0, 0.55, v)) * H * limb;
         if (v >= 0.55) r = (0.0262 + 0.0016 * bump(v, 0.78, 0.15)) * H * limb; // sleeve, looser
         if (v > 0.84) r *= Math.sqrt(Math.max(0, 1 - Math.pow((v - 0.84) / 0.16, 2))); // round over the shoulder
@@ -1283,13 +1367,14 @@ function buildArms(g, D, L, pal, J) {
     void cl;
     // Forearm: elbow cap, forearm muscle near the top, slim wrist.
     const lenF = el[2] - wr[2];
+    // The wrist end is closed (a disc inside the glove cuff / the hand), never a hollow ring.
     g.tube({
-      vs: [0, 0.06, 0.2, 0.45, 0.7, 0.86, 0.95, 1], nu: 10, bone: fa, mat: 1, col: pal.skin,
+      vs: [0, 1e-4, 0.06, 0.2, 0.45, 0.7, 0.86, 0.95, 1], nu: 10, bone: fa, mat: 1, col: pal.skin,
       ring: (v) => {
         const z = wr[2] - 0.012 * H + v * (lenF + 0.03 * H);
         let r = lin(0.0124, 0.0186, smooth(0.0, 0.72, v)) * H * limb;
         if (v > 0.86) r = 0.0172 * H * limb * (1 - (v - 0.86) * 4.5);
-        if (v === 0) r *= 0.6;
+        if (v < 0.01) r *= v === 0 ? 0 : 0.6;
         return { c: [el[0] - 0.002 * H * bump(v, 0.9, 0.1), el[1], z], r1: r * 0.92, r2: r * 1.05 };
       },
     });
@@ -1469,13 +1554,14 @@ function buildHand(g, which, fr, bone, col, gloved, pal, s) {
   const acr = norm([0 - ax[0] * ax[2], 0 - ax[1] * ax[2], 1 - ax[2] * ax[2]]);
   const thr = cross(acr, ax);
   g.tube({
-    vs: [0, 0.25, 0.55, 0.8, 1], nu: 10, bone, mat,
+    vs: [0, 0.25, 0.55, 0.8, 1 - 1e-4, 1], nu: 10, bone, mat,
     frame: [...thr, ...acr, ...ax], origin: p0,
     col,
     ring: (v) => {
-      const z = v * L;
-      const wide = lin(0.04, 0.026, smooth(0.0, 1.0, v)) * s;
-      const thick = lin(0.021, 0.02, v) * s;
+      const z = Math.min(v, 1 - 1e-4) * L;
+      const k = v === 1 ? 0 : 1; // closed at the wrist
+      const wide = lin(0.04, 0.026, smooth(0.0, 1.0, v)) * s * k;
+      const thick = lin(0.021, 0.02, v) * s * k;
       return { c: [0, 0, z], r1: thick, r2: wide, n: 2.4 };
     },
   });
@@ -1496,14 +1582,18 @@ function buildHand(g, which, fr, bone, col, gloved, pal, s) {
     },
   });
   // 4. Wrist (a glove cuff on the lead hand): continues the hand into the forearm.
+  // A closed, rounded shell: its top domes into the forearm instead of ending in an open ring.
+  const vsW = [0, 1e-4, 0.35, 0.7, 0.9, 1];
   g.tube({
-    vs: [0, 0.3, 0.7, 1], nu: 10, bone, mat,
+    vs: vsW, nu: 10, bone, mat,
     frame: [...thr, ...acr, ...ax], origin: w,
     col: (u, v) => (gloved ? (v > 0.25 && v < 0.75 && Math.cos(u) > 0.3 ? mul3(col, 0.8) : col) : col),
     ring: (v) => {
-      const z = (-0.01 + v * 0.022) * s;
-      const cap = v === 1 ? 0.7 : 1;
-      return { c: [0, 0, z], r1: 0.021 * s * cap * (gloved ? 1.07 : 1), r2: 0.026 * s * cap * (gloved ? 1.07 : 1) };
+      const z = (-0.01 + Math.max(v, 1e-4) * 0.022 + (v > 0.7 ? (v - 0.7) * 0.012 : 0)) * s;
+      const cap = v === 0 ? 0 : v > 0.7 ? Math.sqrt(Math.max(0, 1 - Math.pow((v - 0.7) / 0.3, 2))) : 1;
+      // A glove cuff sits over the forearm; a bare wrist stays just inside it (no double surface).
+      const k = gloved ? 1.1 : 0.86;
+      return { c: [0, 0, z], r1: 0.021 * s * cap * k, r2: 0.026 * s * cap * k };
     },
   });
   void zH;

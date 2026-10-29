@@ -1071,8 +1071,9 @@ void main() {
 // ---------------------------------------------------------------- golfer (rigid skinning)
 // One merged mesh (golfer-mesh.js); each vertex follows one bone's skin matrix (uBones, camera-
 // relative translation; GOLFER_BONES mat4s = 80 vertex uniform vectors, within WebGL1's 128).
-// aBM = (bone index, material): 0 cloth, 1 skin, 2 hair, 3 metal, 4 gloss, 5 rubber/leather,
-// 6 eyes. Lit like the rest of the scene (theme sun, hemisphere ambient, fog) plus a soft
+// aBM = (bone index, material, second bone, its weight): material 0 cloth, 1 skin, 2 hair, 3
+// metal, 4 gloss, 5 rubber/leather, 6 eyes. Vertices round a joint blend two bones' matrices (so
+// the limbs and the waist bend without seams). Lit like the rest of the scene (theme sun, hemisphere ambient, fog) plus a soft
 // sky-tinted rim light; skin wraps the light with a warm terminator. uAlpha fades the figure
 // (dithered, no sorting), and so does a camera within ~1 m.
 export const GOLFER_BONES = BONE_COUNT;
@@ -1080,7 +1081,7 @@ export const GOLFER_VS = `
 attribute vec3 aPos;
 attribute vec3 aNrm;
 attribute vec3 aCol;
-attribute vec2 aBM;
+attribute vec4 aBM;
 uniform mat4 uVP;
 uniform mat4 uBones[${BONE_COUNT}];
 varying vec3 vRel;
@@ -1088,7 +1089,7 @@ varying vec3 vN;
 varying vec3 vCol;
 varying float vMat;
 void main() {
-  mat4 m = uBones[int(aBM.x + 0.5)];
+  mat4 m = uBones[int(aBM.x + 0.5)] * (1.0 - aBM.w) + uBones[int(aBM.z + 0.5)] * aBM.w;
   vec4 p = m * vec4(aPos, 1.0);
   vRel = p.xyz;
   vN = (m * vec4(aNrm, 0.0)).xyz;
@@ -1154,7 +1155,7 @@ void main() {
 // so the shadow darkens once; GOLFER_GROUND then lays the blurred mask on the ground.
 export const GOLFER_MASK_VS = `
 attribute vec3 aPos;
-attribute vec2 aBM;
+attribute vec4 aBM;
 uniform mat4 uBones[${BONE_COUNT}];
 uniform vec3 uSun;
 uniform vec4 uPlane;
@@ -1163,7 +1164,7 @@ uniform vec3 uE1;
 uniform vec3 uE2;
 uniform float uInvHalf;
 void main() {
-  vec4 p = uBones[int(aBM.x + 0.5)] * vec4(aPos, 1.0);
+  vec4 p = (uBones[int(aBM.x + 0.5)] * (1.0 - aBM.w) + uBones[int(aBM.z + 0.5)] * aBM.w) * vec4(aPos, 1.0);
   float hgt = dot(uPlane.xyz, p.xyz) + uPlane.w;
   float ln = max(dot(uPlane.xyz, uSun), 0.2);
   vec3 q = p.xyz - uSun * (max(hgt, 0.0) / ln);
