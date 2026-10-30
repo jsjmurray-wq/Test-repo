@@ -93,6 +93,8 @@ import { B as STUDIO_BONES, lookKey as studioLookKey, loadLook as studioLoadLook
 import { BALL_R as STUDIO_BALL_R } from './constants.js';
 // Spectators (section 10; the "spectators" section below).
 import { CrowdReactions, crowdCount, REACT_NAMES } from './crowd.js';
+// Wildlife (section 10; the "wildlife" section below).
+import { Wildlife, MAX_ANIMALS, INST_FLOATS, SHADOW_FLOATS } from './wildlife.js';
 
 const SAVE_KEY = 'golf.save.v1';
 const BEST_KEY = 'golf.best.v1';
@@ -983,6 +985,7 @@ function onShotEvent(ev) {
   app.audio.handle(ev);
   if (ev.type === 'lipout') app.ui.toast('Lip out', 1600);
   crowdShotEvent(ev); // spectators react as the playback passes the shot's events
+  wildlifeShotEvent(ev); // animals near a landing take flight (section 10)
 }
 
 function onShotEnd({ shot, resolution: r }) {
@@ -1931,6 +1934,7 @@ function render(time, dt) {
   if (g && g.phase === 'address' && !app.paused) stepAid(performance.now() / 1000);
   const scene = buildScene(time, cam);
   applyGolferReadRule(scene);
+  wildlifeFrame(scene, dt); // the animals (section 10)
   app.renderer.draw(scene);
   app.lastScene = scene;
   golferArcBox(g, scene);
@@ -2747,6 +2751,228 @@ function installCrowdDebug() {
   };
 }
 
+// ================================================================== wildlife (section 10)
+// The animals of the hole on the renderer (wildlife.js; drawn by render.js's wildlife pass, 2 draw
+// calls). The sim is rebuilt whenever the renderer's hole changes (the menu backdrop as well),
+// stepped on the game clock (?fast scales it; pause and the tests' freeze stop it), told where the
+// golfer stands and, at address, the view corridor down the aim line (a new spot is a camera cut:
+// animals in the corridor or too close to him are moved out of sight first). Ball landings
+// (wildlifeShotEvent) and crowd cheers (the gallery's fired reactions, or a holed birdie when no
+// gallery is shown) flush them. Their calls go to audio.js animalCall, by distance from the camera.
+// Setting 'wildlife': 'on' | 'off'. Hooks: initWildlife() in boot, wildlifeFrame(scene, dt) in
+// render(), wildlifeShotEvent(ev) in onShotEvent; app.wildlifeCheer(x, y, strength) for anyone
+// else. Nothing here allocates per frame.
+const wild = {
+  sim: null,
+  terrain: null,
+  ctx: { golfer: false, gx: 0, gy: 0, address: false, bx: 0, by: 0, yaw: 0, carry: 0, wx: 0, wy: 0 },
+  scene: { inst: new Float32Array(MAX_ANIMALS * INST_FLOATS), shadow: new Float32Array(MAX_ANIMALS * SHADOW_FLOATS), count: 0, shadowCount: 0, key: '' },
+  call: { kind: '', x: 0, y: 0, z: 0 },
+  carryClub: null,
+  carryX: NaN,
+  carryY: NaN,
+  carry: 150,
+  phase: null,
+  calls: 0,
+  view: null, // tests: {i, dist, h, side} holds the camera on animal i (app.debug.wildlifeView)
+  cam: { eye: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 }, fovY: 0.5, near: 0.3, far: 6000 },
+};
+app.wildlife = wild;
+
+function wildlifeOn() {
+  return !!app.ui && app.ui.getSetting('wildlife') !== 'off' && !!app.renderer && !app.renderer.isNull;
+}
+
+// The sim for the hole on the renderer.
+function wildlifeSync() {
+  const t = app.holeTerrain;
+  if (t === wild.terrain) return wild.sim;
+  wild.terrain = t;
+  wild.sim = null;
+  wild.phase = null;
+  if (!t) return null;
+  try {
+    const g = app.game;
+    wild.sim = new Wildlife(t, { wind: g && g.terrain === t ? g.wind : null });
+    wild.scene.key = wild.sim.slots.join(',');
+  } catch (err) {
+    console.error(err);
+  }
+  return wild.sim;
+}
+
+// A ball coming down (playback of the shot's events): anything near it takes off or runs.
+function wildlifeShotEvent(ev) {
+  const sim = wild.sim;
+  if (!sim || !ev || !wildlifeOn() || !app.game || app.game.terrain !== wild.terrain) return;
+  if (ev.type === 'land' || ev.type === 'water' || ev.type === 'tree' || (ev.type === 'bounce' && (ev.v || 0) > 3)) {
+    sim.ballLanded(ev.x, ev.y, ev.type === 'water' ? SURF.WATER : ev.surface);
+  }
+}
+
+app.wildlifeCheer = (x, y, strength = 1) => {
+  if (wild.sim && wildlifeOn()) wild.sim.cheer(x, y, strength);
+};
+
+// Once per frame, after buildScene: step the animals and hand the renderer their rows.
+function wildlifeFrame(scene, dt) {
+  if (!wildlifeOn()) {
+    scene.wildlife = null;
+    return;
+  }
+  const sim = wildlifeSync();
+  if (!sim) return;
+  const g = app.game && app.game.terrain === wild.terrain ? app.game : null;
+  const c = wild.ctx;
+  c.golfer = false;
+  c.address = false;
+  if (g && g.phase) {
+    const ph = g.phase;
+    c.wx = g.wind.x;
+    c.wy = g.wind.y;
+    if (ph === 'address' || ph === 'decision') {
+      const b = g.state.hole.ball;
+      c.golfer = true;
+      c.gx = b.x;
+      c.gy = b.y;
+      if (ph === 'address') {
+        // The shot about to be played: the club's carry down the aim line (the cup for a putt).
+        if (wild.carryClub !== g.state.clubId || wild.carryX !== b.x || wild.carryY !== b.y) {
+          wild.carryClub = g.state.clubId;
+          wild.carryX = b.x;
+          wild.carryY = b.y;
+          const ci = g.isPutt ? null : g.clubInfo();
+          wild.carry = ci && ci.carry ? ci.carry : g.distanceToCup();
+        }
+        c.address = true;
+        c.bx = b.x;
+        c.by = b.y;
+        c.yaw = g.aimYaw;
+        c.carry = Math.min(wild.carry, g.distanceToCup() + 10);
+      }
+    } else if ((ph === 'flight' || ph === 'holed') && g.shot && g.shot.from) {
+      c.golfer = true;
+      c.gx = g.shot.from.x;
+      c.gy = g.shot.from.y;
+    }
+    // A holed birdie or better with no gallery to cheer it: the birds near the green still lift.
+    if (ph === 'holed' && wild.phase !== 'holed' && !crowdShown()) {
+      const h = g.state.card.holes[g.state.holeIndex];
+      const toPar = h && h.strokes != null ? h.strokes - h.par : 0;
+      if (toPar < 0) sim.cheer(g.terrain.cup.x, g.terrain.cup.y, toPar <= -2 ? 1 : 0.7);
+    }
+    wild.phase = ph;
+  }
+  // The gallery's cheers and applause (fired this frame) startle the animals near them.
+  const fired = app.crowd && app.crowd.react && app.crowd.react.fired;
+  if (fired && fired.length && crowdShown()) {
+    for (let k = 0; k < fired.length; k++) {
+      const f = fired[k];
+      if (f.type === 2) sim.cheer(f.x, f.y, f.strength);
+      else if (f.type === 1) sim.cheer(f.x, f.y, f.strength * 0.4);
+    }
+  }
+  const sdt = app.paused || app.frozen ? 0 : g ? dt * FAST : dt;
+  if (sdt > 0) sim.update(sdt, c);
+  // Calls, as loud as they are near the camera.
+  const e = scene.cam && scene.cam.eye;
+  if (e && app.audio && app.audio.animalCall) {
+    const t = scene.cam.target;
+    const fy = Math.atan2(t.y - e.y, t.x - e.x);
+    while (sim.pollCall(wild.call)) {
+      const q = wild.call;
+      const d = Math.hypot(q.x - e.x, q.y - e.y, q.z - e.z);
+      app.audio.animalCall(q.kind, d, -Math.sin(Math.atan2(q.y - e.y, q.x - e.x) - fy));
+      wild.calls++;
+    }
+  } else while (sim.pollCall(wild.call));
+  const s = wild.scene;
+  s.count = sim.write(s.inst, s.shadow);
+  s.shadowCount = sim.shadowCount;
+  scene.wildlife = s;
+  if (wild.view) wildlifeViewCam(scene);
+}
+
+// Tests and screenshots: hold the camera on one animal (TV long-lens framing).
+function wildlifeViewCam(scene) {
+  const v = wild.view;
+  const sim = wild.sim;
+  if (!sim || v.i >= sim.n) return;
+  const i = v.i;
+  const C = wild.cam;
+  // (fixed: the framing stays where the animal was when the view was set, e.g. a flock lifting off.)
+  if (v.fixed && !v.at) v.at = { x: sim.x[i], y: sim.y[i], z: sim.z[i], yaw: sim.yaw[i] };
+  const a = v.at;
+  const yaw = (v.yaw != null ? v.yaw : a ? a.yaw : sim.yaw[i]) + (v.side || 0);
+  const T = wild.terrain;
+  C.target.x = (a ? a.x : sim.x[i]) + (v.tx || 0);
+  C.target.y = (a ? a.y : sim.y[i]) + (v.ty || 0);
+  C.target.z = (a ? a.z : sim.z[i]) + (v.tz != null ? v.tz : 0.5);
+  C.eye.x = C.target.x - Math.cos(yaw) * v.dist;
+  C.eye.y = C.target.y - Math.sin(yaw) * v.dist;
+  C.eye.z = Math.max(T.heightAt(C.eye.x, C.eye.y) + 1.2, C.target.z + (v.h || 1.5));
+  C.fovY = v.fov || 0.45;
+  scene.cam = C;
+  scene.clearView = false;
+}
+
+function initWildlife() {
+  app.ui.onChange((s, key) => {
+    if (key === 'wildlife') app.drewPaused = false; // redraw the paused frame with or without them
+  });
+  if (!TEST || !app.debug) return;
+  // ?test=1 hooks: app.debug.wildlife() -> summary; wildlifeList() -> every animal (with screen px);
+  // wildlifeLand(x, y) -> a ball landing there; wildlifeView({i, dist, h, side, yaw, fov} | null);
+  // wildlifeStep(s) -> advance the animals s seconds.
+  app.debug.wildlife = () => {
+    const sim = wild.sim;
+    const r = app.renderer;
+    const ps = r && r.wild ? r.wild.stats : null;
+    const species = {};
+    const states = {};
+    let flying = 0;
+    if (sim) {
+      for (const a of sim.snapshot()) {
+        species[a.species] = (species[a.species] || 0) + 1;
+        states[a.state] = (states[a.state] || 0) + 1;
+        if (a.state === 'FLY' || a.state === 'TAKEOFF') flying++;
+      }
+    }
+    return {
+      on: wildlifeOn(),
+      setting: app.ui.getSetting('wildlife'),
+      theme: sim ? sim.theme : null,
+      n: sim ? sim.n : 0,
+      written: wild.scene.count,
+      drawn: !!(app.lastScene && app.lastScene.wildlife),
+      shadows: wild.scene.shadowCount,
+      species,
+      states,
+      flying,
+      stats: sim ? { ...sim.stats } : null,
+      pass: ps ? { ...ps } : null,
+      calls: wild.calls,
+    };
+  };
+  app.debug.wildlifeList = () => {
+    const sim = wild.sim;
+    if (!sim) return [];
+    return sim.snapshot().map((a) => {
+      const q = app.renderer.project(a.x, a.y, a.z + 0.3);
+      return { ...a, sx: q.sx, sy: q.sy, onScreen: q.visible && q.sx >= 0 && q.sx <= app.cssW && q.sy >= 0 && q.sy <= app.cssH };
+    });
+  };
+  app.debug.wildlifeLand = (x, y) => wildlifeShotEvent({ type: 'land', x, y, z: 0, surface: wild.terrain ? wild.terrain.surfaceAt(x, y) : null, v: 20 });
+  app.debug.wildlifeView = (v) => {
+    wild.view = v ? { dist: 12, h: 1.5, ...v } : null;
+    app.drewPaused = false;
+  };
+  app.debug.wildlifeStep = (s = 1) => {
+    if (!wild.sim) return;
+    for (let k = 0; k < Math.round(s * 30); k++) wild.sim.update(1 / 30, wild.ctx);
+  };
+}
+
 // ------------------------------------------------------------------ boot
 function boot() {
   const canvas = document.getElementById('gl');
@@ -2779,6 +3005,7 @@ function boot() {
   app.courseId = COURSE_PARAM || loadCourseChoice() || DEFAULT_COURSE_ID;
   if (TEST) installDebugHooks();
   if (TEST) installCrowdDebug(); // app.debug.crowd() (spectators, section 10)
+  initWildlife(); // the animals: settings hook and app.debug.wildlife*() (section 10)
 
   // From the menu: the picked course; Play again (final card) and Restart: the round's own (a
   // mixed round: Restart keeps its nine holes, Play again draws a new nine).

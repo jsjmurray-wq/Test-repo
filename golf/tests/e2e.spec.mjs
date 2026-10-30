@@ -9,6 +9,7 @@
 //   --customiser  only the Golfer customiser checks (golferCustomiser)
 //   --golfer      only the golfer-in-play checks (golferPlay, section 9.7)
 //   --crowd       only the spectator checks (crowdOnly, section 10; --vp= for some viewports)
+//   --wildlife    only the wildlife checks (wildlifeOnly, section 10; --vp= for some viewports)
 // WebGL comes from SwiftShader when available (renderer checks run); otherwise the flow runs
 // logic-only with ?nogl=1. Exits non-zero on any failure.
 
@@ -1528,6 +1529,123 @@ async function crowdOnly(browser, base, path, vp, gl) {
   await context.close();
 }
 
+// ------------------------------------------------------------------ wildlife (section 10)
+// Animals on every course (a characteristic hole each): the wildlife pass draws them (1-2 draw
+// calls: animals and their contact shadows) within the 30-call budget, the theme's species are
+// there; a ball landing beside a flock flushes it (and a real shot's landing reaches the sim);
+// Settings "Wildlife: Off" removes them (saved), On brings them back; no console errors. With
+// --shots: a close view of each course's characteristic animal. Builds without wildlife skip. Also
+// alone: --wildlife.
+async function wildlifeOnly(browser, base, path, vp, gl) {
+  const query = gl ? '?test=1&quality=low&fast=8' : '?test=1&nogl=1&fast=8';
+  const tag = `${vp.name}-${path.replace(/\W+/g, '_')}`;
+  const context = await browser.newContext({ ...vp });
+  const page = await context.newPage();
+  const errors = collectErrors(page);
+  const vpw = vp.viewport.width;
+  const vph = vp.viewport.height;
+  // [course, hole, species to see, a flock to flush, the close-up for --shots]
+  const courses = [
+    ['pines', 2, ['mallard', 'heron', 'songbird'], 'mallard', { species: 'heron', dist: 6, h: 0.8, side: 1.5, tz: 0.6 }],
+    ['desert', 2, ['hawk', 'lizard', 'jackrabbit'], 'quail', { species: 'hawk', dist: 25, h: -20, side: 0.4, tz: 0, fov: 0.35 }],
+    ['water', 1, ['flamingo', 'pelican', 'parrot'], 'flamingo', { species: 'flamingo', dist: 9, h: 1, side: 1.4, tz: 0.7 }],
+    ['links', 2, ['gull', 'rabbit'], 'rabbit', { species: 'gull', dist: 6, h: 0.3, side: 1.3, tz: 0 }],
+  ];
+  for (let k = 0; k < courses.length; k++) {
+    const [course, hole, want, flock, view] = courses[k];
+    await page.goto(`${base}/${path}${query}&course=${course}&hole=${hole}`);
+    await waitFor(page, () => !document.getElementById('menu').hidden, 15000);
+    if (k === 0) {
+      const has = await page.evaluate(() => !!(window.__golf.debug && window.__golf.debug.wildlife));
+      console.log(`\n[${vp.name}] ${path}${query} wildlife${has ? '' : ' (no wildlife in this build: skipped)'}`);
+      if (!has) {
+        await context.close();
+        return;
+      }
+    }
+    await page.locator('#menu [data-act="new-round"]').tap();
+    await waitFor(page, () => window.__golf.game && window.__golf.game.phase === 'intro', 8000);
+    await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+    await waitFor(page, () => window.__golf.game.phase === 'address', 8000);
+    await page.waitForTimeout(600);
+    const w = await page.evaluate(() => window.__golf.debug.wildlife());
+    const missing = want.filter((s) => !w.species[s]);
+    check(w.on && w.n > 0 && w.n < 40 && missing.length === 0, `wildlife: ${course} ${hole}: ${w.n} animals (${Object.entries(w.species).map(([s, n]) => `${n} ${s}`).join(', ')})${missing.length ? ` missing ${missing}` : ''}`);
+    if (gl) {
+      check(w.drawn && w.pass && w.pass.drawCalls >= 1 && w.pass.drawCalls <= 3 && w.pass.animals === w.written, `wildlife: ${course} ${hole}: drawn (${w.pass && w.pass.drawCalls} draw calls, ${w.written} animals, ${w.shadows} shadows, ${w.pass && w.pass.tris} tris)`);
+      const st = await page.evaluate(() => window.__golf.renderer.stats());
+      check(st.drawCalls <= 30, `wildlife: ${course} ${hole}: ${st.drawCalls} draw calls in all (budget 30)`);
+    }
+    // A ball landing beside the flock: the whole group takes flight (or runs) within a second.
+    const before = await page.evaluate(() => window.__golf.debug.wildlife().stats);
+    const target = await page.evaluate((sp) => window.__golf.debug.wildlifeList().find((a) => a.species === sp && a.vis > 0), flock);
+    if (target) {
+      await page.evaluate(([x, y]) => window.__golf.debug.wildlifeLand(x, y), [target.x + 4, target.y + 3]);
+      await waitFor(page, (g) => window.__golf.debug.wildlifeList().filter((a) => a.group === g).every((a) => a.state !== 'GRAZE' && a.state !== 'SWIM' && a.state !== 'IDLE' && a.state !== 'BASK'), 6000, target.group);
+      const g = await page.evaluate((grp) => window.__golf.debug.wildlifeList().filter((a) => a.group === grp).map((a) => a.state), target.group);
+      const after = await page.evaluate(() => window.__golf.debug.wildlife().stats);
+      check(after.flushes > before.flushes && g.every((s) => ['STARTLE', 'TAKEOFF', 'FLY', 'RUN', 'WALK', 'HIDE', 'ALERT', 'LAND'].includes(s)), `wildlife: ${course}: a ball landing beside the ${flock} flushes them (${g.join(', ')})`);
+      if (k === 0) await shot(page, tag, `wildlife-${course}-flush`);
+    } else check(false, `wildlife: ${course}: a ${flock} to flush`);
+    if (SHOTS && view) {
+      const a = await page.evaluate((sp) => window.__golf.debug.wildlifeList().find((q) => q.species === sp && q.vis > 0), view.species);
+      if (a) {
+        await page.evaluate((v) => window.__golf.debug.wildlifeView(v), { ...view, i: a.i });
+        await page.waitForTimeout(900);
+        await shot(page, tag, `wildlife-${course}-${view.species}`);
+        await page.evaluate(() => window.__golf.debug.wildlifeView(null));
+      }
+    }
+  }
+  // A real shot: its landing reaches the animals (the playback's shot events).
+  const l0 = await page.evaluate(() => window.__golf.debug.wildlife().stats.landings);
+  const p = await page.evaluate(() => {
+    const dbg = window.__golf.debug;
+    const r = dbg.padRect();
+    return { pad: r, depth: dbg.depthForPower(0.8, 'full', r.y + r.h * 0.3) };
+  });
+  await flickSwing(page, p.pad.x + p.pad.w * 0.5, p.pad.y + p.pad.h * 0.3, p.depth);
+  const flew = await waitFor(page, () => window.__golf.game.phase === 'flight', 8000);
+  if (flew) await waitFor(page, () => window.__golf.game.phase !== 'flight', 30000);
+  const l1 = await page.evaluate(() => window.__golf.debug.wildlife().stats.landings);
+  check(flew && l1 > l0, `wildlife: a real shot's landing reaches the animals (${l1 - l0} landing events)`);
+  // Settings: Wildlife Off removes the animals (and is saved), On brings them back.
+  await page.evaluate(() => window.__golf.ui.showSettings());
+  await page.waitForTimeout(400);
+  const seg = '#settings [data-setting="wildlife"]';
+  check(await page.isVisible(seg), 'wildlife: Settings has a Wildlife row');
+  await page.locator(`${seg} button[data-v="off"]`).tap();
+  if (gl) await waitFor(page, () => !window.__golf.debug.wildlife().drawn, 6000);
+  let w = await page.evaluate(() => ({ ...window.__golf.debug.wildlife(), saved: JSON.parse(localStorage.getItem('golf.settings.v1') || '{}').wildlife, draws: window.__golf.renderer.wild ? window.__golf.renderer.wild.stats.drawCalls : 0 }));
+  check(w.setting === 'off' && w.saved === 'off' && !w.on && (!gl || (!w.drawn && w.draws === 0)), `wildlife: Off removes them (drawn ${w.drawn}, saved "${w.saved}")`);
+  await page.locator(`${seg} button[data-v="on"]`).tap();
+  if (gl) await waitFor(page, () => window.__golf.debug.wildlife().drawn, 6000);
+  w = await page.evaluate(() => window.__golf.debug.wildlife());
+  check(w.setting === 'on' && (!gl || w.drawn), `wildlife: On brings them back (${w.written} animals)`);
+  await page.locator('#settings [data-act="close"]').first().tap();
+  if (gl) {
+    // A lost WebGL context: the pass is rebuilt from its CPU copy on restore and draws again.
+    const lost = await page.evaluate(async () => {
+      const ext = window.__golf.renderer.gl.getExtension('WEBGL_lose_context');
+      if (!ext) return null;
+      ext.loseContext();
+      await new Promise((r) => setTimeout(r, 300));
+      ext.restoreContext();
+      await new Promise((r) => setTimeout(r, 300));
+      return true;
+    });
+    if (lost) {
+      const back = await waitFor(page, () => {
+        const s = window.__golf.renderer.wild.stats;
+        return s.drawCalls >= 1 && s.animals > 0;
+      }, 10000);
+      check(back, 'wildlife: drawn again after a lost and restored WebGL context');
+    }
+  }
+  check(errors.length === 0, `wildlife: no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+  await context.close();
+}
+
 const server = await serve();
 const base = `http://127.0.0.1:${server.address().port}`;
 if (SHOTS) await mkdir(shotDir, { recursive: true });
@@ -1554,10 +1672,14 @@ try {
         await context.close();
       }
     }
-  } else if (!args.has('--soak-only') && !args.has('--crowd')) for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
+  } else if (!args.has('--soak-only') && !args.has('--crowd') && !args.has('--wildlife')) for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
   // Spectators (section 10): their own pass per build and viewport, after the UI flow (or alone).
-  if (args.has('--crowd') || !(args.has('--soak-only') || args.has('--golfer') || args.has('--customiser'))) {
+  if (args.has('--crowd') || !(args.has('--soak-only') || args.has('--golfer') || args.has('--customiser') || args.has('--wildlife'))) {
     for (const t of targets) for (const vp of VIEWPORTS.filter((v) => !vpArg || vpArg.slice(5).split(',').includes(v.name))) await crowdOnly(browser, base, t, vp, gl);
+  }
+  // Wildlife (section 10): its own pass per build and viewport, after the UI flow (or alone).
+  if (args.has('--wildlife') || !(args.has('--soak-only') || args.has('--golfer') || args.has('--customiser') || args.has('--crowd'))) {
+    for (const t of targets) for (const vp of VIEWPORTS.filter((v) => !vpArg || vpArg.slice(5).split(',').includes(v.name))) await wildlifeOnly(browser, base, t, vp, gl);
   }
   if (SOAK) for (const t of targets) for (const id of SOAK_COURSES) await soak(browser, base, t, gl, id);
 } finally {

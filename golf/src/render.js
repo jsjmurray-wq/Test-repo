@@ -41,6 +41,10 @@ import { slopeField, FlowParticles, flowIndices, FLOW_FLOATS, FLOW_MAX } from '.
 import { buildCrowd, crowdSeed, crowdCount, crowdShadowBake, PERSON_FLOATS } from './crowd.js';
 import { personMesh, furnitureMesh } from './crowd-mesh.js';
 import { CROWD_VS, CROWD_FS, CROWD_PROP_VS, CROWD_PROP_FS } from './shaders-crowd.js';
+// Wildlife (section 10): the theme's animals, 2 draw calls (WildlifePass; scene.wildlife from main.js).
+import { WildlifePass } from './shaders-wildlife.js';
+import { wildlifeMesh } from './wildlife-mesh.js';
+import { themeSlots } from './wildlife.js';
 
 const EXPOSURE = 1.0;
 
@@ -233,6 +237,9 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.G.quad2);
     gl.bufferData(gl.ARRAY_BUFFER, this._quad.byteLength, gl.DYNAMIC_DRAW);
     this._crowdInitGL(); // spectators: programs and the person mesh (section 10)
+    // Wildlife (section 10): programs and instance buffers (again after a context loss).
+    if (!this.wild) this.wild = new WildlifePass();
+    this.wild.init(gl, this.ctx);
     this.res = null;
   }
 
@@ -337,6 +344,13 @@ export class Renderer {
       sea,
     };
     this._crowdSetHole(terrain); // spectators: this hole's galleries (section 10)
+    // Wildlife (section 10): the theme's species meshes in one buffer (built once per theme).
+    if (this.wild) {
+      const slots = themeSlots(theme.id);
+      if (!this._wildMeshes) this._wildMeshes = new Map();
+      if (!this._wildMeshes.has(theme.id)) this._wildMeshes.set(theme.id, wildlifeMesh(slots));
+      this.wild.setMesh(this._wildMeshes.get(theme.id));
+    }
     this._themeUniforms();
     if (this.ok && !this.lost) this._uploadHole();
   }
@@ -428,6 +442,7 @@ export class Renderer {
     const bk = c.bake;
     res.bake = tex(this._crowdBakeImage(res, bk), { mip: true }); // (with the spectators' shadows)
     this._crowdUpload(res, buf); // spectators' instance and furniture buffers
+    if (this.wild) this.wild.upload(); // wildlife: the species mesh (section 10)
     res.bakeMin = [bk.minX, bk.minY];
     res.bakeInv = [1 / (bk.width * bk.step), 1 / (bk.height * bk.step)];
     res.detail = bk.detail ? tex(bk.detail, { mip: true }) : this.G.black;
@@ -798,6 +813,9 @@ export class Renderer {
       // ---- spectators: ropes, stakes, grandstand, then the people (2 draws, section 10)
       this._drawCrowd(scene, frame);
 
+      // ---- wildlife: every animal in one instanced draw (section 10)
+      if (this.wild) this.wild.draw(this, scene, frame); // (none without scene.wildlife)
+
       gl.enable(gl.CULL_FACE);
     }
 
@@ -889,6 +907,8 @@ export class Renderer {
 
     // Golfer's ground shadow (the blurred mask of the flattened figure, rendered first).
     if (golf && golf.shadow) this._golferShadowGround(golf, frame);
+    // Wildlife contact shadows (section 10).
+    if (this.wild) this.wild.drawShadows(this, scene, frame);
 
     // Blob shadow under the ball: darker and tighter when the ball is on the ground.
     if (ball && ball.visible !== false && T) {

@@ -72,6 +72,8 @@ metres). Wind shows in mph (or km/h).
 | `swing-anim.js` | Poses, FK/IK, `placeGolfer`, `SwingAnimator`: the visible swing (§9) |
 | `crowd.js` | Spectators (§10.1): `buildCrowd(terrain, {seed, finishing, theme})` gallery layout, `crowdSeed`, `crowdCount`, `crowdShadowBake`, `corridorFor`/`corridorClearance`, `planReactions`, `CrowdReactions` |
 | `crowd-mesh.js` | Spectators (§10.1): `personMesh()` (180 triangles, vertex groups), `posePerson` (the shader's skeleton in JS), `POSES`, `furnitureMesh(layout)` (ropes, stakes, grandstand) |
+| `wildlife.js` | Wildlife (§10.2): `Wildlife` (placement per hole, behaviour, flee triggers `ballLanded`/`cheer`, `write` instance rows, `pollCall`), `FAUNA`, `SPECIES`, `themeSlots`, `wildlifeSeed`, `inCorridor` |
+| `wildlife-mesh.js` | Wildlife (§10.2): 24 species meshes with two poses (`buildSpeciesMesh`, `MESH_PARAMS`), `wildlifeMesh(slots)` (a theme's meshes in one buffer and the slot table) |
 
 DOM and GL modules: `gl.js`, `shaders.js`, `render.js`, `input.js`, `ui.js`, `audio.js`, `main.js`.
 
@@ -2275,3 +2277,168 @@ and Full again, a real touch putt holed → a cheer, no console errors; shots `c
 distances and stylised in a close-up; nobody walks between holes or moves for a ball that comes to rest
 among them (they dissolve within 8 m of it instead); the grandstand has no roof; galleries are the same
 every round (seeded per hole); sound is one gallery at a time (no stereo placement).
+
+### 10.2 Wildlife
+
+The courses' animals, by theme, placed in their habitats on every hole and living their routines: they graze,
+wander, swim, wade, soar and hang in the wind, and they flee when a ball lands near them, when the golfer walks
+up, or when the gallery roars. Looks only: physics, the bot and the rules never see an animal. Files:
+`src/wildlife.js` (pure: species, placement, behaviour, output rows), `src/wildlife-mesh.js` (pure: the species
+meshes), `src/shaders-wildlife.js` (GLSL and `WildlifePass`, the renderer's draw), `tests/wildlife.test.js`;
+hooks (each marked "wildlife" / "section 10") in `render.js` (5 lines), `main.js` (the "wildlife" section and 3
+one-line calls), `audio.js` (`animalCall`, appended section), `ui.js` (the setting), `index.html` (its row),
+`tests/e2e.spec.mjs` (`wildlifeOnly`).
+
+**Species** (`FAUNA`, `SPECIES` in `wildlife.js`; meshes in `wildlife-mesh.js`):
+
+| Theme | Animals (habitat, group) |
+|---|---|
+| parkland | white-tailed deer, does and a buck (open ground just outside the woods' canopy, 2-4); mallards, drakes and hens (open water 0.35 m+ deep, 3-6, sometimes two groups); Canada geese (on the pond or grazing its grassy bank, 3-6); a grey heron (wading depth, 1); a songbird flock (the woods' edge, 6-9); grey squirrels (near the foot of a tree, 2-3) |
+| desert | red-tailed hawks (thermals 45-85 m up, 45-135 m off the line, 1-2); chuckwallas (on top of boulders, 3-5); black-tailed jackrabbits (scrub, 2-3); a Gambel's quail covey (6-9); roadrunners (1-2); a coyote (the far desert, 55 m+ off the line) |
+| tropical | American flamingos (lagoon shallows, 5-8); brown pelicans (a line gliding 4-7 m over the water, 3-5); great egrets (shallows, 1-2); green iguanas (the beach, or under palms, 2-3); a parrot flock (in the palm crowns, 4-6) |
+| links | kittiwakes and herring gulls (hanging 9-22 m over the dunes off the line, 4-6); rabbits (the fescue edge, two groups); oystercatchers (beach sand within 14 m of water, 2-4); blackface sheep (the far dunes, 58 m+ off the line, 3-4) |
+
+Presence is drawn per hole (deer on ~80% of holes, a covey on ~80%, a coyote on ~60%, ...), so holes differ and a
+hole is the same every visit: `wildlifeSeed(terrain)` hashes the course id and hole number. Fewer than 40 animals
+per hole (`MAX_ANIMALS` = 40 rows; the placement keeps under it: measured 5-29). Every animal spawns beyond its own
+`golferR` from the tee (the first address does not flush it), at least `green radius + 16 m` from the green and
+never on a green, fringe, tee, bunker or OOB; waterfowl swim where the water is open, waders stand where it is
+0.06-0.58 m deep (`terrain.waterAt` level minus the bed), and a chuckwalla lies along the ridge of its boulder as the
+renderer draws it (`rockMesh` shaped by the rock's own variant, the flattest high spot).
+
+**API** (`wildlife.js`; the header is the reference):
+
+```js
+const wild = new Wildlife(terrain, {seed = wildlifeSeed(terrain), wind = {x, y}, theme = terrain.theme});
+wild.update(dt, ctx)      // ctx (reused, scalars): {golfer, gx, gy, address, bx, by, yaw, carry, wx, wy}
+wild.ballLanded(x, y, surface?)   // a landing / bounce / tree / splash: flush what is near
+wild.cheer(x, y, strength 0..1)   // a crowd roar
+wild.write(inst, shadow) -> count // INST_FLOATS (12) per animal, SHADOW_FLOATS (12) per shadow (wild.shadowCount)
+wild.pollCall(out) -> bool        // {kind, x, y, z}: the next call for audio.js
+wild.n, wild.slots (mesh ids by slot), wild.stats {landings, flushes, cheers, relocated}, wild.snapshot()
+// also: FAUNA, SPECIES, ST, STATE_NAMES, themeSlots(theme), wildlifeSeed(terrain), inCorridor(c, x, y),
+// MAX_ANIMALS, INST_FLOATS, SHADOW_FLOATS
+```
+
+**Behaviour.** Typed arrays per animal (nothing is allocated per frame; checked with V8's sampling heap profiler:
+< 4 bytes per frame) and one seeded rng: the same seed, dt sequence and events give the same animals bit for bit.
+States: `IDLE`, `GRAZE` (head down, lifted every few seconds), `WALK` (a short wander near home, never onto a
+green, tee, bunker or water), `RUN`, `ALERT` (alert pose, looking at the threat), `HIDE`, `SWIM` (drifting, a
+mallard up-ending to feed), `TAKEOFF`, `FLY`, `LAND`, `SOAR` (circling a thermal that drifts with the wind,
+banked for its radius, a few wingbeats now and then), `HOVER` (gulls hang into the hole's wind, holding station
+with small adjustments; in a calm they circle), `CLIMB` (a squirrel up the trunk), `PASS` (pelicans in a line, the
+leader setting the pace and each bird flapping a moment after the one ahead), `BASK` (lizards' push-ups),
+`PERCH` (parrots out of sight in a palm crown), `STARTLE` (the 0.05-0.4 s before each member of a group reacts).
+Flight: turn-rate-limited heading, banking into turns (−atan(v·ω/g)), climbing out at the species' rate,
+gliding down a 0.35 slope to land with a flare, flapping on the climb and in bursts by the species' glide share.
+
+**Fleeing** (`flushR` from a landing ball, ×1.35 for a splash near waterfowl; `golferR` from the golfer; a cheer:
+birds within 40-120 m, mammals bolt within 15-40 m and look up within 60-120 m). A whole group reacts together
+(debounced 1.5 s) and the alarm call and wingbeats are queued for the audio. Deer bound 22-34 m into the trees,
+white flags up, wait out of the way and walk back once the golfer is gone; squirrels run up their tree and vanish
+into the canopy; rabbits bolt to their burrow and reappear on it; lizards dart off their rock (or into the
+bushes) and come back to bask; jackrabbits zigzag away, roadrunners and coyotes run off; sheep shuffle away;
+mallards, herons and egrets fly off out of sight and come back to land later; geese fly a circuit and land back
+on the pond; quail, flamingos and oystercatchers make a short low flight to a spot clear of the threat and the
+golfer (or leave if there is none); songbirds fly up into the nearest canopy; parrots hop to another palm; gulls
+wheel away and come back to their station. Tests check every one of them is back to its routine near home
+within 150 s.
+
+**The address view** (`inCorridor`: from 32 m behind the ball to 32 m past the carry, 9 m wide at the ball
+widening by 0.1 m per metre, at most 28 m). A new address spot is always a camera cut, so at that moment every
+animal on the ground or water standing in the corridor or within 0.7 × `golferR` of the golfer (and gulls hanging
+low over it) is moved, with its group, to another spot of its habitat out of the corridor (unseen; none left:
+out of sight until the next spot). While the player aims, a ground animal the aim swings onto walks out of the
+corridor to the side it is on (never across the line); its wanders never end in it. Nothing stands on a green.
+
+**Meshes** (`wildlife-mesh.js`): 24 species meshes of 227-392 triangles (doe 344, buck 392 with antlers,
+squirrel 302, mallard drake / hen 316, goose 328, songbird 296, heron 380, roadrunner 336, hawk 328, quail 304,
+jackrabbit and rabbit 279, coyote 315, sheep 359 with horns, chuckwalla 227, iguana 261, pelican 348, flamingo
+360, egret 368, parrot 296, kittiwake and herring gull 316, oystercatcher 316). Mammals: a lofted superelliptic
+body, neck and head tubes, two-layer ears, tapered legs through their joints, a tail, horns or antlers. Birds:
+an elliptical body, an S or straight neck, head, bill (bent for a flamingo, pouched for a pelican), crest, a
+two-layer wing planform (fingered primaries for hawk, heron, pelican, egret), a two-layer tail fan, legs and
+webbed or wader feet. Every vertex has two poses (birds: flight / rest with the wings folded along the flanks,
+upper side out; mammals: normal / alert, e.g. a deer's white flag, a hare sitting up), a pivot, a part id and
+weight, and a packed sRGB colour painted per region (a mallard drake's green head, white collar and chestnut
+breast; a goose's black neck and white chinstrap; a kittiwake's ink-dipped wingtips; a red-tail's rufous tail and
+pale underwing with its dark bar). `MESH_PARAMS[id]` holds the animation constants; `wildlifeMesh(slots)`
+concatenates a theme's meshes (parkland 8 slots, 2,674 triangles, 1,924 vertices) and packs the slot table.
+
+**Rendering** (`shaders-wildlife.js`, `WildlifePass`): 2 draw calls. One instanced draw for every animal of the
+hole: each instance keeps the vertices of its own slot (`aAnim.z`) and sends the rest outside the clip volume, so
+the hole's species share one draw at the cost of running the vertex shader over every species' vertices (about 2
+k per animal: 46 k vertices for 24 animals on Hollow Pines 2). Attributes: `aPos`, `aAlt`, `aNrm` (both normals,
+octahedral), `aPiv`, `aAnim` + instance `iA`, `iB`, `iC` (8 in all, WebGL1's minimum); uniforms: the slot table
+`uSlot[30]` (39 vertex vectors with the rest). The vertex shader blends the poses, animates (wing strokes with the
+stroke reaching the tip later and the outer wing tucking on the upstroke, gull-wing glide; walk / trot / bound leg
+cycles with the lower leg curling on the swing; sprawled lizard legs and a waving tail; the neck down to graze
+with the face turning back on its own pivot; head turns, ear twitches, tail flicks; a run's bounce and a
+bounder's rocking pitch), then pitch, bank, a ±6-12% size per animal, yaw and position; colour per animal
+varies a little. Lit like the scene (wrap diffuse, hemisphere ambient, a cool rim, backlit wings glowing, fur and
+feather noise close up, fog, tone map). Dithered fades: hidden animals (`vis`), within 0.5 + 0.9 × height to 1.2 +
+2.2 × height m of the lens, beyond 520-760 m, and anything in the sight line from the eye to the ball or the flag
+(beside it, or with the line passing over or under its body, it stays). Back faces culled (flat parts are two
+layers). The second draw: soft contact shadows, instanced ellipses lying on the ground plane under each animal on
+the ground (and birds flying low), thrown away from the theme's sun, drawn with the overlays. `render.js`:
+`this.wild = new WildlifePass()` and `init(gl, ctx)` in `_initGL` (again after a context loss), the theme's mesh
+(cached per theme) in `setHole`, `upload()` in `_uploadHole`, `draw` after the spectators, `drawShadows` after the
+golfer's shadow; `renderer.wild.stats` = `{animals, shadows, drawCalls, tris, verts}` (tris: the animals' own
+triangles, not the culled ones). `scene.wildlife = {inst, count, shadow, shadowCount, key}` (key = the slot list:
+a sim of another theme is never drawn with the wrong mesh).
+
+**main.js** (the "wildlife" section): the sim follows `app.holeTerrain` (rebuilt when the renderer's hole changes:
+holes, the menu backdrop, Mixed rounds' themes), stepped on the game clock (`?fast` scales it; pause and
+`debug.freeze` stop it), given the golfer (the ball at address and in a decision, the shot's start in flight) and
+at address the corridor (`clubInfo().carry` cached per club and spot, capped at the cup + 10 m). Ball landings:
+`wildlifeShotEvent(ev)` from `onShotEvent` (`land`, `water`, `tree`, and `bounce` over 3 m/s), so they flush as the
+playback reaches them. Cheers: the gallery's fired reactions (`app.crowd.react.fired`: a cheer at its strength, a
+clap at 0.4) and, with no gallery shown, a holed birdie or better (`sim.cheer` at the cup); `app.wildlifeCheer(x, y,
+strength)` for anyone else. Calls: `audio.animalCall(kind, distance from the camera, pan)`. Setting
+`wildlife: 'on' | 'off'` (Settings "Wildlife", default on; Off: no animals drawn, simulated or heard; a change
+redraws a paused frame). Test hooks (`?test=1`): `debug.wildlife()` (summary: species, states, flushes, the pass's
+stats), `debug.wildlifeList()` (every animal with its screen position), `debug.wildlifeLand(x, y)`,
+`debug.wildlifeView({i, dist, h, side, yaw, tz, fov, fixed} | null)` (hold the camera on an animal: the
+screenshots), `debug.wildlifeStep(s)`.
+
+**Audio** (`audio.js` `animalCall`): synthesised calls (songbird phrases, a wood pigeon, mallard quacks, goose
+honks, a heron's croak, a deer's snort, a flock's wingbeats, the red-tail's scream, Gambel's quail, a distant
+coyote, a mourning dove, a cactus wren, flamingo gabble, parrot squawks, a tropical whistler, laughing gulls,
+piping oystercatchers, a skylark over the links, a far-off sheep), gain 1 / (1 + d/22)^1.25 (dropped under 0.012),
+a low-pass falling with distance, stereo pan toward the animal; never when the game's own sounds need the voices.
+Each group calls now and then (`call.every`), and each theme has an ambient chorus from off screen.
+
+**Performance** (SwiftShader, `quality=low`, measured in the e2e): +2 draw calls (wildlife pass 2, total 15-20 on
+the checked holes with the spectators, budget 30); 5.0-7.3 k triangles drawn for 15-23 animals; the sim 3-17 µs
+per frame in node; the theme mesh built once per theme (≈ 1 ms); per frame 1.9 kB of instance data uploaded.
+
+**Tests:** `tests/wildlife.test.js` (13): mesh budgets, indices, finite data, parts and feet on the ground for all
+24 meshes; folded wings show their upper side; the theme buffers and slot table; placement on all 36 holes
+(theme species, under 40, swimmers on open water at their draft, waders in the shallows, deer at the woods' edge,
+chuckwallas on rocks, sheep far out, nothing on greens, fringes or tees, every animal clear of the tee by its
+golfer radius, every theme's species somewhere on its course); 3 minutes of landings, cheers and a moving golfer
+on 12 holes (finite rows, inside the hole); a landing flushes a whole flock and a far one does not, a splash
+reaches further; the golfer walking up and a cheer; deer, mallards, squirrels, rabbits, chuckwallas, quail and
+flamingos come back after fleeing; no animal in the view corridor or at the golfer after each cut on every hole,
+and grazers walk out of a new aim; determinism; gulls into the wind, hawks banked on their thermal, pelicans in
+line; allocation-free frames; the corridor. e2e `wildlifeOnly` (each viewport; `--wildlife` alone): animals and
+the theme's species on Hollow Pines 2, Red Mesa 2, Coral Cay 1 and Kittiwake 2, drawn in 2 calls within 30, a
+landing flushing a flock on each, a real shot's landing reaching the sim, Settings Off (saved) and On, a lost and
+restored WebGL context, no console errors.
+
+**Results when built:** `npm test` 389/389 (13 wildlife); ESLint clean; `node tests/e2e.spec.mjs --wildlife`: every
+check passes (66) in portrait, landscape and foldable on `index.html` (the stale `dist/` has no wildlife and
+skips); the default UI flow passes on `index.html` with the animals on (a landscape tap-meter check that timed out
+while two SwiftShader runs shared the machine passes when rerun alone).
+Screenshots reviewed in portrait and landscape: deer grazing at Hollow Pines' woods' edge, a goose, mallards and
+a heron on its pond; a red-tail over Red Mesa's desert, a chuckwalla on its boulder, quail, a jackrabbit, a
+roadrunner, the coyote; flamingos in Coral Cay's lagoon and lifting off, a pelican over the sea, an iguana on the
+beach, parrots between the palms; a kittiwake hanging in the wind over Kittiwake's dunes, blackface sheep, an
+oystercatcher on the beach.
+
+**Known gaps:** animals are low-poly (no fur or feather geometry; a close-up is stylised), and at the broadcast
+distances of play they are small, as on TV; legs swing about the hip with a curl rather than true joints, so
+feet can slide a little on a slope; animals do not avoid trees, bushes or each other when they run (they pass
+through); the squirrel climbs on the trunk's surface without spiralling; birds land without a hop; pelicans
+never rest on the water; no deer in the desert or sea-going birds on Hollow Pines (by design: one roster per
+theme, a Mixed hole uses its own course's).

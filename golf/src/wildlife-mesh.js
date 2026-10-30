@@ -367,8 +367,10 @@ function mammal(spec) {
     const t = i / (hd.w.length - 1);
     return [hd.base[0] + hdir[0] * hd.len * t, 0, hd.base[1] + hdir[2] * hd.len * t];
   });
+  // (The head's own pivot, its base: it counter-turns there while the neck goes down to graze.)
+  const headPiv = [hd.base[0], 0, hd.base[1]];
   tube(B, hpts, hpts.map((p) => alt(p, PART.HEAD)), hd.w.map((w, i) => [w, hd.h[i]]), 6, {
-    part: PART.HEAD, f: () => 1, color: (t, up, side) => paint('head', { t, up, side }), capEnd: true, capStart: true,
+    part: PART.HEAD, f: () => 1, color: (t, up, side) => paint('head', { t, up, side }), capEnd: true, capStart: true, piv: headPiv,
   });
   // ---- ears (two-layer leaves; their own flick about the root, then the head's motion)
   if (spec.ears) {
@@ -406,7 +408,7 @@ function mammal(spec) {
     for (const side of [1, -1]) {
       const pts = hn.pts.map(([x, y, z]) => [x, y * side, z]);
       tube(B, pts, pts.map((p) => alt(p, PART.HEAD)), hn.r, hn.sides || 3, {
-        part: PART.HEAD, f: () => 1, color: (t) => paint(hn.region || 'horn', { t }), capEnd: true,
+        part: PART.HEAD, f: () => 1, color: (t) => paint(hn.region || 'horn', { t }), capEnd: true, piv: headPiv,
       });
     }
   }
@@ -519,8 +521,9 @@ function bird(spec) {
   const hTs = [-0.5, -0.15, 0.25, 0.5];
   const hW = [0.55, 1, 0.85, 0.45];
   const hp = (H) => hTs.map((t) => add3(H.c, scl3(H.d, t * hd.len)));
+  const headPiv = HB.c;
   tube(B, hp(HA), hp(HB), hW.map((w) => [w * hd.w, w * hd.h]), 6, {
-    part: PART.HEAD, f: () => 1, color: (t, up, side) => paint('head', { t, up, side }), capStart: true, capEnd: true,
+    part: PART.HEAD, f: () => 1, color: (t, up, side) => paint('head', { t, up, side }), capStart: true, capEnd: true, piv: headPiv,
   });
   // Bill: from the front of the head, drooping (and bent half way for a flamingo).
   const bi = spec.bill;
@@ -543,7 +546,7 @@ function bird(spec) {
     const t = i / (bA.length - 1);
     return [bi.w * (1 - 0.75 * t) + 0.001, bi.h * (1 - 0.7 * t) + (bi.pouch ? bi.pouch * Math.sin(Math.PI * Math.min(1, t * 1.3)) : 0) + 0.001];
   });
-  tube(B, bA, bB, bR, 4, { part: PART.HEAD, f: () => 1, color: (t) => paint('bill', { t }), capEnd: true });
+  tube(B, bA, bB, bR, 4, { part: PART.HEAD, f: () => 1, color: (t) => paint('bill', { t }), capEnd: true, piv: headPiv });
   if (spec.crest) {
     // A plume or crest: a leaf from the crown, sweeping back (roadrunner, quail topknot, heron).
     const cr = spec.crest;
@@ -557,7 +560,7 @@ function bird(spec) {
     };
     const A = mk(HA);
     const Bc = mk(HB);
-    leaf(B, A.L, A.R, Bc.L, Bc.R, { part: PART.HEAD, up: [0, 1, 0], f: () => 1, color: (t) => paint('crest', { t }) });
+    leaf(B, A.L, A.R, Bc.L, Bc.R, { part: PART.HEAD, up: [0, 1, 0], f: () => 1, color: (t) => paint('crest', { t }), piv: headPiv });
   }
   // ---- wings: spread in pose A, folded along the flanks in pose B
   const wg = spec.wing;
@@ -1242,8 +1245,8 @@ function gull({ bl, span, leg, mantle, bill, tips }) {
 const MP = (kind, graze, swing, size, tail, ear, dihedral, flap, cz, neckX, neckZ, bob, draft, len, wid) =>
   Object.freeze({ kind, graze, swing, size, tail, ear, dihedral, flap, cz, neckX, neckZ, bob, draft, len, wid });
 export const MESH_PARAMS = Object.freeze({
-  doe: MP(KIND.WALKER, 1.35, 0.42, 1.35, 0.5, 0.35, 0, 0, 0.75, 0.46, 0.86, 0.05, 0, 1.6, 0.42),
-  buck: MP(KIND.WALKER, 1.35, 0.42, 1.6, 0.5, 0.3, 0, 0, 0.75, 0.46, 0.86, 0.05, 0, 1.65, 0.44),
+  doe: MP(KIND.WALKER, 1.9, 0.42, 1.35, 0.5, 0.35, 0, 0, 0.75, 0.46, 0.86, 0.05, 0, 1.6, 0.42),
+  buck: MP(KIND.WALKER, 1.9, 0.42, 1.6, 0.5, 0.3, 0, 0, 0.75, 0.46, 0.86, 0.05, 0, 1.65, 0.44),
   squirrel: MP(KIND.BOUNDER, 0.5, 0.7, 0.2, 0.25, 0.3, 0, 0, 0.09, 0.08, 0.11, 0.03, 0, 0.3, 0.1),
   mallardDrake: MP(KIND.BIRD, 1.0, 0.5, 0.33, 0.1, 0, 0.1, 0.95, 0.16, 0.16, 0.2, 0, 0.13, 0.5, 0.22),
   mallardHen: MP(KIND.BIRD, 1.0, 0.5, 0.33, 0.1, 0, 0.1, 0.95, 0.16, 0.16, 0.2, 0, 0.13, 0.5, 0.22),

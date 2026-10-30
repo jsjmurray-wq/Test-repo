@@ -157,6 +157,27 @@ and straw hats at Coral Cay, rain jackets, bucket hats, flat caps and umbrellas 
 - **Settings → Crowd: Off / Light / Full.** Full by default; a phone that has to lower its graphics
   quality (or Graphics: Low) shows the Light crowd.
 
+## Wildlife
+
+Each course has its own animals, living their day around the holes:
+
+- **Hollow Pines:** white-tailed deer grazing at the edge of the woods, mallards and Canada geese on
+  the ponds, a grey heron wading, songbirds flitting in and out of the trees, grey squirrels.
+- **Red Mesa:** a red-tailed hawk circling on a thermal, chuckwallas basking on the boulders,
+  jackrabbits, a covey of Gambel's quail, a roadrunner, a coyote watching from far out in the desert.
+- **Coral Cay:** flamingos in the lagoon shallows, brown pelicans gliding in a line over the water,
+  great egrets, iguanas on the beach, parrots in the palms.
+- **Kittiwake Links:** kittiwakes and gulls hanging in the sea wind over the dunes, rabbits at the
+  edge of the fescue, oystercatchers on the beach, blackface sheep out on the far dunes.
+
+- **They react to you.** Land a ball near them and they scatter: a flock takes off, deer bound into
+  the trees with their white tails up, rabbits bolt for their burrows, lizards dart off their rock.
+  Walking up startles them too, and so does a roar from the gallery. They come back after a while.
+  You hear them now and then (songbirds, honking geese, the hawk's scream, gulls), quieter far away.
+- **They never get in the way.** Nothing stands on a green or in your line while you aim, anything
+  between the camera and the ball or the flag fades out, and they never touch the ball.
+- **Settings → Wildlife: On / Off.** On by default.
+
 ## Rules
 
 Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out of bounds is stroke
@@ -172,7 +193,7 @@ Settings (persisted on the device): units (yards or metres), wind (off, light, b
 adds more), swing control (swipe or tap meter), difficulty (easy, normal, pro: how much the shape of
 your swipe affects the ball; Easy also snaps power onto the target notch), putt preview (auto, full,
 part, off: auto is full on Easy, part on Normal, off on Pro), left- or right-handed, sound,
-graphics quality, and the crowd (off, light, full).
+graphics quality, the crowd (off, light, full) and the wildlife (on, off).
 
 ## Running
 
@@ -228,6 +249,7 @@ resume after closing Safari.
 | `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js`, `themes.js` | WebGL renderer, per-course looks (parkland, desert, tropical, links) and camera rig |
 | `src/golfer.js`, `golfer-mesh.js`, `swing-anim.js` | The golfer: skeleton, customisable look and presets, the skinned mesh, swing poses, IK and the animator |
 | `src/crowd.js`, `crowd-mesh.js`, `shaders-crowd.js` | Spectators: gallery layout, reactions to your shots, the instanced spectator and its skeleton, ropes and grandstand, their shaders (section 10) |
+| `src/wildlife.js`, `wildlife-mesh.js`, `shaders-wildlife.js` | Wildlife: the animals of each theme, where they live on each hole, their behaviour and flight from the ball, the species meshes and their shaders (section 10) |
 | `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures and tap meter, DOM HUD and menus, synthesised audio, boot and loop |
 | `index.html`, `style.css` | Shell and broadcast-style HUD (portrait, landscape and square layouts) |
 | `scripts/` | Single-file build, icon renderer, calibration and course report |

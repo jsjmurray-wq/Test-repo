@@ -146,7 +146,9 @@ void main() {
     } else if (part > 5.5 && part < 6.5) {
       rotY(p, n, aPiv, S1.x * 0.18 * sin(t * (2.3 + seed) + seed * 40.0) * (1.0 - fly) * f);
     } else if (part > 0.5 && part < 1.5) {
-      // Neck and head: down to feed, turning to look round (not in flight).
+      // Neck and head: down to feed (the head turning back up a little on its own pivot, so the
+      // bill meets the ground or the water), turning to look round (not in flight).
+      if (f > 0.95) rotY(p, n, aPiv, head * S0.y * 0.35);
       rotY(p, n, neck, -head * S0.y * f);
       float look = 0.55 * sin(t * (0.5 + 0.3 * seed) + seed * 30.0) * sin(t * 0.23 + seed * 11.0);
       rotZ(p, n, neck, look * (1.0 - fly) * (1.0 - head) * f * f);
@@ -195,6 +197,9 @@ void main() {
     }
     if ((part > 0.5 && part < 1.5) || (part > 6.5 && part < 7.5)) {
       float fw = part > 6.5 ? 1.0 : f;
+      // Grazing: the neck goes down and the face turns back toward the vertical on its own pivot
+      // (the head's base; an ear's root, which sits there too).
+      if (fw > 0.95) rotY(p, n, aPiv, head * S0.y * 0.5);
       rotY(p, n, neck, -head * S0.y * fw + 0.05 * walk * sin(ph * 2.0) * fw);
       rotZ(p, n, neck, iC.z * 0.9 * fw * (1.0 - head));
     }

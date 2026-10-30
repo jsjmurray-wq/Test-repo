@@ -1145,7 +1145,9 @@ export class Wildlife {
     this.st[i] = ST.TAKEOFF;
     this.t[i] = 0;
     this._flyTo(i, x, y, z, fm);
-    this.vz[i] = 1.5;
+    // A spring off the ground or the water (a dabbling duck almost straight up).
+    const S = SPECIES_LIST[this.sp[i]];
+    this.vz[i] = S.flight ? S.flight.climb * 0.85 : 1.5;
   }
 
   _flyTo(i, x, y, z, fm) {
@@ -1488,9 +1490,6 @@ export class Wildlife {
   _move(i, S, dt) {
     const rng = this.rng;
     const run = this.st[i] === ST.RUN;
-    let dx = this.tx[i] - this.x[i];
-    let dy = this.ty[i] - this.y[i];
-    const d = Math.hypot(dx, dy);
     // Out of the view corridor at address: walk off to the side (not across the aim line).
     if (!run && this.cor.on && inCorridor(this.cor, this.x[i], this.y[i]) && inCorridor(this.cor, this.tx[i], this.ty[i])) {
       const c = this.cor;
@@ -1500,6 +1499,9 @@ export class Wildlife {
       this.ty[i] = this.y[i] + c.dx * side * 30;
       this.aux[i] = 2;
     }
+    let dx = this.tx[i] - this.x[i];
+    let dy = this.ty[i] - this.y[i];
+    const d = Math.hypot(dx, dy);
     let vT = run ? S.run : S.walk * (this.aux[i] || 1);
     if (S.zigzag && run) dy += Math.sin(this.t2[i] * 3.1 + this.seedv[i] * 9) * d * 0.25;
     if (S.dash && !run && this.seedv[i] > 0.5) vT *= 1 + 2 * Math.max(0, Math.sin(this.t2[i] * 0.9));
