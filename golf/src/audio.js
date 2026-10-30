@@ -20,6 +20,12 @@
 //       land / bounce -> land(surface)  tree -> tree(v, ev.obj)  pin -> flagstick clank
 //       lipout -> rattle  cup -> rattle + plunk  water -> splash  rest -> nothing
 //       swing -> whoosh(ev.power)  applause -> applause(ev.strength)
+//   Spectators (section 10; the "crowd" section at the end):
+//   audio.crowdBed(level 0..1, hush 0..1)  the gallery's murmur loop (level: how near and how big
+//                                         the nearest gallery is; hushed while addressing)
+//   audio.crowdReact(name, strength, gain) 'clap' (golf applause), 'cheer' (roar, claps and
+//                                         whistles), 'ooh' and 'groan' (formant voice choruses);
+//                                         gain 0..1 by the camera's distance to the gallery
 
 import { SURF } from './constants.js';
 
@@ -414,5 +420,159 @@ export class AudioFX {
     lfo.start();
     this._wind = { src, filter, gain, lfo };
     this.setWind(this.windMps);
+  }
+
+  // ------------------------------------------------------------ crowd (spectators, section 10)
+  // Murmur bed: speech-band noise (two band-passes) with slow swells and a faint chatter
+  // flutter, built on first use and ramped to `level` (quieter by `hush`). Silent at level 0.
+  crowdBed(level = 0, hush = 0) {
+    if (!this.ctx || !this.master) return;
+    const target = Math.max(0, Math.min(1, level)) * 0.085 * (1 - 0.82 * Math.max(0, Math.min(1, hush)));
+    if (!this._bed) {
+      if (target < 0.002) return;
+      this._bed = this._makeBed();
+    }
+    const t = this.ctx.currentTime;
+    this._bed.gain.gain.cancelScheduledValues(t);
+    this._bed.gain.gain.setTargetAtTime(Math.max(0.0001, target), t, hush > 0.5 ? 0.35 : 0.8);
+  }
+
+  _makeBed() {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const lo = ctx.createBiquadFilter();
+    lo.type = 'bandpass';
+    lo.frequency.value = 480;
+    lo.Q.value = 0.8;
+    const hi = ctx.createBiquadFilter();
+    hi.type = 'bandpass';
+    hi.frequency.value = 1350;
+    hi.Q.value = 1.4;
+    const hiG = ctx.createGain();
+    hiG.gain.value = 0.35;
+    const swell = ctx.createGain();
+    swell.gain.value = 1;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    // Swells (a crowd breathes) and a chatter flutter on the upper band.
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.31;
+    const lfoAmt = ctx.createGain();
+    lfoAmt.gain.value = 0.28;
+    lfo.connect(lfoAmt);
+    lfoAmt.connect(swell.gain);
+    const fl = ctx.createOscillator();
+    fl.frequency.value = 3.7;
+    const flAmt = ctx.createGain();
+    flAmt.gain.value = 0.12;
+    fl.connect(flAmt);
+    flAmt.connect(hiG.gain);
+    src.connect(lo);
+    src.connect(hi);
+    hi.connect(hiG);
+    lo.connect(swell);
+    hiG.connect(swell);
+    swell.connect(gain);
+    gain.connect(this.master);
+    src.start(0, Math.random() * 1.5);
+    lfo.start();
+    fl.start();
+    return { src, gain, lfo, fl };
+  }
+
+  // A reaction of the gallery: 'clap' | 'cheer' | 'ooh' | 'groan'; strength 0..1 (how many join
+  // in), gain 0..1 (how near the camera is).
+  crowdReact(name, strength = 1, gain = 1) {
+    if (!this._ready()) return;
+    const s = Math.max(0.15, Math.min(1, strength));
+    const g = Math.max(0.03, Math.min(1, gain));
+    const now = this.ctx.currentTime;
+    if (name === 'clap') {
+      if (!this._voice(3)) return;
+      this._claps(now + 0.15, 1.3 + 1.7 * s, Math.round(30 + 100 * s), 0.075 * g * (0.6 + 0.4 * s));
+    } else if (name === 'cheer') {
+      if (!this._voice(5)) return;
+      // A roar that swells and dies away, a chorus of "yeah", claps and a whistle or two.
+      this._noiseBurst(now + 0.08, { freq: 900, q: 0.45, peak: 0.16 * s * g, attack: 0.35, decay: 2.8 + s, offset: 0 });
+      this._chorus(now + 0.05, { voices: 10, f: [[720, 1180], [650, 1080]], dur: 2.2 + 0.8 * s, attack: 0.25, rise: 0.12, fall: 0.18, peak: 0.05 * s * g });
+      this._claps(now + 0.3, 2.6 + 1.4 * s, Math.round(80 + 120 * s), 0.07 * g);
+      const whistles = s > 0.7 ? 2 : 1;
+      for (let i = 0; i < whistles; i++) {
+        const t = now + 0.45 + i * 0.5 + Math.random() * 0.3;
+        this._tone(t, { freq: 2300 + Math.random() * 400, freqEnd: 3100, peak: 0.035 * g, attack: 0.08, decay: 0.5 });
+      }
+    } else if (name === 'ooh') {
+      if (!this._voice(1.6)) return;
+      this._chorus(now + 0.02, { voices: 9, f: [[320, 820], [360, 900]], dur: 1.25, attack: 0.12, rise: 0.16, fall: 0.22, peak: 0.075 * s * g });
+    } else if (name === 'groan') {
+      if (!this._voice(1.8)) return;
+      this._chorus(now + 0.04, { voices: 9, f: [[560, 900], [700, 1100]], dur: 1.45, attack: 0.15, rise: 0.02, fall: 0.3, peak: 0.065 * s * g });
+    }
+  }
+
+  // n golf claps over dur s (dense at first, thinning out like a real round of applause).
+  _claps(t0, dur, n, peak) {
+    for (let i = 0; i < n; i++) {
+      const t = t0 + dur * Math.pow(Math.random(), 1.5);
+      this._noiseBurst(t, { freq: 1000 + Math.random() * 2000, q: 1.1, peak: peak * (0.5 + Math.random() * 0.8), attack: 0.001, decay: 0.022 + Math.random() * 0.015 });
+    }
+    this._noiseBurst(t0, { freq: 1600, q: 0.5, peak: peak * 0.9, attack: 0.2, decay: dur * 0.8, offset: 0 });
+  }
+
+  // A chorus of voices on one vowel: detuned saw voices (men and women, staggered onsets, a pitch
+  // that rises then falls) through the vowel's two formants f = [[F1, F2] at the start, at the
+  // end], softened by a low-pass.
+  _chorus(t0, { voices = 8, f, dur, attack, rise, fall, peak }) {
+    const ctx = this.ctx;
+    const out = ctx.createGain();
+    out.gain.value = 1;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2600;
+    const fs = [0, 1].map((k) => {
+      const b = ctx.createBiquadFilter();
+      b.type = 'bandpass';
+      b.Q.value = k ? 9 : 5;
+      b.frequency.setValueAtTime(f[0][k], t0);
+      b.frequency.linearRampToValueAtTime(f[1][k], t0 + dur);
+      const bg = ctx.createGain();
+      bg.gain.value = k ? 0.55 : 1;
+      b.connect(bg);
+      bg.connect(lp);
+      return b;
+    });
+    lp.connect(out);
+    out.connect(this.master);
+    const end = t0 + dur + 0.3;
+    for (let i = 0; i < voices; i++) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      const f0 = (i % 3 === 2 ? 205 : 118) * (0.85 + Math.random() * 0.35);
+      const on = t0 + Math.random() * 0.12;
+      o.frequency.setValueAtTime(f0 * 0.94, on);
+      o.frequency.linearRampToValueAtTime(f0 * (1 + rise), on + dur * 0.35);
+      o.frequency.linearRampToValueAtTime(f0 * (1 - fall), on + dur);
+      const vg = ctx.createGain();
+      vg.gain.setValueAtTime(0.0001, on);
+      vg.gain.exponentialRampToValueAtTime(peak / Math.sqrt(voices), on + attack);
+      vg.gain.setValueAtTime(peak / Math.sqrt(voices), on + dur * 0.45);
+      vg.gain.exponentialRampToValueAtTime(0.0001, on + dur);
+      o.connect(vg);
+      vg.connect(fs[0]);
+      vg.connect(fs[1]);
+      o.start(on);
+      o.stop(end);
+    }
+    // Breath: a little noise through the same formants.
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const ng = ctx.createGain();
+    this._env(ng, t0, peak * 0.5, attack, dur);
+    src.connect(ng);
+    ng.connect(fs[0]);
+    ng.connect(fs[1]);
+    src.start(t0, Math.random() * 1.5, dur + 0.3);
   }
 }

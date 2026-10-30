@@ -91,6 +91,8 @@ import { SwingAnimator as StudioAnimator } from './swing-anim.js';
 import { buildGolferMesh as buildStudioMesh } from './golfer-mesh.js';
 import { B as STUDIO_BONES, lookKey as studioLookKey, loadLook as studioLoadLook } from './golfer.js';
 import { BALL_R as STUDIO_BALL_R } from './constants.js';
+// Spectators (section 10; the "spectators" section below).
+import { CrowdReactions, crowdCount, REACT_NAMES } from './crowd.js';
 
 const SAVE_KEY = 'golf.save.v1';
 const BEST_KEY = 'golf.best.v1';
@@ -901,8 +903,9 @@ function setPaused(on) {
 // ------------------------------------------------------------------ game events
 function onHole(info) {
   const t = info.terrain;
-  if (app.holeTerrain !== t) {
-    app.renderer.setHole(t);
+  const cc = crowdHole(info); // spectators: the round's finishing hole(s) get a grandstand
+  if (app.holeTerrain !== t || crowdStale(cc)) {
+    app.renderer.setHole(t, { crowd: cc });
     app.holeTerrain = t;
   }
   app.trail.count = 0;
@@ -979,6 +982,7 @@ function prebuildNext(g) {
 function onShotEvent(ev) {
   app.audio.handle(ev);
   if (ev.type === 'lipout') app.ui.toast('Lip out', 1600);
+  crowdShotEvent(ev); // spectators react as the playback passes the shot's events
 }
 
 function onShotEnd({ shot, resolution: r }) {
@@ -1049,7 +1053,8 @@ function onHoled(info) {
   app.ui.banner(info.name, sub, { tone, ms: 2600 });
   if (!info.pickUp) {
     const strength = info.strokes === 1 || info.toPar <= -2 ? 1 : info.toPar === -1 ? 0.75 : info.toPar === 0 ? 0.35 : 0;
-    if (strength > 0) app.audio.handle({ type: 'applause', strength });
+    // (With spectators shown, the gallery's own cheer at the cup is the applause: section 10.)
+    if (strength > 0 && !crowdShown()) app.audio.handle({ type: 'applause', strength });
   }
   refreshHud();
 }
@@ -1602,9 +1607,13 @@ function buildPreview(g, power) {
 function buildScene(time, cam) {
   const g = app.game;
   const scene = { time, cam, ball: null, trail: null, aim: null, pin: { visible: true }, wind: { x: 0, y: 0 }, read: { on: false } };
-  if (!g || !g.phase) return scene;
+  if (!g || !g.phase) {
+    scene.crowd = crowdScene(cam, null); // spectators (section 10), also behind the menu
+    return scene;
+  }
   const phase = g.phase;
   const b = g.ballPos();
+  scene.crowd = crowdScene(cam, b); // spectators: they watch this ball (section 10)
   // At address the camera may sit well back and up for a long shot: keep the ball readable.
   const reading = phase === 'address' && app.view === 'read';
   // In the relief decision the ball is shown at the drop spot (that is where it will be played).
@@ -2566,6 +2575,178 @@ function studioCamera(v, fr) {
   sun.z = 0.69;
 }
 
+// ------------------------------------------------------------------ spectators (section 10)
+// The galleries (laid out and drawn by the renderer: crowd.js, 2 draw calls) watch the ball and
+// react to the shots. crowd.react (CrowdReactions) plans each shot's reactions at the strike (the
+// result is known then) and starts them as the playback passes their events: a cheer as a birdie
+// putt drops, an 'ooh' at a lip-out, a groan at the splash, applause as an approach stops close.
+// Heads follow the ball (smoothed); the gallery hushes and stands still while the player addresses
+// the ball; nobody stands in the play corridor (ball -> target) or near the camera (the shader
+// dissolves them). The murmur bed and the reaction sounds (audio.js crowd section) are as loud as
+// the camera is near the galleries. Setting 'crowd': 'off' | 'light' | 'full' (default full; the
+// renderer plays full as light at ?quality=low or once the adaptive resolution has stepped down).
+// Hooks: crowdHole(info) and crowdStale(cc) in onHole, crowdShotEvent(ev) in onShotEvent,
+// crowdShown() in onHoled (the old applause only without a gallery), crowdScene(cam, ball) in buildScene,
+// installCrowdDebug() in boot (?test=1). Nothing here allocates per frame.
+const crowd = {
+  react: new CrowdReactions(),
+  scene: { level: 'full', look: null, react: null, hush: 0, play: { on: false, bx: 0, by: 0, tx: 0, ty: 0, hw: 8 } },
+  ball: { x: 0, y: 0, z: 0 },
+  lastT: 0,
+  bedT: 0,
+  sounds: 0,
+  carryClub: null, // the club whose carry sizes the play corridor
+  carry: 150,
+};
+crowd.scene.look = crowd.react.look;
+crowd.scene.react = crowd.react.u;
+app.crowd = crowd;
+
+function crowdSetting() {
+  const s = app.ui ? app.ui.getSetting('crowd') : 'full';
+  return s === 'off' || s === 'light' ? s : 'full';
+}
+
+// Spectators are on screen (a WebGL renderer with a gallery, the setting not Off).
+function crowdShown() {
+  return crowdSetting() !== 'off' && !!app.renderer && !app.renderer.isNull && !!app.renderer.crowd;
+}
+
+// A new hole: no reaction carries over; the round's 9th (and 18th) hole is a finishing hole.
+function crowdHole(info) {
+  crowd.react.reset();
+  return { finishing: info.n % 9 === 0 };
+}
+
+// The renderer already has this terrain but laid out for another place in the round.
+function crowdStale(cc) {
+  const L = app.renderer && app.renderer.crowd;
+  return !!(L && L.finishing !== cc.finishing);
+}
+
+function crowdShotEvent(ev) {
+  const g = app.game;
+  if (!g || !ev) return;
+  if (ev.type === 'launch' && g.shot) crowd.react.startShot(g.shot, { terrain: g.terrain, par: g.terrain.par, fromTee: !!g.state.hole.onTee });
+  crowd.react.shotEvent(ev, app.time);
+}
+
+// Once per frame (buildScene): reactions, attention point, hush, play corridor and the sound.
+function crowdScene(cam, b) {
+  const g = app.game;
+  const sc = crowd.scene;
+  const now = app.time;
+  const dt = Math.min(0.1, Math.max(0, now - crowd.lastT));
+  crowd.lastT = now;
+  sc.level = crowdSetting();
+  const playing = !!(b && g && g.phase && g.terrain);
+  const B = crowd.ball;
+  if (playing) {
+    B.x = b.x;
+    B.y = b.y;
+    // At address they watch the player (about head height over the ball).
+    B.z = b.z + (g.phase === 'address' ? 0.9 : 0);
+  } else if (app.holeTerrain) {
+    const c = app.holeTerrain.greenCenter;
+    B.x = c.x;
+    B.y = c.y;
+    B.z = c.z + 1;
+  }
+  crowd.react.update(now, B, dt);
+  const addressing = playing && g.phase === 'address' && app.view === 'play';
+  sc.hush += ((addressing ? 1 : 0) - sc.hush) * (1 - Math.exp(-dt * 3));
+  crowd.react.look[3] = playing ? (g.phase === 'address' || g.phase === 'flight' || g.phase === 'holed' ? 1 : 0.85) : 0.6;
+  const pl = sc.play;
+  pl.on = playing && g.phase !== 'flight' && g.phase !== 'intro';
+  if (pl.on) {
+    const b = g.state.hole.ball;
+    const c = g.terrain.cup;
+    pl.bx = b.x;
+    pl.by = b.y;
+    if (g.phase === 'address') {
+      // Down the aim line as far as the club carries (the cup and a little past at most).
+      const dc = Math.hypot(c.x - b.x, c.y - b.y);
+      if (crowd.carryClub !== g.state.clubId) {
+        crowd.carryClub = g.state.clubId;
+        const ci = g.clubInfo();
+        crowd.carry = (ci && ci.carry) || 150;
+      }
+      const carry = g.isPutt ? dc + 2 : Math.max(30, Math.min(dc + 10, crowd.carry));
+      pl.tx = b.x + Math.cos(g.aimYaw) * carry;
+      pl.ty = b.y + Math.sin(g.aimYaw) * carry;
+    } else {
+      pl.tx = c.x;
+      pl.ty = c.y;
+    }
+  }
+  crowdSound(cam, dt);
+  return sc;
+}
+
+// Sound: the reactions just started, as loud as the camera is near them, and every 0.25 s the
+// murmur bed for the nearest gallery (hushed at address).
+const crowdGain = (d) => Math.max(0.08, Math.min(1, 1 / (1 + Math.pow(Math.max(0, d) / 45, 1.4))));
+function crowdSound(cam, dt) {
+  const au = app.audio;
+  if (!au || !au.crowdBed) return;
+  crowd.bedT += dt;
+  const fired = crowd.react.fired;
+  if (!fired.length && crowd.bedT < 0.25) return;
+  const L = crowdShown() ? app.renderer.crowd : null;
+  const lvl = L ? app.renderer.crowdStats().level : 'off';
+  const n = L ? crowdCount(L, lvl === 'off' ? crowdSetting() : lvl) : 0;
+  const e = cam ? cam.eye : null;
+  if (n && e) {
+    for (let k = 0; k < fired.length; k++) {
+      const f = fired[k];
+      const d = Math.hypot(f.x - e.x, f.y - e.y);
+      au.crowdReact(REACT_NAMES[f.type], f.strength * Math.min(1, 0.45 + n / 220), crowdGain(d - 10));
+      crowd.sounds++;
+    }
+  }
+  if (crowd.bedT < 0.25) return;
+  crowd.bedT = 0;
+  let near = 0;
+  if (n && e) {
+    for (const gal of L.galleries) {
+      const d = Math.hypot(gal.x - e.x, gal.y - e.y) - gal.r * 0.6;
+      near = Math.max(near, crowdGain(d) * Math.sqrt(Math.min(1, gal.nFull / 120)));
+    }
+  }
+  const level = n ? near * Math.sqrt(n / 250) * (app.game ? 1 : 0.5) : 0;
+  au.crowdBed(level, crowd.scene.hush);
+}
+
+// ?test=1: app.debug.crowd() -> {setting, level, people, drawCalls, tris, nFull, nLight, stand,
+// galleries, ropes, reaction: {name, why, ...}, log: [{name, why, t}], hush, look, sounds}.
+function installCrowdDebug() {
+  if (!app.debug) return;
+  app.debug.crowd = () => {
+    const r = app.renderer;
+    const L = r && r.crowd;
+    const st = r && r.crowdStats ? r.crowdStats() : { level: 'off', people: 0, drawCalls: 0, tris: 0 };
+    return {
+      setting: crowdSetting(),
+      level: st.level,
+      people: st.people,
+      drawCalls: st.drawCalls,
+      tris: st.tris,
+      nFull: L ? L.nFull : 0,
+      nLight: L ? L.nLight : 0,
+      stand: !!(L && L.stand),
+      finishing: !!(L && L.finishing),
+      galleries: L ? L.galleries.map((q) => ({ kind: q.kind, x: q.x, y: q.y, z: q.z, n: q.nFull })) : [],
+      ropes: L ? L.ropes.length : 0,
+      reaction: crowd.react.state(app.time),
+      log: crowd.react.log.map((q) => ({ name: q.name, why: q.why, t: q.t })),
+      hush: crowd.scene.hush,
+      look: Array.from(crowd.react.look),
+      sounds: crowd.sounds,
+      time: app.time,
+    };
+  };
+}
+
 // ------------------------------------------------------------------ boot
 function boot() {
   const canvas = document.getElementById('gl');
@@ -2597,6 +2778,7 @@ function boot() {
   app.input.swingStyle = settings.swing;
   app.courseId = COURSE_PARAM || loadCourseChoice() || DEFAULT_COURSE_ID;
   if (TEST) installDebugHooks();
+  if (TEST) installCrowdDebug(); // app.debug.crowd() (spectators, section 10)
 
   // From the menu: the picked course; Play again (final card) and Restart: the round's own (a
   // mixed round: Restart keeps its nine holes, Play again draws a new nine).

@@ -8,6 +8,7 @@
 //   --soak-only  skip the UI flow (soak rounds only)
 //   --customiser  only the Golfer customiser checks (golferCustomiser)
 //   --golfer      only the golfer-in-play checks (golferPlay, section 9.7)
+//   --crowd       only the spectator checks (crowdOnly, section 10; --vp= for some viewports)
 // WebGL comes from SwiftShader when available (renderer checks run); otherwise the flow runs
 // logic-only with ?nogl=1. Exits non-zero on any failure.
 
@@ -1428,6 +1429,105 @@ async function golferCustomiser(context, url, tag, gl) {
   await p2.close();
 }
 
+// ------------------------------------------------------------------ spectators (section 10)
+// Galleries on every course (a par 3 each, so the grandstand too: 2 draw calls, the Light subset
+// at quality=low), the green gallery from a putt, the Crowd setting (Off removes them, persisted)
+// and a holed putt's cheer. Builds without spectators (a stale dist/) skip. Also alone: --crowd.
+async function crowdOnly(browser, base, path, vp, gl) {
+  const query = gl ? '?test=1&quality=low&fast=8' : '?test=1&nogl=1&fast=8';
+  const tag = `${vp.name}-${path.replace(/\W+/g, '_')}`;
+  const context = await browser.newContext({ ...vp });
+  const page = await context.newPage();
+  const errors = collectErrors(page);
+  const vpw = vp.viewport.width;
+  const vph = vp.viewport.height;
+  const courses = [['pines', 2], ['desert', 6], ['water', 6], ['links', 7]];
+  for (let k = 0; k < courses.length; k++) {
+    const [course, hole] = courses[k];
+    await page.goto(`${base}/${path}${query}&course=${course}&hole=${hole}`);
+    await waitFor(page, () => !document.getElementById('menu').hidden, 15000);
+    if (k === 0) {
+      const has = await page.evaluate(() => !!(window.__golf.debug && window.__golf.debug.crowd));
+      console.log(`\n[${vp.name}] ${path}${query} crowd${has ? '' : ' (no spectators in this build: skipped)'}`);
+      if (!has) {
+        await context.close();
+        return;
+      }
+    }
+    await page.locator('#menu [data-act="new-round"]').tap();
+    await waitFor(page, () => window.__golf.game && window.__golf.game.phase === 'intro', 8000);
+    await page.touchscreen.tap(vpw * 0.5, vph * 0.35);
+    await waitFor(page, () => window.__golf.game.phase === 'address', 8000);
+    await page.waitForTimeout(500);
+    const c = await page.evaluate(() => window.__golf.debug.crowd());
+    if (gl) {
+      check(c.drawCalls === 2 && c.level === 'light' && c.people === c.nLight && c.people >= 40 && c.nFull >= 120, `crowd: ${course} ${hole}: galleries drawn (${c.drawCalls} draws, ${c.people} of ${c.nFull} people at quality=low, ${Math.round(c.tris / 1000)}k tris)`);
+      check(c.stand && c.galleries.some((q) => q.kind === 'green') && c.galleries.some((q) => q.kind === 'tee'), `crowd: ${course} ${hole}: tee and green galleries${c.stand ? ' and a grandstand' : ''}`);
+      const st = await page.evaluate(() => window.__golf.renderer.stats());
+      check(st.drawCalls <= 30, `crowd: ${course} ${hole}: ${st.drawCalls} draw calls in all (budget 30)`);
+    }
+    await shot(page, tag, `crowd-${course}-tee`);
+    // The green gallery behind a putt (played from the approach side, toward the back of the green).
+    await page.evaluate(() => {
+      const t = window.__golf.game.terrain;
+      window.__golf.debug.placeOnGreen(7, (Math.atan2(t.tee.y - t.cup.y, t.tee.x - t.cup.x) * 180) / Math.PI);
+    });
+    await page.waitForTimeout(1200);
+    await shot(page, tag, `crowd-${course}-green`);
+  }
+  // A lost WebGL context: the galleries come back with everything else.
+  if (gl) {
+    const lost = await page.evaluate(async () => {
+      const ext = window.__golf.renderer.gl.getExtension('WEBGL_lose_context');
+      if (!ext) return null;
+      ext.loseContext();
+      await new Promise((r) => setTimeout(r, 400));
+      ext.restoreContext();
+      return true;
+    });
+    if (lost) check(await waitFor(page, () => window.__golf.debug.crowd().drawCalls === 2 && window.__golf.debug.crowd().people > 0, 8000), 'crowd: galleries restored after a lost WebGL context');
+  }
+  // Settings: Crowd Off removes the spectators (and is saved), Full brings them back.
+  await page.evaluate(() => window.__golf.ui.showSettings());
+  await page.waitForTimeout(400);
+  const seg = '#settings [data-setting="crowd"]';
+  check(await page.isVisible(seg), 'crowd: Settings has a Crowd row');
+  await page.locator(`${seg} button[data-v="off"]`).tap();
+  // (Frames can take most of a second under SwiftShader: wait for one drawn with the setting.)
+  if (gl) await waitFor(page, () => window.__golf.debug.crowd().drawCalls === 0, 6000);
+  let c = await page.evaluate(() => ({ ...window.__golf.debug.crowd(), saved: JSON.parse(localStorage.getItem('golf.settings.v1') || '{}').crowd }));
+  check(c.setting === 'off' && c.saved === 'off' && (!gl || (c.drawCalls === 0 && c.people === 0)), `crowd: Off removes them (${c.drawCalls} draws, saved "${c.saved}")`);
+  await page.locator(`${seg} button[data-v="full"]`).tap();
+  if (gl) await waitFor(page, () => window.__golf.debug.crowd().drawCalls === 2, 6000);
+  c = await page.evaluate(() => window.__golf.debug.crowd());
+  check(c.setting === 'full' && (!gl || c.drawCalls === 2), `crowd: Full brings them back (${c.drawCalls} draws, ${c.people} people)`);
+  await page.locator('#settings [data-act="close"]').first().tap();
+  await page.waitForTimeout(300);
+  // A holed putt: the gallery cheers (the first stroke on a par 3 is an ace) as it drops.
+  let holed = false;
+  for (let tryN = 0; tryN < 3 && !holed; tryN++) {
+    await page.evaluate(() => window.__golf.debug.placeNearCup(0.6));
+    await page.waitForTimeout(600);
+    const p = await page.evaluate(() => {
+      const g = window.__golf.game;
+      const dbg = window.__golf.debug;
+      return { pad: dbg.padRect(), depth: dbg.depthForPower((g.distanceToCup() + 0.35) / g.puttRange, 'putt') };
+    });
+    await swipePutt(page, p.pad.x + p.pad.w * 0.5, p.pad.y + p.pad.h * 0.25, p.depth);
+    await waitFor(page, () => window.__golf.game.phase === 'flight', 5000);
+    await waitFor(page, () => window.__golf.game.phase !== 'flight', 15000);
+    holed = await page.evaluate(() => ['holed', 'scorecard'].includes(window.__golf.game.phase));
+  }
+  check(holed, 'crowd: short putt holed');
+  await page.waitForTimeout(300);
+  c = await page.evaluate(() => window.__golf.debug.crowd());
+  const cheer = c.log.find((q) => q.name === 'cheer');
+  check(!!cheer && (c.reaction.name === 'cheer' || c.log[c.log.length - 1].name === 'cheer'), `crowd: the holed putt gets a cheer (${c.log.map((q) => `${q.name}/${q.why}`).join(', ') || 'none'})`);
+  await shot(page, tag, 'crowd-cheer');
+  check(errors.length === 0, `crowd: no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+  await context.close();
+}
+
 const server = await serve();
 const base = `http://127.0.0.1:${server.address().port}`;
 if (SHOTS) await mkdir(shotDir, { recursive: true });
@@ -1454,7 +1554,11 @@ try {
         await context.close();
       }
     }
-  } else if (!args.has('--soak-only')) for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
+  } else if (!args.has('--soak-only') && !args.has('--crowd')) for (const t of targets) for (const vp of VIEWPORTS) await smoke(browser, base, t, vp, gl);
+  // Spectators (section 10): their own pass per build and viewport, after the UI flow (or alone).
+  if (args.has('--crowd') || !(args.has('--soak-only') || args.has('--golfer') || args.has('--customiser'))) {
+    for (const t of targets) for (const vp of VIEWPORTS.filter((v) => !vpArg || vpArg.slice(5).split(',').includes(v.name))) await crowdOnly(browser, base, t, vp, gl);
+  }
   if (SOAK) for (const t of targets) for (const id of SOAK_COURSES) await soak(browser, base, t, gl, id);
 } finally {
   await browser.close();

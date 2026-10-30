@@ -47,7 +47,8 @@ export const SLOT = Object.freeze({
 });
 
 // Where the parasol is held (torso frame): stick from the hand up to the canopy.
-export const PARASOL = Object.freeze({ x: 0.25, y: -0.19, z0: 1.18, z1: 2.1, r: 0.62, drop: 0.2 });
+// The stick runs from the right hand (x, y, z0) up and in to the canopy's apex over the head (cx, cy, z1).
+export const PARASOL = Object.freeze({ x: 0.25, y: -0.19, z0: 1.2, cx: 0.07, cy: -0.07, z1: 2.08, r: 0.6, drop: 0.2 });
 
 function builder() {
   const p = [];
@@ -191,19 +192,19 @@ export function personMesh() {
   // ---- parasol (8): a six-panel canopy on a stick, held over the right shoulder.
   {
     const P = PARASOL;
-    const apex = B.v(P.x, P.y, P.z1, 0, 0, 1, PART.PARASOL, SLOT.CANOPY, 0, 1);
+    const apex = B.v(P.cx, P.cy, P.z1, 0, 0, 1, PART.PARASOL, SLOT.CANOPY, 0, 1);
     const rim = [];
     for (let k = 0; k < 6; k++) {
       const ang = (k / 6) * Math.PI * 2;
       const cs = Math.cos(ang);
       const sn = Math.sin(ang);
-      rim.push(B.v(P.x + cs * P.r, P.y + sn * P.r, P.z1 - P.drop, cs * 0.35, sn * 0.35, 1, PART.PARASOL, SLOT.CANOPY, 0, 0.9));
+      rim.push(B.v(P.cx + cs * P.r, P.cy + sn * P.r, P.z1 - P.drop, cs * 0.35, sn * 0.35, 1, PART.PARASOL, SLOT.CANOPY, 0, 0.9));
     }
     B.fan(apex, rim, true);
     const s0 = B.v(P.x - 0.012, P.y, P.z0, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
     const s1 = B.v(P.x + 0.012, P.y, P.z0, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
-    const s2 = B.v(P.x + 0.012, P.y, P.z1, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
-    const s3 = B.v(P.x - 0.012, P.y, P.z1, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
+    const s2 = B.v(P.cx + 0.012, P.cy, P.z1, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
+    const s3 = B.v(P.cx - 0.012, P.cy, P.z1, 0, 1, 0, PART.PARASOL, SLOT.STICK, 0, 0.8);
     B.i.push(s0, s1, s2, s0, s2, s3);
   }
 

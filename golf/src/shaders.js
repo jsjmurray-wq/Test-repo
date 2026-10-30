@@ -11,7 +11,9 @@ import { BONE_COUNT } from './golfer.js';
 
 // Shared fragment chunk: sky model, fog and tone mapping. Every colour constant of the look comes
 // from the course theme (themes.js) through uniforms; parkland's values are the shipped constants.
-const COMMON = `
+// (Exported for the shader modules of later stages, e.g. shaders-crowd.js: the same sky, fog and
+// tone map everywhere.)
+export const COMMON = `
 precision highp float;
 uniform vec3 uSun;      // unit vector toward the sun
 uniform vec3 uSunCol;   // linear sun radiance

@@ -48,7 +48,7 @@ import { SKIN_TONES, HAIR_COLORS, hexToRgb } from './golfer.js';
 
 export const CROWD_LEVELS = ['off', 'light', 'full'];
 export const PERSON_FLOATS = 12;
-export const MAX_PEOPLE = 250;
+export const MAX_PEOPLE = 220; // 220 x 180 triangles ~ 40k on Full
 export const MIN_LIGHT = 40;
 export const REACT = Object.freeze({ idle: 0, clap: 1, cheer: 2, ooh: 3, groan: 4 });
 export const REACT_NAMES = ['idle', 'clap', 'cheer', 'ooh', 'groan'];
@@ -654,9 +654,9 @@ export function buildCrowd(terrain, { seed = 1, finishing = null, theme = null }
 
   // Quotas (Full, Light) per gallery; what one cannot fill goes to the others.
   const Q = par3
-    ? { green: [125, 44], tee: [55, 20], fairway: [0, 0], stand: [62, 22] }
-    : { green: [100, 36], tee: [45, 16], fairway: [52, 18], stand: [64, 22] };
-  if (fin) Q.green = [Q.green[0] + 20, Q.green[1] + 6];
+    ? { green: [112, 42], tee: [48, 18], fairway: [0, 0], stand: [60, 22] }
+    : { green: [96, 36], tee: [44, 16], fairway: [50, 18], stand: [60, 22] };
+  if (fin) Q.green = [Q.green[0] + 14, Q.green[1] + 6];
   if (!stand) Q.stand = [0, 0];
   let totF = 0;
   for (const k in Q) totF += Q[k][0];

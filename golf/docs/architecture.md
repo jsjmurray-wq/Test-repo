@@ -70,6 +70,8 @@ metres). Wind shows in mph (or km/h).
 | `golfer.js` | The golfer: skeleton (`BONES`, `B`, `BONE_PARENT`), the LOOK (`DEFAULT_LOOK`, `normalizeLook`, `PRESETS`, `randomLook`, palettes), proportions (`bodyDims`) and club specs (`clubSpec`) (§9); the player's saved look `loadLook`/`saveLook` (§9.7) |
 | `golfer-mesh.js` | `buildGolferMesh(look, club)`: one rigidly skinned mesh (§9) |
 | `swing-anim.js` | Poses, FK/IK, `placeGolfer`, `SwingAnimator`: the visible swing (§9) |
+| `crowd.js` | Spectators (§10.1): `buildCrowd(terrain, {seed, finishing, theme})` gallery layout, `crowdSeed`, `crowdCount`, `crowdShadowBake`, `corridorFor`/`corridorClearance`, `planReactions`, `CrowdReactions` |
+| `crowd-mesh.js` | Spectators (§10.1): `personMesh()` (180 triangles, vertex groups), `posePerson` (the shader's skeleton in JS), `POSES`, `furnitureMesh(layout)` (ropes, stakes, grandstand) |
 
 DOM and GL modules: `gl.js`, `shaders.js`, `render.js`, `input.js`, `ui.js`, `audio.js`, `main.js`.
 
@@ -2105,3 +2107,171 @@ PREVIEW_CLUBS, TABS, SLIDER_MS
 - **Known gaps:** the avatar busts are flat SVG drawings (not renders of the 3D golfer); the turntable keeps
   the course's own scenery behind him (no separate studio backdrop); hairstyles and colours have no
   thumbnails beyond their names and swatches.
+
+## 10. Spectators and wildlife (as built)
+
+The user request: "Add spectators and some wildlife on the courses". Two parts, built side by side: the
+spectators (§10.1) and the wildlife (its own subsection). Both are looks only: physics never sees them (the
+ball flies and rolls through as before), and each has a Settings row.
+
+### 10.1 Spectators
+
+Tournament galleries on every hole of every course (and every Mixed hole): rope lines (stakes and sagging
+ropes) round the green surround, the tee box and the fairway landing zone(s), people behind them in loose
+clusters one to four deep, and a small grandstand facing the green on par 3s and on the finishing hole(s).
+They watch the ball (heads follow it in flight), hush at address, and react to the shots with golf claps, a
+cheer, an "ooh" or a groan, with their sound. Files: `src/crowd.js` (pure: layout, shadows, reactions),
+`src/crowd-mesh.js` (pure: person, skeleton, furniture), `src/shaders-crowd.js` (GLSL), hooks in
+`render.js`, `main.js`, `audio.js`, `ui.js`, `index.html` (each marked "section 10" / "spectators");
+`shaders.js` now exports `COMMON` (the shared sky, fog and tone-map chunk). Tests: `tests/crowd.test.js`.
+
+**Layout** (`buildCrowd(terrain, {seed, finishing, theme})` → `CrowdLayout`; `crowd.js` header is the
+reference). Deterministic per `crowdSeed(courseId, holeN)` (FNV hash of the hole's own course and number, so
+a Mixed hole has its course's gallery). In 2–20 ms per hole.
+- **Green:** stakes every 4.6 m round the green at its edge + fringe + 7–9.5 m (pushed out up to 14 m until
+  the stake and 1.4/2.4 m behind it are good ground), **open in front**: no rope or person within
+  `FRONT_HALF` = 55° of the line the approach comes in on (from the centreline 70 m short of the green).
+- **Tee:** a U of rope round the sides (at least 9.2 m either side of the tee line, 4.6 m outside the box)
+  and the back (5.5 m behind it), the sides running 20 m on down the chute so a tee shot is framed by people
+  at the edges of the TV view.
+- **Fairway** (par 4/5): both sides of the landing zone (s = max(175, 0.52 L) … +95 m, and a lay-up zone
+  on long par 5s), 8–18 m outside the fairway's edge (none where there is no fairway: a forced carry).
+- **Grandstand** (par 3s and `finishing`; default `terrain.n === 9`, main passes the round's 9th and 18th):
+  13 m wide, 5 rows of 0.85 m rising 0.42 m, facing the green behind or beside it (never within 105° of the
+  front), the nearest spot 13–32 m out whose footprint is all good ground clear of trees and the corridor; the
+  deck is raised until every tier clears the ground; 95 seats. 11 of the 12 eligible holes get one (Coral
+  Cay's island par 3 has no room).
+- **Good ground** (every person and stake): rough, waste, desert or fescue; not tee, fairway, fringe, green,
+  bunker, water or out of bounds, nor within 2.1 m (sampled) of the mown areas or 1.5 m of sand and water;
+  slope ≤ `MAX_SLOPE` 0.3 (stakes 0.42); in bounds; clear of trunks (+0.45 m), bushes (canopy + 0.3 m), rocks,
+  saguaros (1.3 m) and canopies lower than 2.1 m; off the grandstand.
+- **Corridor** (`corridorFor(terrain)` → polyline from 9 m behind the tee through the course's aim points
+  to the cup; `corridorClearance(corr, x, y)`): half-width 9 m near the ball, + 2.5% per metre down the tee
+  shot (≤ 14 m), 9 m on later legs. Nobody is placed in it.
+- **Counts** (`MAX_PEOPLE` 220 ≈ 40k triangles): quotas per gallery (Full / Light): par 4/5 green 96/36,
+  tee 44/16, fairway 50/18; par 3 green 112/42, tee 48/18, grandstand 60/22; finishing +14/+6 on the green;
+  a gallery that cannot fill its quota hands the rest to the others. Weighted sampling without replacement
+  (exponential races) by a 9 m value-noise cluster field × row (1, 0.75, 0.5, 0.3), so galleries bunch and
+  thin naturally and the front rows fill first. **Light is a prefix of Full** (the first `nLight` people): a
+  lighter crowd is a shorter draw, no rebuild. Measured: Full 160–220, Light 60–98 per hole.
+- **People** (`PERSON_FLOATS` 12 per person: x, y, z, yaw, height scale, seed, flags, skin, shirt, legs,
+  hat, hair; colours packed 8:8:8 sRGB integers, `packColor`/`unpackColor`): 1.55–1.95 m (4% children),
+  `SKIN_TONES` and `HAIR_COLORS` from `golfer.js` (greys and bald heads for some older spectators), flags =
+  sit + hat kind·2 (`HAT`: none, cap, bucket, sun hat, flat cap, beanie) + parasol·16 + long sleeves·32 +
+  shorts·64 + idle pose·128 (arms down, folded, clasped, holding something). Theme wardrobes: parkland polos
+  and caps; desert light colours, shorts, sun hats and parasols; tropical bright shirts, straw hats, parasols;
+  links rain jackets, bucket hats, flat caps and beanies, dark umbrellas.
+- `galleries` = [{kind, x, y, z, nFull, nLight, r}] (centroids for the sound), `ropes` = [{kind, pts}],
+  `stand`, `corridor`, `seed`, `finishing`, `theme`.
+
+**Shadows** (`crowdShadowBake(bake, layout, n, sunDir)`): a copy of the hole's ground texture with soft
+sun shadows of the first n standing people (a body-wide streak from the feet away from the sun, up to 36%)
+and of the grandstand (55%); RGB only (the mowing mask in alpha is kept). The renderer uploads the variant
+for the level shown (≤ 20 ms, on a hole change or a level change only).
+
+**Person** (`crowd-mesh.js` `personMesh()`: 180 triangles, 149 vertices, `attr` = part, colour slot, aux,
+baked occlusion): torso 30, legs 2 × 19, arms 2 × 19, head 36 (hair on the crown and the back), hat 30 (a
+unit lathe the shader shapes per kind), parasol 8 (a six-panel canopy on a slanted stick from the right
+hand). Parts are vertex groups: pelvis, torso (pivot waist), head (neck), upper arm and forearm + hand each
+side (shoulder, elbow), thigh and shin + shoe each side (hip, knee), hat, parasol. `PJ` holds the joints of
+the 1.75 m figure. **Skeleton** (`posePerson(pose, part, p)`, the shader's exact maths in JS): arm = forward
+raise `a`, abduction `phi` (about the body's x axis), elbow flex `b` and upper-arm twist (swings the forearm
+inward); torso pitch, roll, yaw about the waist; head yaw and pitch about the neck; standing legs lean with
+the hip shift (feet planted); seated, the thighs fold forward and the shins hang (pelvis on a 0.42 m bench).
+`POSES` (fitted to where the hands should be, `POSE_WRIST`): idle, folded, clasp, holding, clapOpen /
+clapShut, cheer (a V), ooh (hands on the head), mouth (hands to the face), groan (slumped), parasol.
+
+**Furniture** (`furnitureMesh(layout, {theme})` → {pos, nrm, col (rgb + thin radius), idx, tris}, world
+coordinates, one static mesh): stakes (0.95 m posts, 10 triangles), ropes (three-sided tubes sagging 1.2 cm per
+metre of span, 24 triangles a span), the grandstand (hoarding with a trim stripe, treads and risers, benches,
+stepped side panels down to the ground, back wall and rail). Theme colours `FURNITURE_COLORS` (white stakes
+and cream rope in parkland, timber and gold rope in the desert, white in the tropics, timber stakes on the
+links; dark green, terracotta, teal or navy boards). 700–3000 triangles per hole.
+
+**Rendering** (`shaders-crowd.js`, `render.js` section "crowd"): 2 draw calls after the themed objects
+(two-sided, depth-tested, opaque with ordered-dither fades): the furniture (`CROWD_PROP_VS/FS`; ropes and
+stakes widen to ~0.6 device px of radius and dissolve by the share of that they really cover, so they stay
+fine lines without shimmer) and the people (`CROWD_VS/FS`, one instanced draw: `iA`, `iB`, `iC` = 3 vec4 per
+person; WebGL1 without instancing falls back to per-person constant attributes). The vertex shader poses
+the vertex groups per person and frame: idle weight shift and breathing (stiller by `uHush`), the head (±1.2
+rad) and a third of the turn in the shoulders (±0.5) toward `uLook` (heads up for a ball in the air), a few
+chatting to a neighbour between shots, then the reactions of `uReact` (the older slot, then the newer). Each
+person joins a reaction with probability strength × falloff (1 within the reaction's radius, down to its
+floor at twice it), after a personal delay (0.04–0.34 s for an "ooh", 0.12–0.87 s otherwise), for 0.75–1.25
+× its duration, easing in and out: clap = open/shut at 2.5–3 Hz, hands meeting in front of the chest; cheer =
+arms high in a V, pumping, a little bounce (30% raise one arm); ooh = hands on the head (35% to the face),
+leaning back; groan = slump, head down (35% a hand to the head, turning away). Parasol holders keep the
+right hand on the stick. Hats take their kind's shape (cap bill, bucket and sun-hat brims, flat cap, beanie);
+the parasol and hats collapse when unused. Lighting: the scene's sun with wrap, hemisphere ambient, a cool
+rim, fog and tone map (`COMMON`). Fades: within 2.2–4.5 m of the camera (furniture 1.5–3.5 m), beyond
+520–650 m (furniture 900 m), and inside the **play corridor** `playFade` (`scene.crowd.play`: within 5 m
+of the camera → ball line, or `hw` = 8 m of the ball → target line narrowing to 4 m from 30 to 80 m out),
+so nothing ever stands between the camera, the golfer, the ball, the aim line and the flag (ropes open a
+gap there). `scene.crowd = {level, look, react, hush, play: {on, bx, by, tx, ty, hw}}` (main.js; without it
+the last level is kept and people face forward). `setHole(terrain, {crowd: {finishing, seed}})` builds the
+layout and furniture (a re-upload of the same hole keeps the last context); context loss rebuilds programs,
+the person mesh, the buffers and the shadowed ground texture from the CPU copies (checked on WebGL2 and
+WebGL1). `renderer.crowd` (the layout), `renderer.crowdStats()` → `{level, people, drawCalls, tris}`.
+`'full'` draws the Light subset with `?quality=low` / the Low setting, or once the adaptive resolution has
+stepped down (sticky for the session, so it never flickers).
+
+**Reactions** (`planReactions(shot, {terrain, par, fromTee})` → `[{on, type, strength, x, y, radius,
+floor, dur, delay, why}]`, from the shot's result, known at the strike): holed → cheer (ace 1.0, eagle,
+chip-in, birdie 0.9, a putt from 6 m+ 0.8) or applause (par 0.75; bogey or a tap-in 0.35–0.45) on the `cup`
+event at the cup; lip-out / flagstick → "ooh"; a putt from 2.5 m+ stopping within 35 cm → "ooh"; a lag from
+9 m+ to within 0.9 m → light applause; water → groan at the entry (`water` event); OB → groan; a tree → "ooh";
+a full shot onto the green → applause by proximity (< 3 m 0.9, < 8 m 0.65, else 0.4), within 1.2 m "ooh" then
+applause 1.1 s later; from the tee onto the green or a par-4/5 drive into the fairway → the tee gallery's
+"good shot" applause 1.4 s after the strike (and the landing gallery's as it stops); a greenside bunker → a
+muted groan. **`CrowdReactions`**: `startShot(shot, ctx)` plans, `shotEvent(ev, now)` queues the items
+waiting for that event (once each), `update(now, ball, dt)` starts the due ones (`trigger(type, opts, now)`:
+the current reaction moves to slot B, cut to end within 0.6 s) and eases the attention point toward the
+ball (snapping on a jump of 60 m+), `state(now)` → `{name, type, t0, strength, why, count}`, `fired` (this
+update's, for the sound), `log` (the last 24), `u` = the shader's `uReact` (Float32Array 16), `look`.
+
+**Game hooks** (`main.js` section "spectators"): `onHole` → `crowdHole(info)` (reset; finishing = the
+round's hole number is a multiple of 9) and `setHole(t, {crowd})` (again when the cached terrain was laid
+out for another place in the round: `crowdStale`); `onShotEvent` → `crowdShotEvent` (plans on `launch`,
+then each event); `onHoled` plays the old synthesized applause only when no gallery is shown; `buildScene`
+→ `crowdScene(cam, ball)` once per frame: the level from Settings, attention = the ball (0.9 m up at
+address: they watch the player; the green behind the menu), hush eases to 1 at address in the play view,
+heads follow fully at address, in flight and holed (0.85 otherwise: some chat), the corridor from the ball
+to the aim line's carry (the club's, ≤ cup + 10 m; putts to the cup + 2 m) at address, to the cup in
+relief and holed, off in flight and the intro. No allocation per frame. **Sound** (`audio.js` section
+"crowd"): `crowdBed(level, hush)` (a speech-band noise loop with slow swells and chatter flutter, ducked by
+82% at address; level = the nearest gallery's gain by camera distance × its size × √(people / 250), half
+behind the menu; updated every 0.25 s), `crowdReact(name, strength, gain)`: 'clap' (golf claps thinning
+out), 'cheer' (a swelling roar, a "yeah" chorus, claps and one or two whistles), 'ooh' and 'groan'
+(formant choruses: detuned saw voices, men and women, staggered, a rising then falling pitch, through two
+vowel formants: /u/ 320/820 Hz, /o/→/a/ 560→700 / 900→1100 Hz); gain = 1 / (1 + (d / 45 m)^1.4) of the
+camera's distance to the reaction (≥ 0.08). **Setting** `crowd: 'off' | 'light' | 'full'` (default full;
+Settings "Crowd: Off / Light / Full", persisted in `golf.settings.v1`). Test hook (`?test=1`):
+`app.debug.crowd()` → `{setting, level, people, drawCalls, tris, nFull, nLight, stand, finishing,
+galleries, ropes, reaction, log, hush, look, sounds, time}`.
+
+**Budget (measured):** +2 draw calls; Full 160–220 people = 29–40k triangles + 0.7–3k furniture (≤ 42.2k),
+Light 60–98 people = 11.5–21k; hole-by-hole totals with the crowd (SwiftShader, quality=low): 14–20 draw
+calls (budget 30). CPU: layout ≤ 20 ms and shadow bake ≤ 20 ms per hole load; per frame only the reaction
+update and a few uniforms.
+
+**Tests** (`tests/crowd.test.js`, 13): every hole of every course: counts (Light 40–100 and a prefix of
+Full ≤ 220), nobody on play surfaces, out of bounds, within 1.5 m (analytic) of the mown areas or 1 m of
+sand and water, on a slope over 0.32, off the ground or inside a trunk; stakes off play; nobody in the
+corridor or within 8 m of the tee line over its first 40 m; nobody in front of a green; grandstands (11 of
+12, facing the green, over good ground, ground never through a tier, 20+ seated, `finishing` on a par 4
+adds one, off on a 9th removes it); determinism; instance data and the theme wardrobes; reaction mapping
+(birdie/par/long putt/ace, lip-out, near miss, water, OB, stiff approach, onto the green, a fairway drive,
+a plain miss); the state machine (events, once only, slot handover, delays, attention point, reset); the
+person mesh (≤ 180 triangles, parts, slots, unit normals, 1.75 m); the skeleton (each pose's wrist,
+cheer above the head, clap hands meeting, ooh on the head, mirroring, seated feet and bench, the shader
+carrying the same numbers); furniture and triangle budgets on every hole; the baked shadows. e2e
+`crowdOnly` (after the UI flow per build and viewport, or `--crowd`): a par 3 on each course (galleries in
+2 draws at quality=low = the Light subset, tee and green galleries and a grandstand, ≤ 30 draw calls), the
+green gallery behind a putt, galleries restored after a lost WebGL context, Settings Off (0 draws, saved)
+and Full again, a real touch putt holed → a cheer, no console errors; shots `crowd-<course>-tee`,
+`crowd-<course>-green`, `crowd-cheer`.
+
+**Known gaps:** spectators are low-poly figures (no faces, fingers or cloth folds), fine at broadcast
+distances and stylised in a close-up; nobody walks between holes or moves for a ball that comes to rest
+among them (they dissolve within 8 m of it instead); the grandstand has no roof; galleries are the same
+every round (seeded per hole); sound is one gallery at a time (no stereo placement).

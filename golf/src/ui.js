@@ -92,7 +92,8 @@
 //   ui.settings (copy)  ui.getSetting(k)  ui.setSetting(k, v)  ui.onChange(fn) -> unsubscribe
 //       {units:'yd'|'m', wind:'off'|'light'|'breezy', difficulty:'easy'|'normal'|'pro',
 //        handed:'R'|'L', sound:bool, quality:'auto'|'low', swing:'swipe'|'tap'}  persisted in
-//       golf.settings.v1 (swing: Settings "Swing control: Swipe / Tap meter").
+//       golf.settings.v1 (swing: Settings "Swing control: Swipe / Tap meter"; crowd: 'off'|'light'|
+//       'full', Settings "Crowd", default full: the spectators, section 10).
 //   UI.DEFAULT_SETTINGS
 //
 // DOM contract (index.html): canvas#gl, #hud (#topbar, #pause-btn, #infocard, #tools, #club-row
@@ -104,7 +105,7 @@ import { fmtDist, fmtWind, mToYd, SURF_NAMES } from './constants.js';
 import { padRectFor, readSafeInsets, layoutMode, onTarget, MAX_POWER } from './input.js';
 
 const SETTINGS_KEY = 'golf.settings.v1';
-const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto', swing: 'swipe', puttAid: 'auto' });
+const DEFAULTS = Object.freeze({ units: 'yd', wind: 'light', difficulty: 'normal', handed: 'R', sound: true, quality: 'auto', swing: 'swipe', puttAid: 'auto', crowd: 'full' });
 const CHOICES = {
   units: ['yd', 'm'],
   wind: ['off', 'light', 'breezy'],
@@ -114,6 +115,7 @@ const CHOICES = {
   quality: ['auto', 'low'],
   swing: ['swipe', 'tap'],
   puttAid: ['auto', 'full', 'partial', 'off'], // putt preview line (section 8.9)
+  crowd: ['off', 'light', 'full'], // spectators (section 10)
 };
 const HINTS = {
   swipe: { full: 'Drag down, then swipe up', putt: 'Drag down, release · slide back to cancel' },

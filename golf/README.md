@@ -137,6 +137,26 @@ change shows on him at once.
 
 The screen fits portrait (preview on top, controls below) and landscape (preview on the left).
 
+## Spectators
+
+Every hole is played in front of a tournament gallery, like golf on TV: spectators line the ropes
+round the green (open in front, where your approach comes in), along the tee and down both sides of the
+landing zone, and par 3s and the finishing hole have a small grandstand behind the green. Each course
+dresses its own crowd: polos and caps at Hollow Pines, sun hats and parasols at Red Mesa, bright shirts
+and straw hats at Coral Cay, rain jackets, bucket hats, flat caps and umbrellas at Kittiwake Links.
+
+- **They watch the ball.** Heads follow your shot through the air; the gallery goes quiet and still
+  while you address the ball.
+- **They react.** Polite golf claps for a good drive or an approach onto the green (louder the closer
+  it finishes), a cheer and arms in the air when a birdie putt drops (or a chip-in, an eagle, a long
+  putt), hands on heads and an "ooh" for a lip-out or a near miss, a groan for water or out of bounds.
+  You hear them too, louder the nearer the camera is to the gallery.
+- **They never get in the way.** Nobody stands in play, in hazards or in your line; anyone between
+  the camera, you, the ball and the flag fades out, and the ropes open a gap there. They don't touch
+  the ball.
+- **Settings → Crowd: Off / Light / Full.** Full by default; a phone that has to lower its graphics
+  quality (or Graphics: Low) shows the Light crowd.
+
 ## Rules
 
 Simplified Rules of Golf: every swing counts (a cancelled swing does not). Out of bounds is stroke
@@ -151,8 +171,8 @@ or worse are boxed.
 Settings (persisted on the device): units (yards or metres), wind (off, light, breezy; the links
 adds more), swing control (swipe or tap meter), difficulty (easy, normal, pro: how much the shape of
 your swipe affects the ball; Easy also snaps power onto the target notch), putt preview (auto, full,
-part, off: auto is full on Easy, part on Normal, off on Pro), left- or right-handed, sound, and
-graphics quality.
+part, off: auto is full on Easy, part on Normal, off on Pro), left- or right-handed, sound,
+graphics quality, and the crowd (off, light, full).
 
 ## Running
 
@@ -207,6 +227,7 @@ resume after closing Safari.
 | `src/putting-aid.js`, `green-flow.js` | Green reading: the putt and chip previews, the caddie's read and its words, slope bands, the preview throttle; the flowing slope streaks |
 | `src/mat4.js`, `gl.js`, `shaders.js`, `meshes.js`, `bake.js`, `render.js`, `camera.js`, `themes.js` | WebGL renderer, per-course looks (parkland, desert, tropical, links) and camera rig |
 | `src/golfer.js`, `golfer-mesh.js`, `swing-anim.js` | The golfer: skeleton, customisable look and presets, the skinned mesh, swing poses, IK and the animator |
+| `src/crowd.js`, `crowd-mesh.js`, `shaders-crowd.js` | Spectators: gallery layout, reactions to your shots, the instanced spectator and its skeleton, ropes and grandstand, their shaders (section 10) |
 | `src/input.js`, `ui.js`, `audio.js`, `main.js` | Pointer gestures and tap meter, DOM HUD and menus, synthesised audio, boot and loop |
 | `index.html`, `style.css` | Shell and broadcast-style HUD (portrait, landscape and square layouts) |
 | `scripts/` | Single-file build, icon renderer, calibration and course report |

@@ -37,6 +37,10 @@ import { BALL_R, CUP_R, FLAGSTICK_H, FLAGSTICK_R, SURF } from './constants.js';
 import { themeFor } from './themes.js';
 import { buildGolferMesh } from './golfer-mesh.js';
 import { slopeField, FlowParticles, flowIndices, FLOW_FLOATS, FLOW_MAX } from './green-flow.js';
+// Spectators (section 10): galleries behind ropes, a grandstand, 2 draw calls (see "crowd" below).
+import { buildCrowd, crowdSeed, crowdCount, crowdShadowBake, PERSON_FLOATS } from './crowd.js';
+import { personMesh, furnitureMesh } from './crowd-mesh.js';
+import { CROWD_VS, CROWD_FS, CROWD_PROP_VS, CROWD_PROP_FS } from './shaders-crowd.js';
 
 const EXPOSURE = 1.0;
 
@@ -228,11 +232,15 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, this._quad.byteLength, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.G.quad2);
     gl.bufferData(gl.ARRAY_BUFFER, this._quad.byteLength, gl.DYNAMIC_DRAW);
+    this._crowdInitGL(); // spectators: programs and the person mesh (section 10)
     this.res = null;
   }
 
   // ------------------------------------------------------------------ hole data
-  setHole(terrain) {
+  // opts.crowd = {finishing, seed} (spectators, section 10); without it the hole's own number
+  // decides (the 9th has a grandstand) and a re-upload of the same hole keeps the last one.
+  setHole(terrain, opts = {}) {
+    this._crowdCtx = opts && opts.crowd ? opts.crowd : terrain === this.terrain ? this._crowdCtx : null;
     this.terrain = terrain;
     const theme = themeFor(terrain.theme);
     this.theme = theme;
@@ -328,6 +336,7 @@ export class Renderer {
       mow: [mx, my],
       sea,
     };
+    this._crowdSetHole(terrain); // spectators: this hole's galleries (section 10)
     this._themeUniforms();
     if (this.ok && !this.lost) this._uploadHole();
   }
@@ -417,7 +426,8 @@ export class Renderer {
     res.objs = {};
     for (const k of Object.keys(c.objs)) res.objs[k] = { b: buf(c.objs[k]), n: c.objs[k].length / 8, cpu: c.objs[k] };
     const bk = c.bake;
-    res.bake = tex(bk, { mip: true });
+    res.bake = tex(this._crowdBakeImage(res, bk), { mip: true }); // (with the spectators' shadows)
+    this._crowdUpload(res, buf); // spectators' instance and furniture buffers
     res.bakeMin = [bk.minX, bk.minY];
     res.bakeInv = [1 / (bk.width * bk.step), 1 / (bk.height * bk.step)];
     res.detail = bk.detail ? tex(bk.detail, { mip: true }) : this.G.black;
@@ -784,6 +794,9 @@ export class Renderer {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshG.idx);
         this._drawInstanced(ob, meshG, set);
       }
+
+      // ---- spectators: ropes, stakes, grandstand, then the people (2 draws, section 10)
+      this._drawCrowd(scene, frame);
 
       gl.enable(gl.CULL_FACE);
     }
@@ -1271,4 +1284,177 @@ export class Renderer {
       q[k * 6 + 5] = 1;
     }
   }
+
+  // ------------------------------------------------------------------ crowd (section 10)
+  // Spectators. setHole lays out the hole's galleries (crowd.js buildCrowd; CPU copies kept for a
+  // context restore) and the furniture mesh (crowd-mesh.js); the frame draws the ropes, stakes and
+  // grandstand (1 draw) and the people (1 instanced draw) after the themed objects.
+  // scene.crowd = {level: 'off'|'light'|'full', look: Float32Array(4) (attention point, w = how
+  // much heads follow it), react: Float32Array(16) (CrowdReactions.u), hush: 0..1, play: {on, bx,
+  // by, tx, ty, hw} (the play corridor: ball -> target, half-width near the ball)}; without it the
+  // last level is kept and the people face forward. 'full' draws the Light subset with
+  // ?quality=low or once the adaptive resolution has stepped down (sticky). The people's sun
+  // shadows are darkened into the ground texture for the level shown (re-uploaded on a change).
+  get crowd() {
+    return this.cpu && this.cpu.crowd ? this.cpu.crowd.layout : null;
+  }
+
+  crowdStats() {
+    return { ...(this._crowdStats || { level: 'off', people: 0, drawCalls: 0, tris: 0 }) };
+  }
+
+  _crowdInitGL() {
+    const gl = this.gl;
+    this.P.crowd = createProgram(gl, CROWD_VS, CROWD_FS);
+    this.P.crowdProp = createProgram(gl, CROWD_PROP_VS, CROWD_PROP_FS);
+    if (!this._personMesh) this._personMesh = personMesh();
+    const m = this._personMesh;
+    this.G.person = {
+      pos: makeBuffer(gl, m.pos), nrm: makeBuffer(gl, m.nrm), attr: makeBuffer(gl, m.attr),
+      idx: makeBuffer(gl, m.idx, gl.ELEMENT_ARRAY_BUFFER), count: m.idx.length,
+    };
+    if (!this._crowdStats) this._crowdStats = { level: 'off', people: 0, drawCalls: 0, tris: 0 };
+    if (!this.crowdLevel) this.crowdLevel = 'full';
+  }
+
+  _crowdSetHole(terrain) {
+    const ctx = this._crowdCtx || {};
+    const seed = ctx.seed != null ? ctx.seed : crowdSeed(terrain.courseId, terrain.n);
+    let crowd = null;
+    try {
+      const layout = buildCrowd(terrain, { seed, finishing: ctx.finishing, theme: this.theme.id });
+      crowd = { layout, furn: furnitureMesh(layout, { theme: this.theme.id }) };
+    } catch (err) {
+      console.error(err);
+    }
+    this.cpu.crowd = crowd;
+  }
+
+  // The level drawn for a wanted one.
+  _crowdLevel(want) {
+    if (!want || want === 'off' || !this.cpu || !this.cpu.crowd) return 'off';
+    if (want === 'full' && (this.quality === 'low' || this._crowdDown)) return 'light';
+    return want === 'light' ? 'light' : 'full';
+  }
+
+  // The ground texture image to upload: the bake with the shown people's shadows.
+  _crowdBakeImage(res, bk) {
+    const c = this.cpu.crowd;
+    const n = c ? crowdCount(c.layout, this._crowdLevel(this.crowdLevel)) : 0;
+    res.crowdBakeN = n;
+    if (!n) return bk;
+    return { width: bk.width, height: bk.height, data: crowdShadowBake(bk, c.layout, n, this.theme.sky.sunDir) };
+  }
+
+  _crowdRebake(res, n) {
+    const gl = this.gl;
+    const bk = this.cpu.bake;
+    const data = n ? crowdShadowBake(bk, this.cpu.crowd.layout, n, this.theme.sky.sunDir) : bk.data;
+    gl.bindTexture(gl.TEXTURE_2D, res.bake);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, bk.width, bk.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    const pot = (bk.width & (bk.width - 1)) === 0 && (bk.height & (bk.height - 1)) === 0;
+    if (this.ctx.gl2 || pot) gl.generateMipmap(gl.TEXTURE_2D);
+    res.crowdBakeN = n;
+  }
+
+  _crowdUpload(res, buf) {
+    const c = this.cpu.crowd;
+    res.crowd = null;
+    if (!c) return;
+    const L = c.layout;
+    const F = c.furn;
+    res.crowd = {
+      people: L.nFull ? { b: buf(L.people), n: L.nFull, cpu: L.people } : null,
+      furn: F && F.idx.length ? { bPos: buf(F.pos), bNrm: buf(F.nrm), bCol: buf(F.col), bIdx: buf(F.idx, this.gl.ELEMENT_ARRAY_BUFFER), count: F.idx.length } : null,
+    };
+  }
+
+  _drawCrowd(scene, frame) {
+    const R = this.res;
+    const st = this._crowdStats;
+    st.people = 0;
+    st.drawCalls = 0;
+    st.tris = 0;
+    const sc = scene.crowd || null;
+    if (sc && sc.level) this.crowdLevel = sc.level;
+    if (!this.test && this.renderScale < this.maxScale - 0.001) this._crowdDown = true;
+    const lvl = this._crowdLevel(this.crowdLevel);
+    st.level = lvl;
+    if (!R || !R.crowd) return;
+    const n = crowdCount(this.cpu.crowd.layout, lvl);
+    if (R.crowdBakeN !== n) this._crowdRebake(R, n);
+    if (!n) return;
+    const gl = this.gl;
+    const A = this.attribs;
+    const d0 = this._stats.drawCalls;
+    const t0 = this._stats.tris;
+    gl.disable(gl.CULL_FACE);
+    const F = R.crowd.furn;
+    if (F) {
+      const p = this.P.crowdProp;
+      const u = this._use(p, frame);
+      gl.uniform1f(u.uPx, 0.6 / Math.max(1, this.pxPerRad * this.dpr * this.renderScale));
+      gl.uniform2f(u.uNear, 1.5, 3.5);
+      gl.uniform1f(u.uFar, 900);
+      this._crowdPlay(u, sc);
+      A.bind(p.a.aPos, F.bPos, 3);
+      A.bind(p.a.aNrm, F.bNrm, 3);
+      A.bind(p.a.aCol, F.bCol, 4);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, F.bIdx);
+      this._drawElements(F.count);
+    }
+    const set = R.crowd.people;
+    if (set) {
+      const p = this.P.crowd;
+      const u = this._use(p, frame);
+      if (sc && sc.look) gl.uniform4fv(u.uLook, sc.look);
+      else gl.uniform4f(u.uLook, 0, 0, 0, 0);
+      gl.uniform4fv(u.uReact, sc && sc.react ? sc.react : CROWD_IDLE);
+      this._crowdPlay(u, sc);
+      gl.uniform2f(u.uNear, 2.2, 4.5);
+      gl.uniform1f(u.uFar, 650);
+      gl.uniform1f(u.uHush, sc && sc.hush ? sc.hush : 0);
+      const M = this.G.person;
+      A.bind(p.a.aPos, M.pos, 3);
+      A.bind(p.a.aNrm, M.nrm, 3);
+      A.bind(p.a.aAttr, M.attr, 4);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, M.idx);
+      const S = PERSON_FLOATS * 4;
+      if (this.ctx.inst) {
+        A.bind(p.a.iA, set.b, 4, S, 0, 1);
+        A.bind(p.a.iB, set.b, 4, S, 16, 1);
+        A.bind(p.a.iC, set.b, 4, S, 32, 1);
+        this._drawElements(M.count, n);
+      } else {
+        // WebGL1 without instancing: constant attributes per person (counted as one draw).
+        A.end();
+        const c = set.cpu;
+        for (let k = 0; k < n; k++) {
+          const o = k * PERSON_FLOATS;
+          gl.vertexAttrib4f(p.a.iA, c[o], c[o + 1], c[o + 2], c[o + 3]);
+          gl.vertexAttrib4f(p.a.iB, c[o + 4], c[o + 5], c[o + 6], c[o + 7]);
+          gl.vertexAttrib4f(p.a.iC, c[o + 8], c[o + 9], c[o + 10], c[o + 11]);
+          gl.drawElements(gl.TRIANGLES, M.count, gl.UNSIGNED_SHORT, 0);
+        }
+        this._stats.drawCalls++;
+        this._stats.tris += (M.count / 3) * n;
+      }
+      st.people = n;
+    }
+    st.drawCalls = this._stats.drawCalls - d0;
+    st.tris = this._stats.tris - t0;
+  }
+
+  // The play corridor (camera -> ball -> target): people and ropes dissolve there.
+  _crowdPlay(u, sc) {
+    const gl = this.gl;
+    const e = this.eye;
+    const pl = sc && sc.play;
+    const on = !!(pl && pl.on);
+    gl.uniform4f(u.uPlay, on ? pl.bx : 0, on ? pl.by : 0, on ? pl.tx : 0, on ? pl.ty : 0);
+    gl.uniform4f(u.uPlay2, e.x, e.y, on ? 1 : 0, on && pl.hw ? pl.hw : 8);
+  }
 }
+
+const CROWD_IDLE = new Float32Array(16); // no reaction (scene.crowd without one)
