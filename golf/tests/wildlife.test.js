@@ -11,6 +11,7 @@ import { mulberry32 } from '../src/rng.js';
 import {
   Wildlife, FAUNA, SPECIES, themeSlots, wildlifeSeed, inCorridor, MAX_ANIMALS, INST_FLOATS, SHADOW_FLOATS, ST,
 } from '../src/wildlife.js';
+import { buildCrowd, crowdSeed, PERSON_FLOATS } from '../src/crowd.js';
 import { SPECIES_MESHES, MESH_PARAMS, buildSpeciesMesh, wildlifeMesh, KIND, PART, MAX_SLOTS, SLOT_FLOATS } from '../src/wildlife-mesh.js';
 
 // Every hole of every course, built once (the same pins and tree seed as the game).
@@ -400,4 +401,36 @@ test('corridor geometry', () => {
   assert.ok(!inCorridor(c, 50, 30), 'well to the side');
   assert.ok(!inCorridor(c, 250, 0), 'beyond the carry');
   assert.ok(ST.SWIM !== ST.FLY);
+});
+
+test('spectators: animals on foot, waders and bank geese keep clear of the galleries on every hole', () => {
+  // (The game passes the hole's gallery, crowd.js buildCrowd, as `avoid`.)
+  const clear = (S) => Math.max(6, Math.min(18, 0.45 * (S.golferR || 14)));
+  const ctx = { golfer: false, gx: 0, gy: 0, address: false, bx: 0, by: 0, yaw: 0, carry: 0, wx: 0, wy: 0 };
+  let animals = 0;
+  let plain = 0;
+  for (const { course, i, t } of HOLES) {
+    const L = buildCrowd(t, { seed: crowdSeed(course.id, i + 1), theme: course.theme, finishing: (i + 1) % 9 === 0 });
+    const w = new Wildlife(t, { avoid: { pts: L.people, n: L.nFull, stride: PERSON_FLOATS } });
+    animals += w.n;
+    plain += new Wildlife(t).n;
+    const tag = `${course.id} ${i + 1}`;
+    const check = (when) => {
+      for (const a of w.snapshot()) {
+        const S = SPECIES[a.species];
+        if (!(a.vis > 0.3) || a.z - t.heightAt(a.x, a.y) > 1.5 || (S.mode === 'swim' && a.state === 'SWIM')) continue;
+        if (S.mode !== 'ground' && S.mode !== 'wade' && !S.bank) continue;
+        let md = Infinity;
+        for (let k = 0; k < L.nFull; k++) md = Math.min(md, Math.hypot(L.people[k * PERSON_FLOATS] - a.x, L.people[k * PERSON_FLOATS + 1] - a.y));
+        // (Home and wander spots keep the full distance; a group member or a walk can come a
+        // little nearer.)
+        assert.ok(md > clear(S) * 0.7, `${tag} ${when}: ${a.species} ${a.state} ${md.toFixed(1)} m from a spectator`);
+      }
+    };
+    check('placed');
+    run(w, 40, ctx);
+    check('after 40 s');
+  }
+  // The galleries cost the courses hardly any animals.
+  assert.ok(animals > plain * 0.9, `${animals} animals with the galleries, ${plain} without`);
 });

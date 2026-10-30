@@ -92,7 +92,7 @@ import { buildGolferMesh as buildStudioMesh } from './golfer-mesh.js';
 import { B as STUDIO_BONES, lookKey as studioLookKey, loadLook as studioLoadLook } from './golfer.js';
 import { BALL_R as STUDIO_BALL_R } from './constants.js';
 // Spectators (section 10; the "spectators" section below).
-import { CrowdReactions, crowdCount, REACT_NAMES } from './crowd.js';
+import { CrowdReactions, crowdCount, REACT_NAMES, PERSON_FLOATS } from './crowd.js';
 // Wildlife (section 10; the "wildlife" section below).
 import { Wildlife, MAX_ANIMALS, INST_FLOATS, SHADOW_FLOATS } from './wildlife.js';
 
@@ -2043,6 +2043,7 @@ function onSettings(s, key) {
   flushSwing(); // (a swing on its way down is struck with the settings it was made with)
   if (key === 'sound') app.audio.setEnabled(s.sound);
   if (key === 'quality') applyQuality(s.quality);
+  if (key === 'crowd') crowdSettingChanged(); // spectators (section 10)
   if (key === 'swing') {
     cancelMeter();
     app.input.swingStyle = s.swing;
@@ -2325,6 +2326,7 @@ function openCustomiser() {
   studio.look = { ...cz.look };
   studio.club = cz.club;
   studio.on = true;
+  if (app.audio && app.audio.crowdBed) app.audio.crowdBed(0, 0); // (no gallery in the studio: section 10)
   studioPlace();
   updateInputMode();
 }
@@ -2591,16 +2593,22 @@ function studioCamera(v, fr) {
 // renderer plays full as light at ?quality=low or once the adaptive resolution has stepped down).
 // Hooks: crowdHole(info) and crowdStale(cc) in onHole, crowdShotEvent(ev) in onShotEvent,
 // crowdShown() in onHoled (the old applause only without a gallery), crowdScene(cam, ball) in buildScene,
-// installCrowdDebug() in boot (?test=1). Nothing here allocates per frame.
+// crowdSettingChanged() in onSettings, installCrowdDebug() in boot (?test=1); the customiser's
+// studio has no gallery (its scene has no crowd; openCustomiser silences the murmur). Nothing here
+// allocates per frame.
+// The play corridor (crowdPlay): the current one and, while it eases out, the one before it.
+const crowdCorridor = () => ({ on: false, kind: 0, bx: 0, by: 0, tx: 0, ty: 0, hw: 8, k: 0, ex: null, ey: null });
 const crowd = {
   react: new CrowdReactions(),
-  scene: { level: 'full', look: null, react: null, hush: 0, play: { on: false, bx: 0, by: 0, tx: 0, ty: 0, hw: 8 } },
+  scene: { level: 'full', look: null, react: null, hush: 0, play: { ...crowdCorridor(), prev: crowdCorridor() } },
   ball: { x: 0, y: 0, z: 0 },
   lastT: 0,
   bedT: 0,
   sounds: 0,
   carryClub: null, // the club whose carry sizes the play corridor
   carry: 150,
+  flightFrames: 0,
+  flightKept: 0,
 };
 crowd.scene.look = crowd.react.look;
 crowd.scene.react = crowd.react.u;
@@ -2609,6 +2617,13 @@ app.crowd = crowd;
 function crowdSetting() {
   const s = app.ui ? app.ui.getSetting('crowd') : 'full';
   return s === 'off' || s === 'light' ? s : 'full';
+}
+
+// Settings: Crowd changed. A paused frame is drawn again with the new level (and its shadows);
+// Off silences the murmur at once.
+function crowdSettingChanged() {
+  app.drewPaused = false;
+  if (crowdSetting() === 'off' && app.audio && app.audio.crowdBed) app.audio.crowdBed(0, 0);
 }
 
 // Spectators are on screen (a WebGL renderer with a gallery, the setting not Off).
@@ -2660,31 +2675,84 @@ function crowdScene(cam, b) {
   const addressing = playing && g.phase === 'address' && app.view === 'play';
   sc.hush += ((addressing ? 1 : 0) - sc.hush) * (1 - Math.exp(-dt * 3));
   crowd.react.look[3] = playing ? (g.phase === 'address' || g.phase === 'flight' || g.phase === 'holed' ? 1 : 0.85) : 0.6;
-  const pl = sc.play;
-  pl.on = playing && g.phase !== 'flight' && g.phase !== 'intro';
-  if (pl.on) {
-    const b = g.state.hole.ball;
-    const c = g.terrain.cup;
-    pl.bx = b.x;
-    pl.by = b.y;
-    if (g.phase === 'address') {
-      // Down the aim line as far as the club carries (the cup and a little past at most).
-      const dc = Math.hypot(c.x - b.x, c.y - b.y);
-      if (crowd.carryClub !== g.state.clubId) {
-        crowd.carryClub = g.state.clubId;
-        const ci = g.clubInfo();
-        crowd.carry = (ci && ci.carry) || 150;
-      }
-      const carry = g.isPutt ? dc + 2 : Math.max(30, Math.min(dc + 10, crowd.carry));
-      pl.tx = b.x + Math.cos(g.aimYaw) * carry;
-      pl.ty = b.y + Math.sin(g.aimYaw) * carry;
-    } else {
-      pl.tx = c.x;
-      pl.ty = c.y;
-    }
-  }
+  crowdPlay(cam, playing ? g : null, dt);
   crowdSound(cam, dt);
   return sc;
+}
+
+// The play corridor, where people and ropes dissolve: at address from the ball down the aim line as
+// far as the club carries (the cup and a little past at most; a putt to 2 m past the cup); from the
+// ball to the cup in relief, holed and on the scorecard; none in the intro or behind the menu. A
+// shot keeps the corridor it was struck in, seen from where it was struck (nobody dissolved at
+// address pops back in at the strike or as the camera follows the ball), until the camera cuts
+// away. A new corridor at a cut replaces the old one at once (unseen); without a cut the new one
+// eases in over 0.35 s while the old one (play.prev) eases out over 1 s, so nobody pops.
+function crowdPlay(cam, g, dt) {
+  const A = crowd.scene.play;
+  const B = A.prev;
+  const ph = g ? g.phase : null;
+  const cut = !g || !!(app.rig && app.rig.snap0); // (the menu's backdrop is a view of its own)
+  if (ph === 'flight') {
+    crowd.flightFrames++; // (tests: the frames in flight, and those still in the struck corridor)
+    if (cut) {
+      // The director cut to another camera: the galleries are all back.
+      A.on = false;
+      B.on = false;
+    } else if (A.on && A.ex == null && cam) {
+      A.ex = cam.eye.x; // (the eye it was struck from: the camera may follow the ball)
+      A.ey = cam.eye.y;
+    }
+  } else {
+    const want = !!ph && ph !== 'intro';
+    const b = want ? g.state.hole.ball : null;
+    const kind = ph === 'address' ? 1 : 2;
+    const fresh = want && (!A.on || A.kind !== kind || Math.abs(b.x - A.bx) > 0.3 || Math.abs(b.y - A.by) > 0.3);
+    if (fresh || (!want && A.on)) {
+      // Hand the old corridor over to prev (easing out), unless the camera cut.
+      if (A.on && !cut) {
+        B.on = true;
+        B.bx = A.bx;
+        B.by = A.by;
+        B.tx = A.tx;
+        B.ty = A.ty;
+        B.hw = A.hw;
+        B.k = A.k;
+        B.ex = A.ex;
+        B.ey = A.ey;
+      } else if (cut) B.on = false;
+      A.on = want;
+      A.kind = kind;
+      A.k = cut ? 1 : 0;
+    }
+    if (A.on) {
+      const c = g.terrain.cup;
+      A.bx = b.x;
+      A.by = b.y;
+      A.ex = null; // (seen from the live camera)
+      A.ey = null;
+      if (ph === 'address') {
+        // Down the aim line as far as the club carries (the cup and a little past at most).
+        const dc = Math.hypot(c.x - b.x, c.y - b.y);
+        if (crowd.carryClub !== g.state.clubId) {
+          crowd.carryClub = g.state.clubId;
+          const ci = g.clubInfo();
+          crowd.carry = (ci && ci.carry) || 150;
+        }
+        const carry = g.isPutt ? dc + 2 : Math.max(30, Math.min(dc + 10, crowd.carry));
+        A.tx = b.x + Math.cos(g.aimYaw) * carry;
+        A.ty = b.y + Math.sin(g.aimYaw) * carry;
+      } else {
+        A.tx = c.x;
+        A.ty = c.y;
+      }
+    }
+  }
+  if (ph === 'flight' && A.on) crowd.flightKept++;
+  if (A.on) A.k = Math.min(1, A.k + dt / 0.35);
+  if (B.on) {
+    B.k -= dt;
+    if (B.k <= 0) B.on = false;
+  }
 }
 
 // Sound: the reactions just started, as loud as the camera is near them, and every 0.25 s the
@@ -2722,7 +2790,8 @@ function crowdSound(cam, dt) {
 }
 
 // ?test=1: app.debug.crowd() -> {setting, level, people, drawCalls, tris, nFull, nLight, stand,
-// galleries, ropes, reaction: {name, why, ...}, log: [{name, why, t}], hush, look, sounds}.
+// galleries, ropes, reaction: {name, why, ...}, log: [{name, why, t}], hush, look, sounds, play:
+// {on, k, prev, flightFrames, flightKept} (the corridor; frames in flight, and in the struck one)}.
 function installCrowdDebug() {
   if (!app.debug) return;
   app.debug.crowd = () => {
@@ -2746,6 +2815,7 @@ function installCrowdDebug() {
       hush: crowd.scene.hush,
       look: Array.from(crowd.react.look),
       sounds: crowd.sounds,
+      play: { on: crowd.scene.play.on, k: crowd.scene.play.k, prev: crowd.scene.play.prev.on, flightFrames: crowd.flightFrames, flightKept: crowd.flightKept },
       time: app.time,
     };
   };
@@ -2765,6 +2835,7 @@ function installCrowdDebug() {
 const wild = {
   sim: null,
   terrain: null,
+  layout: null, // the renderer's spectators the sim was built with (animals keep clear of them)
   ctx: { golfer: false, gx: 0, gy: 0, address: false, bx: 0, by: 0, yaw: 0, carry: 0, wx: 0, wy: 0 },
   scene: { inst: new Float32Array(MAX_ANIMALS * INST_FLOATS), shadow: new Float32Array(MAX_ANIMALS * SHADOW_FLOATS), count: 0, shadowCount: 0, key: '' },
   call: { kind: '', x: 0, y: 0, z: 0 },
@@ -2783,17 +2854,21 @@ function wildlifeOn() {
   return !!app.ui && app.ui.getSetting('wildlife') !== 'off' && !!app.renderer && !app.renderer.isNull;
 }
 
-// The sim for the hole on the renderer.
+// The sim for the hole on the renderer (its animals keep clear of the hole's spectators).
 function wildlifeSync() {
   const t = app.holeTerrain;
-  if (t === wild.terrain) return wild.sim;
+  const r = app.renderer;
+  const L = r && r.terrain === t ? r.crowd : null;
+  if (t === wild.terrain && L === wild.layout) return wild.sim;
   wild.terrain = t;
+  wild.layout = L;
   wild.sim = null;
   wild.phase = null;
   if (!t) return null;
   try {
     const g = app.game;
-    wild.sim = new Wildlife(t, { wind: g && g.terrain === t ? g.wind : null });
+    const avoid = L ? { pts: L.people, n: L.nFull, stride: PERSON_FLOATS } : null;
+    wild.sim = new Wildlife(t, { wind: g && g.terrain === t ? g.wind : null, avoid });
     wild.scene.key = wild.sim.slots.join(',');
   } catch (err) {
     console.error(err);

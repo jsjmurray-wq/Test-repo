@@ -3,7 +3,10 @@
 // no GL; deterministic for a given seed and sequence of dt and events; nothing here touches the
 // ball (physics never sees an animal). The renderer draws what write() produces (wildlife pass).
 //
-//   const wild = new Wildlife(terrain, {seed = wildlifeSeed(terrain), wind = {x, y}});
+//   const wild = new Wildlife(terrain, {seed = wildlifeSeed(terrain), wind = {x, y}, avoid = {pts,
+//                            n, stride} (the spectators' feet: x, y at the start of each stride;
+//                            animals on foot, waders and geese on a bank keep 6-18 m from them by
+//                            their shyness: homes, wanders, flight and flee spots, burrows)});
 //   wild.update(dt, ctx)     ctx (a reused object, scalars only): {golfer (bool), gx, gy (golfer),
 //                            address (bool), bx, by, yaw, carry (the shot about to be played), wx, wy
 //                            (wind m/s)}. A new address spot (a camera cut) first moves animals out
@@ -276,6 +279,58 @@ function holeInfo(t) {
     L: t.lengthM || 300,
   };
 }
+// The spectators (Wildlife's `avoid`): their feet on a grid of AV_CELL m cells, so a placement
+// or a wander target can keep a species' distance from the galleries cheaply. null without them.
+const AV_CELL = 8;
+function avoidGrid(avoid) {
+  if (!avoid || !avoid.pts || !(avoid.n > 0)) return null;
+  const stride = avoid.stride || 2;
+  const cells = new Map();
+  const xs = new Float64Array(avoid.n);
+  const ys = new Float64Array(avoid.n);
+  for (let k = 0; k < avoid.n; k++) {
+    const x = avoid.pts[k * stride];
+    const y = avoid.pts[k * stride + 1];
+    xs[k] = x;
+    ys[k] = y;
+    const key = cellKey(Math.floor(x / AV_CELL), Math.floor(y / AV_CELL));
+    let list = cells.get(key);
+    if (!list) cells.set(key, (list = []));
+    list.push(k);
+  }
+  return { cells, xs, ys };
+}
+function cellKey(i, j) {
+  return (i + 32768) * 65536 + (j + 32768);
+}
+// A spectator within r m of (x, y)?
+function nearPeople(av, x, y, r) {
+  if (!av || !(r > 0)) return false;
+  const i0 = Math.floor((x - r) / AV_CELL);
+  const i1 = Math.floor((x + r) / AV_CELL);
+  const j0 = Math.floor((y - r) / AV_CELL);
+  const j1 = Math.floor((y + r) / AV_CELL);
+  const r2 = r * r;
+  for (let i = i0; i <= i1; i++) {
+    for (let j = j0; j <= j1; j++) {
+      const list = av.cells.get(cellKey(i, j));
+      if (!list) continue;
+      for (let q = 0; q < list.length; q++) {
+        const dx = av.xs[list[q]] - x;
+        const dy = av.ys[list[q]] - y;
+        if (dx * dx + dy * dy < r2) return true;
+      }
+    }
+  }
+  return false;
+}
+// How far an animal of species S keeps from the spectators (m): animals on foot (and the wading
+// birds, and geese grazing a bank) by their shyness; 0 for swimmers, fliers and perchers.
+function crowdClear(S) {
+  if (S.mode !== 'ground' && S.mode !== 'wade' && !S.bank) return 0;
+  return Math.max(6, Math.min(18, 0.45 * (S.golferR || 14)));
+}
+
 // A spot an animal may stand on: inside the bounds, on a standable surface, clear of the green and
 // tee, on gentle ground.
 function standable(t, H, x, y, { teeR = 40, greenPad = 16 } = {}) {
@@ -625,8 +680,10 @@ function groundScatter(t, H, rng, n, surfaces, minC, maxC, teeR = 40) {
 
 // ------------------------------------------------------------------ the simulation
 export class Wildlife {
-  constructor(terrain, { seed = wildlifeSeed(terrain), wind = null, theme = terrain.theme } = {}) {
+  constructor(terrain, { seed = wildlifeSeed(terrain), wind = null, theme = terrain.theme, avoid = null } = {}) {
     this.terrain = terrain;
+    // The spectators' feet ({pts, n, stride}: x, y at the start of each stride), if any.
+    this.av = avoidGrid(avoid);
     this.theme = FAUNA[theme] ? theme : 'parkland';
     this.seed = seed >>> 0;
     this.rng = mulberry32(this.seed);
@@ -691,8 +748,12 @@ export class Wildlife {
       const chance = { deer: 0.8, goose: 0.75, heron: 0.75, roadrunner: 0.75, quail: 0.8, coyote: 0.6, sheep: 0.75, egret: 0.85, songbird: 0.85 }[name] ?? 1;
       if (rng() > chance) continue;
       const groups = S.count ? S.count[0] + Math.floor(rng() * (S.count[1] - S.count[0] + 1)) : name === 'mallard' && rng() < 0.4 ? 2 : 1;
-      // (Placed beyond its comfort distance from the tee: the first address is there.)
-      const pool = FINDERS[S.habitat](t, H, rng, 28, { bank: S.bank || 0, teeR: Math.max(30, (S.golferR || 0) * 1.15) });
+      // (Placed beyond its comfort distance from the tee: the first address is there.) Spots near the
+      // spectators are dropped afterwards, so the draws (and every other hole's animals) stay as
+      // they are without a gallery.
+      let pool = FINDERS[S.habitat](t, H, rng, 28, { bank: S.bank || 0, teeR: Math.max(30, (S.golferR || 0) * 1.15) });
+      const clear = this.av ? crowdClear(S) : 0;
+      if (clear) pool = pool.filter((q) => (S.mode === 'swim' && !q.bank) || !nearPeople(this.av, q.x, q.y, clear));
       this.pools.set(name, pool);
       if (!pool.length) continue;
       let used = 0;
@@ -833,7 +894,7 @@ export class Wildlife {
             x = spot.x + Math.cos(a) * r;
             y = spot.y + Math.sin(a) * r;
           }
-          if (!this._shallow(x, y, i)) {
+          if (!this._wadeOk(x, y, i, S)) {
             x = spot.x;
             y = spot.y;
           }
@@ -848,7 +909,7 @@ export class Wildlife {
           this.cz[i] = spot.z;
           this.cr[i] = spot.rock ? spot.rock.trunkR : 0.5;
         } else {
-          if (!this._okStand(x, y)) {
+          if (!this._okStand(x, y, S)) {
             x = spot.x;
             y = spot.y;
           }
@@ -861,10 +922,16 @@ export class Wildlife {
             this.cz[i] = spot.tree.canopy ? spot.tree.canopy.cz - spot.tree.canopy.rz * 0.6 : 5;
           }
           if (S.flee === 'burrow') {
-            // The burrow: a little way off toward the rough's edge (out of the fescue).
+            // The burrow: a little way off toward the rough's edge (out of the fescue), not among
+            // the spectators (turned round until it is clear).
             const a = this.rng() * TAU;
-            this.cx[i] = x + Math.cos(a) * (4 + this.rng() * 6);
-            this.cy[i] = y + Math.sin(a) * (4 + this.rng() * 6);
+            const dx = 4 + this.rng() * 6;
+            const dy = 4 + this.rng() * 6;
+            for (let k = 0; k < 6; k++) {
+              this.cx[i] = x + Math.cos(a + (k * TAU) / 6) * dx;
+              this.cy[i] = y + Math.sin(a + (k * TAU) / 6) * dy;
+              if (!(this.av && nearPeople(this.av, this.cx[i], this.cy[i], crowdClear(S)))) break;
+            }
           }
           if (spot.bank) this.lvl[i] = spot.level;
         }
@@ -901,14 +968,21 @@ export class Wildlife {
     return d > 0.03 && d < 0.58;
   }
 
-  _okStand(x, y) {
+  // A spot to stand on (and, given the species, clear of the spectators by its distance).
+  _okStand(x, y, S = null) {
     const H = this.H;
     if (x < H.minX || x > H.maxX || y < H.minY || y > H.maxY) return false;
     const s = sgAt(this.terrain, x, y);
     if (s === SURF.WATER || s === SURF.OOB || s === SURF.GREEN || s === SURF.FRINGE || s === SURF.TEE || s === SURF.BUNKER) return false;
     const dx = x - H.gx;
     const dy = y - H.gy;
-    return dx * dx + dy * dy > (H.gr + 8) * (H.gr + 8);
+    if (dx * dx + dy * dy <= (H.gr + 8) * (H.gr + 8)) return false;
+    return !(S && this.av && nearPeople(this.av, x, y, crowdClear(S)));
+  }
+
+  // Wading water at (x, y) for animal i, clear of the spectators.
+  _wadeOk(x, y, i, S) {
+    return this._shallow(x, y, i) && !(this.av && nearPeople(this.av, x, y, crowdClear(S)));
   }
 
   setWind(x, y) {
@@ -1043,12 +1117,12 @@ export class Wildlife {
         let a = Math.atan2(ay, ax) + (rng() - 0.5) * 0.8;
         let tx = this.x[i] + Math.cos(a) * d;
         let ty = this.y[i] + Math.sin(a) * d;
-        for (let k = 0; k < 6 && !this._okStand(tx, ty); k++) {
+        for (let k = 0; k < 6 && !this._okStand(tx, ty, S); k++) {
           a += (k % 2 ? 1 : -1) * 0.5 * (k + 1);
           tx = this.x[i] + Math.cos(a) * d;
           ty = this.y[i] + Math.sin(a) * d;
         }
-        if (!this._okStand(tx, ty)) {
+        if (!this._okStand(tx, ty, S)) {
           tx = this.x[i] + ax * 6;
           ty = this.y[i] + ay * 6;
         }
@@ -1089,7 +1163,7 @@ export class Wildlife {
           const dk = d * (1 + 0.15 * k);
           tx = this.hx[i] + Math.cos(a) * dk + this.ox[i];
           ty = this.hy[i] + Math.sin(a) * dk + this.oy[i];
-          ok = S.mode === 'wade' ? this._shallow(tx, ty, i) : this._okStand(tx, ty);
+          ok = S.mode === 'wade' ? this._wadeOk(tx, ty, i, S) : this._okStand(tx, ty, S);
           if (ok && Math.hypot(tx - this.thx[i], ty - this.thy[i]) < clear) ok = false;
           if (ok && this.gOn && Math.hypot(tx - this.gpx, ty - this.gpy) < clear) ok = false;
           a += (k % 2 ? 1 : -1) * 0.4 * (k + 1);
@@ -1473,7 +1547,7 @@ export class Wildlife {
       const r = S.roam * Math.sqrt(rng());
       const x = this.hx[i] + Math.cos(a) * r + this.ox[i] * 0.3;
       const y = this.hy[i] + Math.sin(a) * r + this.oy[i] * 0.3;
-      const ok = S.mode === 'wade' ? this._shallow(x, y, i) : this._okStand(x, y);
+      const ok = S.mode === 'wade' ? this._wadeOk(x, y, i, S) : this._okStand(x, y, S);
       if (!ok || (this.cor.on && inCorridor(this.cor, x, y))) continue;
       this.st[i] = ST.WALK;
       this.tx[i] = x;
@@ -1495,8 +1569,11 @@ export class Wildlife {
       const c = this.cor;
       const lat = -(this.x[i] - c.bx) * c.dy + (this.y[i] - c.by) * c.dx;
       const side = lat >= 0 ? 1 : -1;
-      this.tx[i] = this.x[i] - c.dy * side * 30;
-      this.ty[i] = this.y[i] + c.dx * side * 30;
+      // (30 m, or less if a gallery stands there.)
+      let off = 30;
+      while (off > 14 && this.av && nearPeople(this.av, this.x[i] - c.dy * side * off, this.y[i] + c.dx * side * off, crowdClear(S))) off -= 4;
+      this.tx[i] = this.x[i] - c.dy * side * off;
+      this.ty[i] = this.y[i] + c.dx * side * off;
       this.aux[i] = 2;
     }
     let dx = this.tx[i] - this.x[i];

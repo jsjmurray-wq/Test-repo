@@ -326,9 +326,18 @@ async function smoke(browser, base, path, vp, gl) {
     const ty = p2.y + p2.h * 0.3;
     // Both taps carry explicit event times 600 ms apart (the meter's clock), so the struck power
     // (from the event times, lastSwing) is the same however slowly the frames come.
-    const T0 = await cdpTap(page, tx, ty);
+    let T0 = await cdpTap(page, tx, ty);
     // The gauge fills on the next rendered frame(s): poll instead of sampling once after a sleep.
     check(await waitFor(page, () => document.getElementById('pad').dataset.state === 'swing' && window.__golf.swingPower > 0.1, 2200), 'tap meter fills');
+    // (The meter gives up 2.8 s after the first tap on the page's real clock. When frames are so
+    // slow that the fill took most of that, let this bar run out and time a fresh pair of taps,
+    // the second sent 0.6 s after the first, so the strike is still tested and not the machine.)
+    if (Date.now() / 1000 - T0 > 1.5) {
+      check(await waitFor(page, () => !window.__golf.meter, 8000), 'tap meter: an unanswered bar runs out');
+      await page.waitForTimeout(500);
+      T0 = await cdpTap(page, tx, ty);
+      await page.waitForTimeout(Math.max(0, 600 - (Date.now() - T0 * 1000)));
+    }
     await cdpTap(page, tx, ty, T0 + 0.6);
     // (The ball leaves at the golfer's impact frame, a few slow SwiftShader frames after the tap.)
     check(await waitFor(page, () => window.__golf.game.phase === 'flight', 10000), 'second tap hits: the ball is in flight');
@@ -1367,6 +1376,11 @@ async function golferCustomiser(context, url, tag, gl) {
   await cz('[data-cz-key="shirtColor"][data-cz-val="#e5802e"]').tap();
   await cz('[data-cz-key="legwear"][data-cz-val="shorts"]').tap();
   check(await waitFor(page, () => window.__golf.debug.studio().look.legwear === 'shorts', 3000), 'golfer: changes show on the preview');
+  // (Section 10: the studio shows no gallery behind him; the round's comes back after it.)
+  const crowdNow = () => page.evaluate(() => (window.__golf.debug.crowd ? window.__golf.debug.crowd() : null));
+  const cs0 = await crowdNow();
+  const withCrowd = gl && cs0 && cs0.setting !== 'off';
+  if (withCrowd) check(cs0.drawCalls === 0 && cs0.level === 'off', `golfer: no spectators in the studio (${cs0.drawCalls} draws, level ${cs0.level})`);
   await cz('[data-cz="cancel"]').tap();
   await page.waitForTimeout(400);
   const after = await page.evaluate(() => ({ L: window.__golf.debug.golferLook ? window.__golf.debug.golferLook() : null, paused: window.__golf.paused }));
@@ -1374,6 +1388,7 @@ async function golferCustomiser(context, url, tag, gl) {
   check(!(await page.evaluate(() => window.__golf.debug.studio().open)) && (await shown('#pause')) && after.paused && JSON.stringify(sv2) === JSON.stringify(sv) && (!after.L || after.L.legwear === sv.legwear), 'golfer: Cancel reverts (saved and in-game look unchanged, back on the pause sheet)');
   await page.locator('#pause [data-act="unpause"]').tap();
   await page.waitForTimeout(300);
+  if (withCrowd) check(await waitFor(page, () => window.__golf.debug.crowd().drawCalls === 2, 6000), 'golfer: the galleries are back in the round after the studio');
 
   // ---- reload: the look persists; Escape cancels; a preset
   await page.reload();
@@ -1504,7 +1519,9 @@ async function crowdOnly(browser, base, path, vp, gl) {
   check(c.setting === 'full' && (!gl || c.drawCalls === 2), `crowd: Full brings them back (${c.drawCalls} draws, ${c.people} people)`);
   await page.locator('#settings [data-act="close"]').first().tap();
   await page.waitForTimeout(300);
-  // A holed putt: the gallery cheers (the first stroke on a par 3 is an ace) as it drops.
+  // A holed putt: the gallery cheers (the first stroke on a par 3 is an ace) as it drops. (And the
+  // play corridor of the address stays through the stroke: nobody pops back in at the strike.)
+  const fp0 = (await page.evaluate(() => window.__golf.debug.crowd().play)) || null;
   let holed = false;
   for (let tryN = 0; tryN < 3 && !holed; tryN++) {
     await page.evaluate(() => window.__golf.debug.placeNearCup(0.6));
@@ -1524,6 +1541,11 @@ async function crowdOnly(browser, base, path, vp, gl) {
   c = await page.evaluate(() => window.__golf.debug.crowd());
   const cheer = c.log.find((q) => q.name === 'cheer');
   check(!!cheer && (c.reaction.name === 'cheer' || c.log[c.log.length - 1].name === 'cheer'), `crowd: the holed putt gets a cheer (${c.log.map((q) => `${q.name}/${q.why}`).join(', ') || 'none'})`);
+  if (fp0 && c.play) {
+    const fr = c.play.flightFrames - fp0.flightFrames;
+    const kept = c.play.flightKept - fp0.flightKept;
+    check(fr > 0 && kept === fr, `crowd: the address corridor is kept through the putt (${kept} of ${fr} frames in flight)`);
+  }
   await shot(page, tag, 'crowd-cheer');
   check(errors.length === 0, `crowd: no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await context.close();

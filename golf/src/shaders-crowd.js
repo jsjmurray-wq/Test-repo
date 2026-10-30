@@ -12,7 +12,8 @@
 // as one. Seated spectators (grandstand) fold their legs. Hats are shaped per kind; the parasol
 // shows only for its holders. People dissolve (ordered dither) near the camera and inside the play
 // corridor (uPlay/uPlay2: eye -> ball -> target: never between the camera, the ball, the golfer
-// and the target), and fade out far away (uFar).
+// and the target; uPlayB/uPlayB2: the previous corridor while it eases out), and fade out far
+// away (uFar).
 //
 // CROWD_PROP_VS/FS: the gallery furniture (crowd-mesh.js furnitureMesh: ropes, stakes, the
 // grandstand), world positions with a "thin" radius per vertex: ropes and stakes widen to a
@@ -26,23 +27,30 @@ const f = (v) => (Number.isInteger(v) ? `${v}.0` : `${v}`);
 const v4 = (a) => `vec4(${f(a[0])}, ${f(a[1])}, ${f(a[2])}, ${f(a[3])})`;
 
 // The play corridor (shared by both vertex shaders): nobody and nothing between the camera and the
-// ball (within 5 m of that line) or along the line of play from the ball to the target (uPlay2.w m
-// near the ball, narrowing to 4 m from 30 to 80 m out).
+// ball (within 5 m of that line) or along the line of play from the ball to the target (half-width
+// near the ball, narrowing to 4 m from 30 to 80 m out). Two corridors with a strength each (0..1,
+// a gradual dissolve): the current one (uPlay, uPlay2) and the one before it (uPlayB, uPlayB2),
+// easing out after a change the camera did not cut away from (main.js crowdPlay).
 const PLAY = `
 uniform vec4 uPlay;      // corridor: ball xy, target xy
-uniform vec4 uPlay2;     // eye xy, on (0/1), half-width near the ball
-float playFade(vec2 P) {
-  if (uPlay2.z < 0.5) return 1.0;
-  vec2 ab = uPlay.zw - uPlay.xy;
+uniform vec4 uPlay2;     // eye xy, strength 0..1, half-width near the ball
+uniform vec4 uPlayB;     // the previous corridor (fading out), the same layout
+uniform vec4 uPlayB2;
+float corridorFade(vec4 c, vec4 c2, vec2 P) {
+  if (c2.z < 0.004) return 1.0;
+  vec2 ab = c.zw - c.xy;
   float L = max(length(ab), 1e-3);
-  float t = clamp(dot(P - uPlay.xy, ab) / (L * L), 0.0, 1.0);
-  float dT = length(P - (uPlay.xy + ab * t));
-  float hw = mix(uPlay2.w, 4.0, smoothstep(30.0, 80.0, t * L));
-  vec2 eb = uPlay.xy - uPlay2.xy;
+  float t = clamp(dot(P - c.xy, ab) / (L * L), 0.0, 1.0);
+  float dT = length(P - (c.xy + ab * t));
+  float hw = mix(c2.w, 4.0, smoothstep(30.0, 80.0, t * L));
+  vec2 eb = c.xy - c2.xy;
   float le = max(dot(eb, eb), 1e-4);
-  float te = clamp(dot(P - uPlay2.xy, eb) / le, 0.0, 1.0);
-  float dE = length(P - (uPlay2.xy + eb * te));
-  return smoothstep(hw, hw + 2.5, dT) * smoothstep(5.0, 7.0, dE);
+  float te = clamp(dot(P - c2.xy, eb) / le, 0.0, 1.0);
+  float dE = length(P - (c2.xy + eb * te));
+  return mix(1.0, smoothstep(hw, hw + 2.5, dT) * smoothstep(5.0, 7.0, dE), c2.z);
+}
+float playFade(vec2 P) {
+  return corridorFade(uPlay, uPlay2, P) * corridorFade(uPlayB, uPlayB2, P);
 }`;
 
 export const CROWD_VS = `

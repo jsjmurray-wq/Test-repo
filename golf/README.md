@@ -152,8 +152,9 @@ and straw hats at Coral Cay, rain jackets, bucket hats, flat caps and umbrellas 
   putt), hands on heads and an "ooh" for a lip-out or a near miss, a groan for water or out of bounds.
   You hear them too, louder the nearer the camera is to the gallery.
 - **They never get in the way.** Nobody stands in play, in hazards or in your line; anyone between
-  the camera, you, the ball and the flag fades out, and the ropes open a gap there. They don't touch
-  the ball.
+  the camera, you, the ball and the flag fades out and stays out of the shot until the camera cuts
+  away (nobody pops back in as you strike it), and the ropes open a gap there. They don't touch the
+  ball. The Golfer customiser's preview has no crowd behind your player.
 - **Settings → Crowd: Off / Light / Full.** Full by default; a phone that has to lower its graphics
   quality (or Graphics: Low) shows the Light crowd.
 
@@ -175,7 +176,8 @@ Each course has its own animals, living their day around the holes:
   Walking up startles them too, and so does a roar from the gallery. They come back after a while.
   You hear them now and then (songbirds, honking geese, the hawk's scream, gulls), quieter far away.
 - **They never get in the way.** Nothing stands on a green or in your line while you aim, anything
-  between the camera and the ball or the flag fades out, and they never touch the ball.
+  between the camera and the ball or the flag fades out, and they never touch the ball. They keep a
+  wary distance from the galleries too.
 - **Settings → Wildlife: On / Off.** On by default.
 
 ## Rules

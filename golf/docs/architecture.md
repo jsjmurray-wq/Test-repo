@@ -2179,7 +2179,8 @@ side (shoulder, elbow), thigh and shin + shoe each side (hip, knee), hat, paraso
 the 1.75 m figure. **Skeleton** (`posePerson(pose, part, p)`, the shader's exact maths in JS): arm = forward
 raise `a`, abduction `phi` (about the body's x axis), elbow flex `b` and upper-arm twist (swings the forearm
 inward); torso pitch, roll, yaw about the waist; head yaw and pitch about the neck; standing legs lean with
-the hip shift (feet planted); seated, the thighs fold forward and the shins hang (pelvis on a 0.42 m bench).
+the hip shift (feet planted); seated, the thighs fold forward and the shins hang (pelvis on a 0.42 m bench). The thighs start just under the shirt's hem (0.88 m, 7.6 cm
+square section) and stay inside the hips' section above it, so no corner pokes through the shirt.
 `POSES` (fitted to where the hands should be, `POSE_WRIST`): idle, folded, clasp, holding, clapOpen /
 clapShut, cheer (a V), ooh (hands on the head), mouth (hands to the face), groan (slumped), parasol.
 
@@ -2209,8 +2210,13 @@ rim, fog and tone map (`COMMON`). Fades: within 2.2–4.5 m of the camera (furni
 520–650 m (furniture 900 m), and inside the **play corridor** `playFade` (`scene.crowd.play`: within 5 m
 of the camera → ball line, or `hw` = 8 m of the ball → target line narrowing to 4 m from 30 to 80 m out),
 so nothing ever stands between the camera, the golfer, the ball, the aim line and the flag (ropes open a
-gap there). `scene.crowd = {level, look, react, hush, play: {on, bx, by, tx, ty, hw}}` (main.js; without it
-the last level is kept and people face forward). `setHole(terrain, {crowd: {finishing, seed}})` builds the
+gap there). Two corridors, each with a strength `k` 0..1 (a gradual dissolve): the current one
+(`uPlay`/`uPlay2`) and the previous one (`play.prev`, `uPlayB`/`uPlayB2`) while it eases out.
+`scene.crowd = {level, look, react, hush, play: {on, bx, by, tx, ty, hw, k, ex, ey, prev: {same}}}` (main.js;
+`ex, ey`: the eye the corridor is seen from, default the camera's). A scene **without** `crowd` (the Golfer
+customiser's studio) draws no spectators and none of their baked shadows (`crowdStats().level` 'off');
+`renderer.crowdLevel` is kept, so the next game frame brings them back as they were, and the last shadowed
+ground image is cached (`_crowdShadowed`), so going back costs only the texture upload. `setHole(terrain, {crowd: {finishing, seed}})` builds the
 layout and furniture (a re-upload of the same hole keeps the last context); context loss rebuilds programs,
 the person mesh, the buffers and the shadowed ground texture from the CPU copies (checked on WebGL2 and
 WebGL1). `renderer.crowd` (the layout), `renderer.crowdStats()` → `{level, people, drawCalls, tris}`.
@@ -2239,7 +2245,14 @@ then each event); `onHoled` plays the old synthesized applause only when no gall
 address: they watch the player; the green behind the menu), hush eases to 1 at address in the play view,
 heads follow fully at address, in flight and holed (0.85 otherwise: some chat), the corridor from the ball
 to the aim line's carry (the club's, ≤ cup + 10 m; putts to the cup + 2 m) at address, to the cup in
-relief and holed, off in flight and the intro. No allocation per frame. **Sound** (`audio.js` section
+relief and holed, none in the intro or behind the menu (`crowdPlay`). **A shot keeps the corridor it was
+struck in**, seen from the eye it was struck from, through the whole flight, so nobody dissolved at address
+pops back in at the strike or as the camera follows the ball; a camera cut in flight (the director's
+landing camera) drops it (unseen). A new corridor at a cut (every new address spot is one) replaces the old
+at once; without a cut (holed, relief, the menu) the new one eases in over 0.35 s and the old one eases out
+over 1 s. `crowdSettingChanged()` (from `onSettings`): a paused frame is redrawn with the new level and Off
+silences the murmur at once; `openCustomiser` silences it too (the studio has no gallery). No allocation
+per frame. **Sound** (`audio.js` section
 "crowd"): `crowdBed(level, hush)` (a speech-band noise loop with slow swells and chatter flutter, ducked by
 82% at address; level = the nearest gallery's gain by camera distance × its size × √(people / 250), half
 behind the menu; updated every 0.25 s), `crowdReact(name, strength, gain)`: 'clap' (golf claps thinning
@@ -2249,7 +2262,7 @@ vowel formants: /u/ 320/820 Hz, /o/→/a/ 560→700 / 900→1100 Hz); gain = 1 /
 camera's distance to the reaction (≥ 0.08). **Setting** `crowd: 'off' | 'light' | 'full'` (default full;
 Settings "Crowd: Off / Light / Full", persisted in `golf.settings.v1`). Test hook (`?test=1`):
 `app.debug.crowd()` → `{setting, level, people, drawCalls, tris, nFull, nLight, stand, finishing,
-galleries, ropes, reaction, log, hush, look, sounds, time}`.
+galleries, ropes, reaction, log, hush, look, sounds, play: {on, k, prev, flightFrames, flightKept}, time}`.
 
 **Budget (measured):** +2 draw calls; Full 160–220 people = 29–40k triangles + 0.7–3k furniture (≤ 42.2k),
 Light 60–98 people = 11.5–21k; hole-by-hole totals with the crowd (SwiftShader, quality=low): 14–20 draw
@@ -2270,12 +2283,14 @@ carrying the same numbers); furniture and triangle budgets on every hole; the ba
 `crowdOnly` (after the UI flow per build and viewport, or `--crowd`): a par 3 on each course (galleries in
 2 draws at quality=low = the Light subset, tee and green galleries and a grandstand, ≤ 30 draw calls), the
 green gallery behind a putt, galleries restored after a lost WebGL context, Settings Off (0 draws, saved)
-and Full again, a real touch putt holed → a cheer, no console errors; shots `crowd-<course>-tee`,
-`crowd-<course>-green`, `crowd-cheer`.
+and Full again, a real touch putt holed → a cheer with the address corridor kept on every frame of the
+stroke, no console errors; shots `crowd-<course>-tee`, `crowd-<course>-green`, `crowd-cheer`. The
+customiser e2e checks the studio draws no spectators and that the round's galleries are back after it.
 
 **Known gaps:** spectators are low-poly figures (no faces, fingers or cloth folds), fine at broadcast
 distances and stylised in a close-up; nobody walks between holes or moves for a ball that comes to rest
-among them (they dissolve within 8 m of it instead); the grandstand has no roof; galleries are the same
+among them (they dissolve within 8 m of it once it is played from there; at address the rope near the ball
+dissolves too, so the player is not shown that he is inside the gallery area); the grandstand has no roof; galleries are the same
 every round (seeded per hole); sound is one gallery at a time (no stereo placement).
 
 ### 10.2 Wildlife
@@ -2304,12 +2319,20 @@ per hole (`MAX_ANIMALS` = 40 rows; the placement keeps under it: measured 5-29).
 `golferR` from the tee (the first address does not flush it), at least `green radius + 16 m` from the green and
 never on a green, fringe, tee, bunker or OOB; waterfowl swim where the water is open, waders stand where it is
 0.06-0.58 m deep (`terrain.waterAt` level minus the bed), and a chuckwalla lies along the ridge of its boulder as the
-renderer draws it (`rockMesh` shaped by the rock's own variant, the flattest high spot).
+renderer draws it (`rockMesh` shaped by the rock's own variant, the flattest high spot). **Spectators:** with
+`avoid` (main.js passes the renderer's gallery layout, all `nFull` people, the grandstand's seats included)
+animals on foot, waders and geese grazing a bank keep `clamp(0.45 × golferR, 6, 18)` m from every spectator
+(songbirds 7.7, rabbits 9, deer 18, ...): their homes and relocation pools (the finders' spots are filtered
+afterwards against an 8 m grid of the people's feet, so the random draws, and so every hole's roster, are the same
+as without a gallery: 544 animals on the 36 holes either way), group members, wanders, flee and short-flight spots,
+rabbits' burrows (turned round until clear) and the walk out of a new aim (shortened to 14 m if a gallery is 30 m to
+the side). Swimmers on open water, fliers and perched parrots are exempt.
 
 **API** (`wildlife.js`; the header is the reference):
 
 ```js
-const wild = new Wildlife(terrain, {seed = wildlifeSeed(terrain), wind = {x, y}, theme = terrain.theme});
+const wild = new Wildlife(terrain, {seed = wildlifeSeed(terrain), wind = {x, y}, theme = terrain.theme,
+  avoid = {pts, n, stride}});  // avoid: the spectators' feet (x, y at the start of each stride)
 wild.update(dt, ctx)      // ctx (reused, scalars): {golfer, gx, gy, address, bx, by, yaw, carry, wx, wy}
 wild.ballLanded(x, y, surface?)   // a landing / bounce / tree / splash: flush what is near
 wild.cheer(x, y, strength 0..1)   // a crowd roar
@@ -2387,8 +2410,9 @@ golfer's shadow; `renderer.wild.stats` = `{animals, shadows, drawCalls, tris, ve
 triangles, not the culled ones). `scene.wildlife = {inst, count, shadow, shadowCount, key}` (key = the slot list:
 a sim of another theme is never drawn with the wrong mesh).
 
-**main.js** (the "wildlife" section): the sim follows `app.holeTerrain` (rebuilt when the renderer's hole changes:
-holes, the menu backdrop, Mixed rounds' themes), stepped on the game clock (`?fast` scales it; pause and
+**main.js** (the "wildlife" section): the sim follows `app.holeTerrain` and the renderer's gallery layout (rebuilt
+when either changes: holes, the menu backdrop, Mixed rounds' themes, a hole laid out again as a finishing hole; the
+animals keep clear of that gallery), stepped on the game clock (`?fast` scales it; pause and
 `debug.freeze` stop it), given the golfer (the ball at address and in a decision, the shot's start in flight) and
 at address the corridor (`clubInfo().carry` cached per club and spot, capped at the cup + 10 m). Ball landings:
 `wildlifeShotEvent(ev)` from `onShotEvent` (`land`, `water`, `tree`, and `bounce` over 3 m/s), so they flush as the
@@ -2412,7 +2436,7 @@ Each group calls now and then (`call.every`), and each theme has an ambient chor
 the checked holes with the spectators, budget 30); 5.0-7.3 k triangles drawn for 15-23 animals; the sim 3-17 µs
 per frame in node; the theme mesh built once per theme (≈ 1 ms); per frame 1.9 kB of instance data uploaded.
 
-**Tests:** `tests/wildlife.test.js` (13): mesh budgets, indices, finite data, parts and feet on the ground for all
+**Tests:** `tests/wildlife.test.js` (14): mesh budgets, indices, finite data, parts and feet on the ground for all
 24 meshes; folded wings show their upper side; the theme buffers and slot table; placement on all 36 holes
 (theme species, under 40, swimmers on open water at their draft, waders in the shallows, deer at the woods' edge,
 chuckwallas on rocks, sheep far out, nothing on greens, fringes or tees, every animal clear of the tee by its
@@ -2424,7 +2448,9 @@ and grazers walk out of a new aim; determinism; gulls into the wind, hawks banke
 line; allocation-free frames; the corridor. e2e `wildlifeOnly` (each viewport; `--wildlife` alone): animals and
 the theme's species on Hollow Pines 2, Red Mesa 2, Coral Cay 1 and Kittiwake 2, drawn in 2 calls within 30, a
 landing flushing a flock on each, a real shot's landing reaching the sim, Settings Off (saved) and On, a lost and
-restored WebGL context, no console errors.
+restored WebGL context, no console errors. And (14th test) with each hole's gallery as `avoid`, on all 36 holes:
+every ground animal, wader and bank goose is more than 0.7 × its distance from every spectator when placed and after
+40 s, and the courses keep at least 90% of their animals.
 
 **Results when built:** `npm test` 389/389 (13 wildlife); ESLint clean; `node tests/e2e.spec.mjs --wildlife`: every
 check passes (66) in portrait, landscape and foldable on `index.html` (the stale `dist/` has no wildlife and
@@ -2442,3 +2468,34 @@ feet can slide a little on a slope; animals do not avoid trees, bushes or each o
 through); the squirrel climbs on the trunk's surface without spiralling; birds land without a hop; pelicans
 never rest on the water; no deer in the desert or sea-going birds on Hollow Pines (by design: one roster per
 theme, a Mixed hole uses its own course's).
+
+### 10.3 Review fixes (as built)
+
+A review of the two parts together found five things, all fixed:
+- **Pop-in at the strike** (main.js `crowdPlay`, `shaders-crowd.js` PLAY, render.js `_crowdCorridor`): the play
+  corridor used to switch off on the first flight frame, so spectators and ropes dissolved at address reappeared
+  in the line of play as the ball left. A shot now keeps its address corridor (and the eye it was struck from)
+  until the camera cuts away; other changes crossfade (two corridors with a strength each, see section 10.1).
+- **The customiser's studio drew the tee gallery** behind the golfer: a scene without `crowd` now draws no
+  spectators and none of their baked shadows (the shadowed ground image is cached, so the way back costs one
+  texture upload); opening the studio silences the murmur.
+- **Notches at the hem** (`crowd-mesh.js`): the thighs started inside the torso with a section wider than the
+  hips', so their corners showed through the shirt as dark triangles; they now start just under the hem with a
+  section that fits (checked numerically: no corner outside the shell above the hem; seated thighs reviewed).
+- **Crowd changed while paused** (main.js `crowdSettingChanged`): the paused frame is redrawn with the new level
+  (and shadows) at once, and Off silences the murmur.
+- **Animals among the spectators** (`wildlife.js` `avoid`): a songbird flock foraged at the feet of Hollow Pines
+  7's gallery; animals on foot, waders and bank geese now keep their species' distance from every spectator.
+
+Also: the e2e tap-meter check (UI flow) failed on slow SwiftShader frames on this commit's parent as well (the bar
+gives up 2.8 s after the first tap on the page's real clock, and the test's second tap, timed on the events' clock,
+could reach the page after that); when the fill took more than 1.5 s the test now lets that bar run out and times
+a fresh pair of taps 0.6 s apart, so it still checks the strike's power. The app is unchanged.
+
+**Results:** `npm test` 390/390 (14 wildlife, 13 crowd); ESLint clean; `node tests/e2e.spec.mjs --shots` passes on
+`index.html` and `dist/` in all three viewports (1,509 checks, the wildlife pass rerun after the placement change),
+`--soak` 48/48 (every course, Mixed 9 and 18, both builds: at most 21-24 draw calls, 286-314k triangles);
+the repository's own `npm test` 159/159. Reviewed in screenshots: no pop-in at the strike (portrait and landscape),
+the studio with no gallery, clean hems standing and seated, songbirds away from Hollow Pines 7's gallery, galleries
+and grandstands on all four themes, a grandstand cheering a holed putt, flamingos lifting off.
+

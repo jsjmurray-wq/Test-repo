@@ -1311,10 +1311,14 @@ export class Renderer {
   // grandstand (1 draw) and the people (1 instanced draw) after the themed objects.
   // scene.crowd = {level: 'off'|'light'|'full', look: Float32Array(4) (attention point, w = how
   // much heads follow it), react: Float32Array(16) (CrowdReactions.u), hush: 0..1, play: {on, bx,
-  // by, tx, ty, hw} (the play corridor: ball -> target, half-width near the ball)}; without it the
-  // last level is kept and the people face forward. 'full' draws the Light subset with
-  // ?quality=low or once the adaptive resolution has stepped down (sticky). The people's sun
-  // shadows are darkened into the ground texture for the level shown (re-uploaded on a change).
+  // by, tx, ty, hw, k, ex, ey, prev} (the play corridor: ball -> target, half-width near the ball,
+  // strength k 0..1 (default 1), the eye it is seen from (default the camera's), prev: the corridor
+  // before it while it eases out, the same fields)}. A scene without it (the Golfer customiser's
+  // studio) draws no spectators and shows none of their shadows; the level is kept for the next
+  // scene with them. 'full' draws the Light subset with ?quality=low or once the adaptive
+  // resolution has stepped down (sticky). The people's sun shadows are darkened into the ground
+  // texture for the level shown (re-uploaded on a change; the last shadowed image is kept, so
+  // going back to it costs only the upload).
   get crowd() {
     return this.cpu && this.cpu.crowd ? this.cpu.crowd.layout : null;
   }
@@ -1348,6 +1352,7 @@ export class Renderer {
       console.error(err);
     }
     this.cpu.crowd = crowd;
+    this._crowdShadowCache = null;
   }
 
   // The level drawn for a wanted one.
@@ -1363,13 +1368,24 @@ export class Renderer {
     const n = c ? crowdCount(c.layout, this._crowdLevel(this.crowdLevel)) : 0;
     res.crowdBakeN = n;
     if (!n) return bk;
-    return { width: bk.width, height: bk.height, data: crowdShadowBake(bk, c.layout, n, this.theme.sky.sunDir) };
+    return { width: bk.width, height: bk.height, data: this._crowdShadowed(bk, n) };
+  }
+
+  // The bake with the first n people's shadows (the last one is kept: a studio visit or a level
+  // switched back costs no second bake).
+  _crowdShadowed(bk, n) {
+    const L = this.cpu.crowd.layout;
+    const C = this._crowdShadowCache;
+    if (C && C.bk === bk && C.layout === L && C.n === n) return C.data;
+    const data = crowdShadowBake(bk, L, n, this.theme.sky.sunDir);
+    this._crowdShadowCache = { bk, layout: L, n, data };
+    return data;
   }
 
   _crowdRebake(res, n) {
     const gl = this.gl;
     const bk = this.cpu.bake;
-    const data = n ? crowdShadowBake(bk, this.cpu.crowd.layout, n, this.theme.sky.sunDir) : bk.data;
+    const data = n ? this._crowdShadowed(bk, n) : bk.data;
     gl.bindTexture(gl.TEXTURE_2D, res.bake);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, bk.width, bk.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
@@ -1399,9 +1415,11 @@ export class Renderer {
     const sc = scene.crowd || null;
     if (sc && sc.level) this.crowdLevel = sc.level;
     if (!this.test && this.renderScale < this.maxScale - 0.001) this._crowdDown = true;
-    const lvl = this._crowdLevel(this.crowdLevel);
+    const lvl = sc ? this._crowdLevel(this.crowdLevel) : 'off';
     st.level = lvl;
     if (!R || !R.crowd) return;
+    // (A scene without spectators, the customiser's studio: none drawn and no shadows of them;
+    // this.crowdLevel is kept, so the game's next frame brings them back as they were.)
     const n = crowdCount(this.cpu.crowd.layout, lvl);
     if (R.crowdBakeN !== n) this._crowdRebake(R, n);
     if (!n) return;
@@ -1466,14 +1484,22 @@ export class Renderer {
     st.tris = this._stats.tris - t0;
   }
 
-  // The play corridor (camera -> ball -> target): people and ropes dissolve there.
+  // The play corridor (camera -> ball -> target): people and ropes dissolve there (and in the
+  // previous corridor while it eases out).
   _crowdPlay(u, sc) {
+    const pl = sc && sc.play;
+    this._crowdCorridor(u.uPlay, u.uPlay2, pl);
+    this._crowdCorridor(u.uPlayB, u.uPlayB2, pl && pl.prev);
+  }
+
+  _crowdCorridor(uA, uB, c) {
     const gl = this.gl;
     const e = this.eye;
-    const pl = sc && sc.play;
-    const on = !!(pl && pl.on);
-    gl.uniform4f(u.uPlay, on ? pl.bx : 0, on ? pl.by : 0, on ? pl.tx : 0, on ? pl.ty : 0);
-    gl.uniform4f(u.uPlay2, e.x, e.y, on ? 1 : 0, on && pl.hw ? pl.hw : 8);
+    const k = c && c.on ? (c.k == null ? 1 : Math.max(0, Math.min(1, c.k))) : 0;
+    const ex = k && c.ex != null ? c.ex : e.x;
+    const ey = k && c.ey != null ? c.ey : e.y;
+    gl.uniform4f(uA, k ? c.bx : 0, k ? c.by : 0, k ? c.tx : 0, k ? c.ty : 0);
+    gl.uniform4f(uB, ex, ey, k, k && c.hw ? c.hw : 8);
   }
 }
 

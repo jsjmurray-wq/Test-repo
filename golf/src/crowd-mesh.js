@@ -120,7 +120,9 @@ export function personMesh() {
     const y = side * J.HIP_Y;
     const thigh = side > 0 ? PART.THIGH_L : PART.THIGH_R;
     const shin = side > 0 ? PART.SHIN_L : PART.SHIN_R;
-    limb(B, y, 0.96, 0.098, J.KNEE_Z - 0.02, 0.07, thigh, SLOT.LEGS, SLOT.LEGS, 0.7, 0.85);
+    // (The thigh starts just under the shirt's hem and stays inside the hips' section above it,
+    // so no corner pokes through the shirt.)
+    limb(B, y, 0.88, 0.076, J.KNEE_Z - 0.02, 0.07, thigh, SLOT.LEGS, SLOT.LEGS, 0.7, 0.85);
     limb(B, y, J.KNEE_Z + 0.03, 0.068, J.ANKLE_Z, 0.05, shin, SLOT.SHIN, SLOT.SHIN, 0.85, 0.8);
     // Shoe: a wedge from the heel to the toe (3 visible faces).
     const hl = B.v(-0.05, y + 0.045, 0.0, -0.6, 0.6, 0.2, shin, SLOT.SHOES, 0, 0.7);
